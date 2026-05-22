@@ -15,6 +15,7 @@ from .experiments import ExperimentResult, run_experiments, select_best_result, 
 from .modeling import ModelConfig, predict_probability
 from .persistence import load_dataset, load_model_bundle, save_dataset, save_model_bundle
 from .preprocessing import FeatureStandardizer
+from .presets import generate_builtin_preset, load_preset_file, preset_labels, save_preset_file
 from .reporting import build_experiment_report, export_experiment_report
 
 
@@ -54,6 +55,12 @@ def run_app() -> None:
         try:
             if event == "-ADD_SAMPLE-":
                 _add_sample(window, state, values)
+            elif event == "-LOAD_BUILTIN_PRESET-":
+                _load_builtin_preset(window, state, values)
+            elif event == "-IMPORT_PRESET-":
+                _import_preset(window, state, values)
+            elif event == "-SAVE_PRESET-":
+                _save_preset(window, state, values)
             elif event == "-LOAD_CSV-":
                 _load_csv(window, state, values)
             elif event == "-SAVE_DATASET-":
@@ -97,6 +104,23 @@ def _layout(sg):
         [sg.Text("Training sample JSON")],
         [sg.Input(key="-TRAINING_SAMPLE-", expand_x=True)],
         [sg.Button("Add sample", key="-ADD_SAMPLE-"), sg.Button("Clear data", key="-CLEAR_DATA-")],
+        [sg.Text("Dataset presets")],
+        [
+            sg.Combo(preset_labels(), default_value=preset_labels()[0], readonly=True, key="-PRESET_NAME-", expand_x=True),
+            sg.Text("Samples"),
+            sg.Input("80", key="-PRESET_SAMPLES-", size=(6, 1)),
+            sg.Text("Seed"),
+            sg.Input("42", key="-PRESET_SEED-", size=(6, 1)),
+            sg.Button("Load preset", key="-LOAD_BUILTIN_PRESET-"),
+        ],
+        [sg.Text("Preset file")],
+        [
+            sg.Input(key="-PRESET_PATH-", expand_x=True),
+            sg.FileBrowse(file_types=(("Preset JSON", "*.json"), ("All files", "*.*"))),
+            sg.FileSaveAs(button_text="Choose save", file_types=(("Preset JSON", "*.json"),)),
+        ],
+        [sg.Input("My preset", key="-PRESET_SAVE_NAME-", size=(22, 1)), sg.Button("Import preset", key="-IMPORT_PRESET-"), sg.Button("Save as preset", key="-SAVE_PRESET-")],
+        [sg.Input("", key="-PRESET_DESCRIPTION-", expand_x=True)],
         [sg.Text("CSV dataset")],
         [
             sg.Input(key="-CSV_PATH-", expand_x=True),
@@ -161,6 +185,33 @@ def _add_sample(window, state: AppState, values: dict[str, Any]) -> None:
     state.features.append(features)
     state.labels.append(label)
     _log(window, f"Added sample {len(state.labels)} with label {label}.")
+
+
+def _load_builtin_preset(window, state: AppState, values: dict[str, Any]) -> None:
+    dataset = generate_builtin_preset(
+        values["-PRESET_NAME-"],
+        sample_count=_positive_int(values["-PRESET_SAMPLES-"], "preset samples"),
+        seed=_int_value(values["-PRESET_SEED-"], "preset seed"),
+    )
+    _replace_dataset(state, dataset)
+    _log(window, f"Loaded preset '{values['-PRESET_NAME-']}' with {dataset.sample_count} samples.")
+
+
+def _import_preset(window, state: AppState, values: dict[str, Any]) -> None:
+    dataset, metadata = load_preset_file(_required_path(values["-PRESET_PATH-"], "preset path"))
+    _replace_dataset(state, dataset)
+    _log(window, f"Imported preset '{metadata['name']}' with {dataset.sample_count} samples.")
+
+
+def _save_preset(window, state: AppState, values: dict[str, Any]) -> None:
+    dataset = validate_dataset(state.features, state.labels, min_samples=1)
+    path = save_preset_file(
+        _required_path(values["-PRESET_PATH-"], "preset path"),
+        dataset,
+        name=values["-PRESET_SAVE_NAME-"],
+        description=values["-PRESET_DESCRIPTION-"],
+    )
+    _log(window, f"Saved preset '{values['-PRESET_SAVE_NAME-']}' to {path}.")
 
 
 def _load_csv(window, state: AppState, values: dict[str, Any]) -> None:
@@ -371,6 +422,9 @@ def _refresh_state(window, state: AppState) -> None:
 def _set_busy(window, busy: bool) -> None:
     for key in (
         "-ADD_SAMPLE-",
+        "-LOAD_BUILTIN_PRESET-",
+        "-IMPORT_PRESET-",
+        "-SAVE_PRESET-",
         "-LOAD_CSV-",
         "-SAVE_DATASET-",
         "-LOAD_DATASET-",
@@ -404,6 +458,13 @@ def _positive_int(raw_value: str, label: str) -> int:
     if value <= 0:
         raise ValueError(f"{label.capitalize()} must be a positive integer.")
     return value
+
+
+def _int_value(raw_value: str, label: str) -> int:
+    try:
+        return int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label.capitalize()} must be an integer.") from exc
 
 
 def _format_config(config: ModelConfig) -> str:
