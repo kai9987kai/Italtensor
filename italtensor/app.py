@@ -11,12 +11,20 @@ from .data import (
     parse_training_example,
     validate_dataset,
 )
-from .experiments import ExperimentResult, run_experiments, select_best_result, train_single_model, train_single_model_cv
+from .experiments import (
+    ExperimentResult,
+    conformal_label_set,
+    run_experiments,
+    select_best_result,
+    train_single_model,
+    train_single_model_cv,
+)
 from .modeling import ModelConfig, predict_probability
 from .persistence import load_dataset, load_model_bundle, save_dataset, save_model_bundle
 from .preprocessing import FeatureStandardizer
-from .presets import generate_builtin_preset, load_preset_file, preset_labels, save_preset_file
+from .presets import generate_builtin_preset, load_preset_file, preset_labels, preset_metadata, save_preset_file
 from .reporting import build_experiment_report, export_experiment_report
+from .scoring import score_prediction_csv
 
 
 @dataclass
@@ -30,6 +38,8 @@ class AppState:
     latest_threshold: float = 0.5
     preprocessor: FeatureStandardizer | None = None
     feature_importances: list[dict[str, float | int]] = field(default_factory=list)
+    trial_history: list[dict[str, Any]] = field(default_factory=list)
+    uncertainty_metadata: dict[str, Any] = field(default_factory=dict)
     busy: bool = False
     status_message: str = "Ready"
 
@@ -39,7 +49,7 @@ def run_app() -> None:
         import PySimpleGUI as sg
     except ImportError as exc:
         raise RuntimeError(
-            "PySimpleGUI is not installed. Install dependencies with: python -m pip install -r requirements.txt"
+            "PySimpleGUI is not installed. Install GUI dependencies with: python -m pip install -r requirements.txt"
         ) from exc
 
     theme_dict = {
@@ -96,6 +106,8 @@ def run_app() -> None:
                 _export_report(window, state, values)
             elif event == "-PREDICT-":
                 _predict(window, state, values)
+            elif event == "-EXPORT_BATCH_PREDICTIONS-":
+                _start_batch_predictions(window, state, values)
             elif event == "-TRIAL_DONE-":
                 index, total, result = values[event]
                 _log(window, f"Trial {index}/{total}: {_format_config(result.config)} | {_format_metrics(result.metrics)}")
@@ -200,6 +212,16 @@ def _layout(sg):
         ],
         [sg.Text("Prediction vector JSON")],
         [sg.Input(key="-PREDICTION_VECTOR-", expand_x=True), sg.Button("Predict", key="-PREDICT-")],
+        [sg.Text("Batch prediction CSV")],
+        [
+            sg.Input(key="-BATCH_INPUT_PATH-", expand_x=True),
+            sg.FileBrowse(file_types=(("CSV files", "*.csv"), ("All files", "*.*"))),
+        ],
+        [
+            sg.Input(key="-BATCH_OUTPUT_PATH-", expand_x=True),
+            sg.FileSaveAs(file_types=(("CSV files", "*.csv"), ("All files", "*.*"))),
+            sg.Button("Export batch predictions", key="-EXPORT_BATCH_PREDICTIONS-"),
+        ],
         [sg.Text("Status:"), sg.Text("Ready", key="-STATUS-", expand_x=True)],
     ]
 
@@ -227,13 +249,18 @@ def _load_builtin_preset(window, state: AppState, values: dict[str, Any]) -> Non
         seed=_int_value(values["-PRESET_SEED-"], "preset seed"),
     )
     _replace_dataset(state, dataset)
+    metadata = preset_metadata(values["-PRESET_NAME-"])
+    _apply_preset_metadata(window, metadata)
     _log(window, f"Loaded preset '{values['-PRESET_NAME-']}' with {dataset.sample_count} samples.")
+    _log(window, _format_preset_metadata(metadata))
 
 
 def _import_preset(window, state: AppState, values: dict[str, Any]) -> None:
     dataset, metadata = load_preset_file(_required_path(values["-PRESET_PATH-"], "preset path"))
     _replace_dataset(state, dataset)
+    _apply_preset_metadata(window, metadata)
     _log(window, f"Imported preset '{metadata['name']}' with {dataset.sample_count} samples.")
+    _log(window, _format_preset_metadata(metadata))
 
 
 def _save_preset(window, state: AppState, values: dict[str, Any]) -> None:
@@ -338,6 +365,8 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         threshold=state.latest_threshold,
         preprocessor=state.preprocessor,
         feature_importances=state.feature_importances,
+        trial_history=state.trial_history,
+        uncertainty_metadata=state.uncertainty_metadata,
     )
     window["-MODEL_PATH-"].update(str(model_path))
     _log(window, f"Saved model to {model_path} and metadata to {metadata_path}.")
@@ -370,6 +399,10 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     )
     importances = metadata.get("feature_importances")
     state.feature_importances = importances if isinstance(importances, list) else []
+    trial_history = metadata.get("trial_history")
+    state.trial_history = trial_history if isinstance(trial_history, list) else []
+    uncertainty = metadata.get("uncertainty")
+    state.uncertainty_metadata = uncertainty if isinstance(uncertainty, dict) else {}
     _log(window, f"Loaded model expecting {state.input_dim} features.")
 
 
@@ -385,6 +418,8 @@ def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
         threshold=state.latest_threshold,
         preprocessor=state.preprocessor,
         feature_importances=state.feature_importances,
+        trial_history=state.trial_history,
+        uncertainty_metadata=state.uncertainty_metadata,
     )
     path = export_experiment_report(_required_path(values["-REPORT_PATH-"], "report path"), report)
     _log(window, f"Exported report to {path}.")
@@ -400,10 +435,33 @@ def _predict(window, state: AppState, values: dict[str, Any]) -> None:
         prepared = vector
     probability = float(predict_probability(state.model, prepared)[0])
     label = 1 if probability >= state.latest_threshold else 0
+    uncertainty_note = _format_uncertainty_prediction(probability, state.uncertainty_metadata)
     _log(
         window,
-        f"Prediction: label={label}, probability={probability:.4f}, threshold={state.latest_threshold:.4f}.",
+        f"Prediction: label={label}, probability={probability:.4f}, threshold={state.latest_threshold:.4f}{uncertainty_note}",
     )
+
+
+def _start_batch_predictions(window, state: AppState, values: dict[str, Any]) -> None:
+    _ensure_not_busy(state)
+    if state.model is None or state.input_dim is None:
+        raise ValueError("Train or load a model before exporting batch predictions.")
+    input_path = _required_path(values["-BATCH_INPUT_PATH-"], "batch prediction input CSV")
+    output_path = _required_path(values["-BATCH_OUTPUT_PATH-"], "batch prediction output CSV")
+
+    def task() -> tuple[str, tuple[str, int]]:
+        path, count = score_prediction_csv(
+            state.model,
+            input_path,
+            output_path,
+            expected_dim=state.input_dim,
+            preprocessor=state.preprocessor,
+            threshold=state.latest_threshold,
+            uncertainty_metadata=state.uncertainty_metadata,
+        )
+        return "batch_predictions", (str(path), count)
+
+    _start_worker(window, state, "Exporting batch predictions...", task)
 
 
 def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> None:
@@ -420,8 +478,11 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_threshold = training_result.threshold
         state.preprocessor = training_result.preprocessor
         state.feature_importances = training_result.feature_importances
+        state.trial_history = [_summarize_trial(training_result)]
+        state.uncertainty_metadata = training_result.uncertainty
         _log(window, f"Training complete: {_format_metrics(training_result.metrics)}")
         _log(window, _format_calibration(training_result.metrics))
+        _log(window, _format_uncertainty(training_result.uncertainty))
         _log(window, _format_cv_summary(training_result.metrics))
         _log(window, _format_importances(training_result.feature_importances))
     elif kind == "experiments":
@@ -432,10 +493,16 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_threshold = best.threshold
         state.preprocessor = best.preprocessor
         state.feature_importances = best.feature_importances
+        state.trial_history = [_summarize_trial(item) for item in result]
+        state.uncertainty_metadata = best.uncertainty
         _log(window, f"Best config: {_format_config(best.config)}")
         _log(window, f"Best metrics: {_format_metrics(best.metrics)}")
         _log(window, _format_calibration(best.metrics))
+        _log(window, _format_uncertainty(best.uncertainty))
         _log(window, _format_importances(best.feature_importances))
+    elif kind == "batch_predictions":
+        path, count = result
+        _log(window, f"Exported {count} batch prediction(s) to {path}.")
 
 
 def _start_worker(window, state: AppState, status: str, task: Callable[[], tuple[str, Any]]) -> None:
@@ -461,6 +528,26 @@ def _replace_dataset(state: AppState, dataset) -> None:
     _invalidate_model_artifacts(state)
 
 
+def _apply_preset_metadata(window, metadata: dict[str, Any]) -> None:
+    defaults = metadata.get("training_defaults")
+    if isinstance(defaults, dict):
+        if defaults.get("epochs") is not None:
+            window["-EPOCHS-"].update(str(defaults["epochs"]))
+        if defaults.get("batch_size") is not None:
+            window["-BATCH_SIZE-"].update(str(defaults["batch_size"]))
+        if defaults.get("trials") is not None:
+            window["-TRIALS-"].update(str(defaults["trials"]))
+        if defaults.get("feature_map") in {"linear", "quadratic", "rff"}:
+            window["-FEATURE_MAP-"].update(defaults["feature_map"])
+        if defaults.get("l1_penalty") is not None:
+            window["-L1_PENALTY-"].update(str(defaults["l1_penalty"]))
+        if defaults.get("feature_selection_k") is not None:
+            window["-FEATURE_K-"].update(str(defaults["feature_selection_k"]))
+    recommended_map = metadata.get("recommended_feature_map")
+    if recommended_map in {"linear", "quadratic", "rff"}:
+        window["-FEATURE_MAP-"].update(recommended_map)
+
+
 def _invalidate_model_artifacts(state: AppState) -> None:
     state.model = None
     state.latest_config = None
@@ -468,6 +555,8 @@ def _invalidate_model_artifacts(state: AppState) -> None:
     state.latest_threshold = 0.5
     state.preprocessor = None
     state.feature_importances = []
+    state.trial_history = []
+    state.uncertainty_metadata = {}
 
 
 def _refresh_state(window, state: AppState) -> None:
@@ -493,6 +582,7 @@ def _set_busy(window, busy: bool) -> None:
         "-LOAD_MODEL-",
         "-EXPORT_REPORT-",
         "-PREDICT-",
+        "-EXPORT_BATCH_PREDICTIONS-",
     ):
         window[key].update(disabled=busy)
 
@@ -540,6 +630,29 @@ def _format_config(config: ModelConfig) -> str:
     return ", ".join(parts)
 
 
+def _format_preset_metadata(metadata: dict[str, Any]) -> str:
+    parts = []
+    recommended = metadata.get("recommended_feature_map")
+    if recommended:
+        parts.append(f"recommended map={recommended}")
+    examples = metadata.get("prediction_examples")
+    if isinstance(examples, list) and examples:
+        first = examples[0]
+        parts.append(f"example {first.get('name', 'sample')}={first.get('features')}")
+    return "Preset metadata: " + ", ".join(parts) if parts else "Preset metadata: none."
+
+
+def _summarize_trial(result: ExperimentResult) -> dict[str, Any]:
+    return {
+        "config": result.config.to_dict(),
+        "metrics": result.metrics,
+        "threshold": result.threshold,
+        "history": result.history,
+        "feature_importances": result.feature_importances[:5],
+        "uncertainty": result.uncertainty,
+    }
+
+
 def _dataset_summary(state: AppState) -> str:
     if not state.labels:
         return "No data"
@@ -557,9 +670,15 @@ def _format_metrics(metrics: dict[str, float | int]) -> str:
         "precision",
         "recall",
         "threshold",
+        "fixed_threshold_f1",
+        "fixed_threshold_accuracy",
+        "threshold_gain_f1",
         "validation_loss",
         "brier_score",
         "ece",
+        "conformal_coverage",
+        "conformal_singleton_rate",
+        "conformal_empty_rate",
         "class_weight_0",
         "class_weight_1",
     ]
@@ -602,6 +721,40 @@ def _format_calibration(metrics: dict[str, float | int]) -> str:
     if ece is not None:
         parts.append(f"ECE={float(ece):.4f}")
     return " ".join(parts)
+
+
+def _format_uncertainty(uncertainty: dict[str, Any]) -> str:
+    if not uncertainty:
+        return ""
+    parts = ["Uncertainty:"]
+    source = uncertainty.get("conformal_source")
+    if source:
+        parts.append(f"source={source}")
+    for key in (
+        "conformal_alpha",
+        "conformal_quantile",
+        "conformal_coverage",
+        "conformal_target_coverage",
+        "conformal_singleton_rate",
+        "conformal_empty_rate",
+    ):
+        if key in uncertainty:
+            parts.append(f"{key}={float(uncertainty[key]):.4f}")
+    return " ".join(parts)
+
+
+def _format_uncertainty_prediction(probability: float, uncertainty: dict[str, Any]) -> str:
+    quantile = uncertainty.get("conformal_quantile") if uncertainty else None
+    if quantile is None:
+        return "."
+    label_set = conformal_label_set(probability, float(quantile))
+    if not label_set:
+        label_text = "abstain"
+    elif len(label_set) == 2:
+        label_text = "{0,1}"
+    else:
+        label_text = "{" + str(label_set[0]) + "}"
+    return f", conformal_set={label_text}, q={float(quantile):.4f}."
 
 
 def _format_cv_summary(metrics: dict[str, float | int]) -> str:

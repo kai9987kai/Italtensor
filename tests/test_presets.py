@@ -7,7 +7,7 @@ from italtensor.data import DataValidationError, validate_dataset
 from italtensor.experiments import split_train_validation
 from italtensor.modeling import ModelConfig
 from italtensor.preprocessing import FeatureStandardizer
-from italtensor.presets import BUILT_IN_PRESETS, generate_builtin_preset, load_preset_file, save_preset_file
+from italtensor.presets import BUILT_IN_PRESETS, generate_builtin_preset, load_preset_file, preset_metadata, save_preset_file
 
 
 def test_preset_round_trip_preserves_dataset_and_metadata(tmp_path):
@@ -77,7 +77,40 @@ def test_builtin_presets_are_trainable():
 def test_experimental_builtin_presets_are_available():
     names = {preset.name for preset in BUILT_IN_PRESETS}
 
-    assert {"Concentric rings", "Two moons", "Rare event signal"}.issubset(names)
+    assert {
+        "Concentric rings",
+        "Two moons",
+        "Rare event signal",
+        "Overlapping margin",
+        "Sparse interaction signal",
+        "Deployment drift probe",
+    }.issubset(names)
+
+
+def test_builtin_preset_metadata_has_recommendations_and_examples():
+    metadata = preset_metadata("XOR pattern")
+
+    assert metadata["recommended_feature_map"] == "quadratic"
+    assert metadata["training_defaults"]["feature_map"] == "quadratic"
+    assert metadata["feature_names"] == ["x1", "x2"]
+    assert metadata["label_names"] == {"0": "negative", "1": "positive"}
+    assert len(metadata["prediction_examples"]) >= 2
+
+
+def test_sparse_interaction_preset_applies_feature_selection_defaults():
+    metadata = preset_metadata("Sparse interaction signal")
+
+    assert metadata["input_dim"] == 16
+    assert metadata["recommended_feature_map"] == "quadratic"
+    assert metadata["training_defaults"]["l1_penalty"] == 0.001
+    assert metadata["training_defaults"]["feature_selection_k"] == 6
+
+
+def test_deployment_drift_preset_has_shifted_prediction_example():
+    metadata = preset_metadata("Deployment drift probe")
+
+    assert metadata["input_dim"] == 4
+    assert any(example["name"] == "Drift review row" for example in metadata["prediction_examples"])
 
 
 def test_save_as_preset_uses_existing_dataset_json_shape(tmp_path):

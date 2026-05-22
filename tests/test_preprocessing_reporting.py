@@ -47,6 +47,22 @@ def test_report_export_json_and_markdown(tmp_path):
         threshold=0.4,
         preprocessor=FeatureStandardizer.identity(2),
         feature_importances=[{"feature_index": 0, "importance": 0.25}],
+        trial_history=[
+            {
+                "config": {"feature_map": "rff"},
+                "metrics": {"f1": 0.75, "brier_score": 0.1, "log_loss": 0.3},
+            }
+        ],
+        uncertainty_metadata={
+            "conformal_source": "dedicated_calibration",
+            "conformal_alpha": 0.1,
+            "conformal_quantile": 0.35,
+            "conformal_target_coverage": 0.9,
+            "conformal_coverage": 1.0,
+            "conformal_calibration_count": 8,
+            "conformal_evaluation_count": 8,
+            "conformal_singleton_rate": 0.75,
+        },
     )
 
     json_path = export_experiment_report(tmp_path / "report.json", report)
@@ -55,5 +71,29 @@ def test_report_export_json_and_markdown(tmp_path):
     saved_json = json.loads(json_path.read_text(encoding="utf-8"))
     saved_markdown = markdown_path.read_text(encoding="utf-8")
     assert saved_json["dataset"]["class_counts"] == {"0": 2, "1": 2}
+    assert saved_json["dataset"]["available"] is True
     assert saved_json["model"]["threshold"] == 0.4
+    assert saved_json["uncertainty"]["conformal_source"] == "dedicated_calibration"
+    assert saved_json["uncertainty"]["conformal_quantile"] == 0.35
+    assert saved_json["uncertainty"]["conformal_calibration_count"] == 8
+    assert saved_json["trial_history"][0]["config"]["feature_map"] == "rff"
     assert "Feature 0" in saved_markdown
+    assert "Trial 1" in saved_markdown
+    assert "## Uncertainty" in saved_markdown
+    assert "conformal_source" in saved_markdown
+
+
+def test_report_marks_dataset_unavailable_for_model_only_export():
+    report = build_experiment_report(
+        sample_count=0,
+        input_dim=2,
+        labels=[],
+        config=ModelConfig(),
+        metrics={"f1": 0.0},
+        threshold=0.5,
+        preprocessor=None,
+        feature_importances=[],
+    )
+
+    assert report["dataset"]["available"] is False
+    assert report["dataset"]["class_counts"] is None

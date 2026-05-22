@@ -31,6 +31,8 @@ def save_model_bundle(
     threshold: float = 0.5,
     preprocessor: FeatureStandardizer | None = None,
     feature_importances: list[dict[str, float | int]] | None = None,
+    trial_history: list[dict[str, Any]] | None = None,
+    uncertainty_metadata: dict[str, Any] | None = None,
 ) -> tuple[Path, Path]:
     model_path = Path(path)
     is_numpy_model = isinstance(model, NumpyBinaryClassifier)
@@ -66,9 +68,11 @@ def save_model_bundle(
         "label_schema": {"negative": 0, "positive": 1},
         "best_config": config.to_dict(),
         "validation_metrics": metrics or {},
+        "uncertainty": uncertainty_metadata or {},
         "threshold": float(threshold),
         "preprocessing": resolved_preprocessor.to_dict(),
         "feature_importances": feature_importances or [],
+        "trial_history": trial_history or [],
         "timestamp": datetime.now(UTC).isoformat(),
     }
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
@@ -84,7 +88,14 @@ def load_model_bundle(path: str | Path):
         else:
             raise ValueError("Unsupported JSON model file.")
     else:
-        tf = _tensorflow()
+        try:
+            tf = _tensorflow()
+        except RuntimeError as exc:
+            raise RuntimeError(
+                ".keras models require the optional TensorFlow backend. "
+                "Install it with: python -m pip install -r requirements-tensorflow.txt. "
+                "Without TensorFlow, load an .italtensor-model.json fallback model instead."
+            ) from exc
         model = tf.keras.models.load_model(str(model_path))
 
     metadata_path = model_metadata_path(model_path)
@@ -103,6 +114,7 @@ def _tensorflow():
         import tensorflow as tf
     except ImportError as exc:
         raise RuntimeError(
-            "TensorFlow is not installed. Install dependencies with: python -m pip install -r requirements.txt"
+            "TensorFlow is not installed. Install the optional backend with: "
+            "python -m pip install -r requirements-tensorflow.txt"
         ) from exc
     return tf

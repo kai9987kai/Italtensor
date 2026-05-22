@@ -4,13 +4,21 @@ import numpy as np
 from italtensor.experiments import (
     ExperimentResult,
     balanced_class_weights,
+    calibrated_conformal_metrics,
+    conformal_label_set,
+    conformal_metrics,
+    conformal_quantile,
     evaluate_predictions,
+    fixed_threshold_metrics,
     generate_random_configs,
     optimize_threshold,
     permutation_feature_importance,
+    probability_diagnostics,
     run_experiments,
     select_best_result,
+    split_train_calibration_validation,
     split_train_validation,
+    train_single_model,
 )
 from italtensor.data import validate_dataset
 from italtensor.modeling import ModelConfig
@@ -30,8 +38,8 @@ def test_generate_random_configs_is_deterministic_and_bounded():
 
 
 def test_generate_random_configs_rejects_more_than_search_space():
-    with pytest.raises(ValueError, match="cannot exceed 216"):
-        generate_random_configs(trials=217)
+    with pytest.raises(ValueError, match="cannot exceed 432"):
+        generate_random_configs(trials=433)
 
 
 def test_select_best_result_ranks_f1_accuracy_then_loss():
@@ -106,11 +114,147 @@ def test_evaluate_predictions_rejects_mismatched_lengths():
         evaluate_predictions(np.asarray([0, 1]), np.asarray([0.2]))
 
 
+def test_probability_diagnostics_include_ranking_and_calibration_bins():
+    labels = np.asarray([0, 0, 1, 1], dtype=np.int32)
+    probabilities = np.asarray([0.05, 0.2, 0.75, 0.95], dtype=np.float32)
+
+    diagnostics = probability_diagnostics(labels, probabilities, n_bins=4)
+    metrics = evaluate_predictions(labels, probabilities, threshold=0.5)
+
+    assert diagnostics["roc_auc"] == pytest.approx(1.0)
+    assert diagnostics["average_precision"] == pytest.approx(1.0)
+    assert 0.0 <= diagnostics["brier_score"] <= 1.0
+    assert diagnostics["log_loss"] > 0.0
+    assert diagnostics["expected_calibration_error"] >= 0.0
+    assert diagnostics["max_calibration_error"] >= 0.0
+    assert diagnostics["quantiles_by_class"]["0"]
+    assert diagnostics["quantiles_by_class"]["1"]
+    assert diagnostics["calibration_bins"]
+    assert metrics["roc_auc"] == pytest.approx(diagnostics["roc_auc"])
+    assert metrics["log_loss"] == pytest.approx(diagnostics["log_loss"])
+
+
+def test_fixed_threshold_metrics_show_default_cutoff_baseline():
+    labels = np.asarray([0, 0, 1, 1], dtype=np.int32)
+    probabilities = np.asarray([0.1, 0.4, 0.35, 0.8], dtype=np.float32)
+
+    tuned_threshold = optimize_threshold(labels, probabilities)
+    tuned = evaluate_predictions(labels, probabilities, tuned_threshold)
+    fixed = fixed_threshold_metrics(labels, probabilities)
+
+    assert fixed["fixed_threshold"] == 0.5
+    assert fixed["fixed_threshold_f1"] == pytest.approx(2 / 3)
+    assert tuned["f1"] > fixed["fixed_threshold_f1"]
+
+
+def test_conformal_metrics_summarize_binary_prediction_sets():
+    labels = np.asarray([0, 0, 1, 1], dtype=np.int32)
+    probabilities = np.asarray([0.05, 0.2, 0.75, 0.95], dtype=np.float32)
+
+    qhat = conformal_quantile(labels, probabilities, alpha=0.25)
+    metrics = conformal_metrics(labels, probabilities, alpha=0.25)
+
+    assert qhat == pytest.approx(metrics["conformal_quantile"])
+    assert metrics["conformal_alpha"] == 0.25
+    assert 0.0 <= metrics["conformal_coverage"] <= 1.0
+    assert 0.0 <= metrics["conformal_singleton_rate"] <= 1.0
+    assert conformal_label_set(0.95, qhat) == [1]
+    assert conformal_label_set(0.05, qhat) == [0]
+
+
+def test_calibrated_conformal_metrics_use_separate_calibration_predictions():
+    calibration_labels = np.asarray([0, 0, 1, 1], dtype=np.int32)
+    calibration_probabilities = np.asarray([0.1, 0.25, 0.8, 0.9], dtype=np.float32)
+    evaluation_labels = np.asarray([0, 1], dtype=np.int32)
+    evaluation_probabilities = np.asarray([0.2, 0.7], dtype=np.float32)
+
+    metrics = calibrated_conformal_metrics(
+        calibration_labels,
+        calibration_probabilities,
+        evaluation_labels,
+        evaluation_probabilities,
+        alpha=0.25,
+    )
+
+    assert metrics["conformal_source"] == "dedicated_calibration"
+    assert metrics["conformal_calibration_count"] == 4
+    assert metrics["conformal_evaluation_count"] == 2
+    assert metrics["conformal_target_coverage"] == pytest.approx(0.75)
+    assert 0.0 <= metrics["conformal_coverage"] <= 1.0
+
+
+def test_train_single_model_returns_uncertainty_metadata():
+    features = np.asarray(
+        [[-1.0, -1.0], [-0.8, -0.6], [0.8, 0.7], [1.0, 1.1], [-1.1, -0.9], [1.1, 0.9]],
+        dtype=np.float32,
+    )
+    labels = np.asarray([0, 0, 1, 1, 0, 1], dtype=np.int32)
+
+    result = train_single_model(
+        features,
+        labels,
+        ModelConfig(learning_rate=0.05, max_epochs=8, patience=2, random_seed=11),
+    )
+
+    assert "conformal_quantile" in result.uncertainty
+    assert result.metrics["conformal_quantile"] == pytest.approx(result.uncertainty["conformal_quantile"])
+    assert result.uncertainty["conformal_source"] == "dedicated_calibration"
+    assert "conformal_source" not in result.metrics
+
+
+def test_train_single_model_reuses_validation_for_tiny_datasets():
+    features = np.asarray([[-1.0], [-0.8], [0.8], [1.0]], dtype=np.float32)
+    labels = np.asarray([0, 0, 1, 1], dtype=np.int32)
+
+    result = train_single_model(
+        features,
+        labels,
+        ModelConfig(learning_rate=0.05, max_epochs=4, patience=2, random_seed=4),
+    )
+
+    assert result.uncertainty["conformal_source"] == "validation_reuse"
+
+
 def test_split_train_validation_requires_two_samples_per_class():
     dataset = validate_dataset([[0.0], [1.0]], [0, 1], min_samples=2, require_two_classes=True)
 
     with pytest.raises(ValueError, match="two samples for each class"):
         split_train_validation(dataset)
+
+
+def test_split_train_calibration_validation_requires_three_samples_per_class():
+    dataset = validate_dataset([[0.0], [0.1], [1.0], [1.1]], [0, 0, 1, 1], min_samples=4, require_two_classes=True)
+
+    with pytest.raises(ValueError, match="three samples"):
+        split_train_calibration_validation(dataset)
+
+
+def test_split_train_calibration_validation_keeps_each_class_in_each_split():
+    dataset = validate_dataset(
+        [[float(i)] for i in range(12)],
+        [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1],
+        min_samples=12,
+        require_two_classes=True,
+    )
+
+    x_train, y_train, x_cal, y_cal, x_val, y_val = split_train_calibration_validation(dataset, seed=3)
+
+    assert x_train.shape[0] + x_cal.shape[0] + x_val.shape[0] == 12
+    assert set(y_train.tolist()) == {0, 1}
+    assert set(y_cal.tolist()) == {0, 1}
+    assert set(y_val.tolist()) == {0, 1}
+
+
+def test_split_train_calibration_validation_rejects_invalid_ratios():
+    dataset = validate_dataset(
+        [[float(i)] for i in range(6)],
+        [0, 0, 0, 1, 1, 1],
+        min_samples=6,
+        require_two_classes=True,
+    )
+
+    with pytest.raises(ValueError, match="less than 1"):
+        split_train_calibration_validation(dataset, train_ratio=0.8, calibration_ratio=0.2)
 
 
 def test_balanced_class_weights_are_inverse_frequency():
@@ -188,4 +332,5 @@ def test_train_single_model_cv():
     assert "cv_mean_f1" in result.metrics
     assert "cv_std_f1" in result.metrics
     assert result.metrics["cv_folds"] == 3
-
+    assert "conformal_source" not in result.metrics
+    assert result.uncertainty["conformal_source"] == "dedicated_calibration"

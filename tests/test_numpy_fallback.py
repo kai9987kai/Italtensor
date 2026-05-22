@@ -1,4 +1,7 @@
+import importlib.util
+
 import numpy as np
+import pytest
 
 from italtensor.modeling import ModelConfig, NumpyBinaryClassifier, predict_probability, train_numpy_model
 from italtensor.persistence import load_model_bundle, save_model_bundle
@@ -118,6 +121,8 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
         threshold=0.4,
         preprocessor=preprocessor,
         feature_importances=[{"feature_index": 0, "importance": 0.5}],
+        trial_history=[{"metrics": {"f1": 0.8}}],
+        uncertainty_metadata={"conformal_quantile": 0.33, "conformal_coverage": 0.9},
     )
     loaded, metadata = load_model_bundle(model_path)
     probabilities = predict_probability(loaded, [[1.0, 0.0]])
@@ -130,4 +135,16 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
     assert metadata["model_feature_map"] == "linear"
     assert metadata["threshold"] == 0.4
     assert metadata["preprocessing"]["method"] == "standardize"
+    assert metadata["trial_history"][0]["metrics"]["f1"] == 0.8
+    assert metadata["uncertainty"]["conformal_quantile"] == 0.33
     assert probabilities.shape == (1,)
+
+
+def test_keras_load_without_tensorflow_has_actionable_error(tmp_path):
+    if importlib.util.find_spec("tensorflow") is not None:
+        pytest.skip("TensorFlow is installed; no-TensorFlow error path is not active.")
+    model_path = tmp_path / "model.keras"
+    model_path.write_text("not a real keras archive", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match=r"\.keras models require the optional TensorFlow backend"):
+        load_model_bundle(model_path)

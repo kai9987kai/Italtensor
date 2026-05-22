@@ -319,7 +319,8 @@ def _tensorflow():
         import tensorflow as tf
     except ImportError as exc:
         raise RuntimeError(
-            "TensorFlow is not installed. Install dependencies with: python -m pip install -r requirements.txt"
+            "TensorFlow is not installed. Install the optional backend with: "
+            "python -m pip install -r requirements-tensorflow.txt"
         ) from exc
     return tf
 
