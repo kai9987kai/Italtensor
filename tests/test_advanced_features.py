@@ -117,7 +117,8 @@ def test_ensemble_predictor():
 
     # Test dictionary serialization
     dct = ensemble.to_dict()
-    assert dct["ensemble_format_version"] == 1
+    assert dct["ensemble_format_version"] == 2
+    assert dct.get("fusion") == "mean"
     assert len(dct["models"]) == 2
 
     ensemble_loaded = EnsemblePredictor.from_dict(dct)
