@@ -6,8 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from .data import Dataset, dataset_from_jsonable, dataset_to_jsonable
+from .experiments import EnsemblePredictor
 from .modeling import ModelConfig, NumpyBinaryClassifier
 from .preprocessing import FeatureStandardizer
+from .registry import ModelSlot
 
 
 def save_dataset(path: str | Path, dataset: Dataset) -> Path:
@@ -35,8 +37,13 @@ def save_model_bundle(
     uncertainty_metadata: dict[str, Any] | None = None,
 ) -> tuple[Path, Path]:
     model_path = Path(path)
+    is_ensemble = isinstance(model, EnsemblePredictor)
     is_numpy_model = isinstance(model, NumpyBinaryClassifier)
-    if is_numpy_model:
+    if is_ensemble:
+        model_path = model_path.with_suffix(".italtensor-ensemble.json")
+        model_path.write_text(json.dumps(model.to_dict(), indent=2), encoding="utf-8")
+        model_backend = "ensemble"
+    elif is_numpy_model:
         model_path = model_path.with_suffix(".italtensor-model.json")
     elif model_path.suffix != ".keras":
         model_path = model_path.with_suffix(".keras")
@@ -55,14 +62,20 @@ def save_model_bundle(
                 f"Feature selection index {max_idx} is out of bounds for input dimension {input_dim}."
             )
 
-    if is_numpy_model:
+    if is_ensemble:
+        pass
+    elif is_numpy_model:
         model_path.write_text(json.dumps(model.to_dict(), indent=2), encoding="utf-8")
     else:
         model.save(str(model_path))
     metadata_path = model_metadata_path(model_path)
     metadata = {
         "model_format_version": 1,
-        "model_backend": "numpy-logistic" if is_numpy_model else "tensorflow-keras",
+        "model_backend": (
+            "ensemble"
+            if is_ensemble
+            else ("numpy-logistic" if is_numpy_model else "tensorflow-keras")
+        ),
         "model_feature_map": getattr(model, "feature_map", None),
         "input_dim": input_dim,
         "label_schema": {"negative": 0, "positive": 1},
@@ -83,7 +96,9 @@ def load_model_bundle(path: str | Path):
     model_path = Path(path)
     if model_path.suffix == ".json":
         payload = json.loads(model_path.read_text(encoding="utf-8"))
-        if payload.get("backend") == "numpy-logistic":
+        if payload.get("ensemble_format_version") is not None:
+            model = EnsemblePredictor.from_dict(payload)
+        elif payload.get("backend") == "numpy-logistic":
             model = NumpyBinaryClassifier.from_dict(payload)
         else:
             raise ValueError("Unsupported JSON model file.")
@@ -107,6 +122,80 @@ def load_model_bundle(path: str | Path):
 
 def model_metadata_path(model_path: str | Path) -> Path:
     return Path(str(model_path) + ".json")
+
+
+def save_model_registry(path: str | Path, slots: list[ModelSlot], *, input_dim: int | None = None) -> Path:
+    """Persist in-memory model slots (NumPy models and ensembles)."""
+    serialized: list[dict[str, Any]] = []
+    for slot in slots:
+        model = slot.model
+        if isinstance(model, EnsemblePredictor):
+            model_payload = {"kind": "ensemble", "data": model.to_dict()}
+        elif isinstance(model, NumpyBinaryClassifier):
+            model_payload = {"kind": "numpy", "data": model.to_dict()}
+        else:
+            raise ValueError(
+                f"Slot '{slot.name}' uses a backend that cannot be stored in a registry file. "
+                "Save Keras models individually, then reload them into slots."
+            )
+        serialized.append(
+            {
+                "name": slot.name,
+                "metrics": slot.metrics,
+                "threshold": slot.threshold,
+                "config": slot.config.to_dict() if slot.config is not None else None,
+                "preprocessing": slot.preprocessor.to_dict() if slot.preprocessor is not None else None,
+                "model": model_payload,
+            }
+        )
+    output = {
+        "kind": "italtensor.model_registry",
+        "schema_version": 1,
+        "input_dim": input_dim,
+        "slots": serialized,
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
+    output_path = Path(path)
+    output_path.write_text(json.dumps(output, indent=2), encoding="utf-8")
+    return output_path
+
+
+def load_model_registry(path: str | Path) -> tuple[list["ModelSlot"], int | None]:
+    """Load model slots from a registry JSON file."""
+    from .registry import ModelSlot
+
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if payload.get("kind") != "italtensor.model_registry":
+        raise ValueError("Not an Italtensor model registry file.")
+    slots: list[ModelSlot] = []
+    for item in payload.get("slots", []):
+        model_info = item.get("model", {})
+        kind = model_info.get("kind")
+        data = model_info.get("data")
+        if kind == "ensemble":
+            model = EnsemblePredictor.from_dict(data)
+        elif kind == "numpy":
+            model = NumpyBinaryClassifier.from_dict(data)
+        else:
+            raise ValueError(f"Unsupported registry model kind: {kind}")
+        config_raw = item.get("config")
+        config = ModelConfig.from_dict(config_raw) if isinstance(config_raw, dict) else ModelConfig()
+        preproc_raw = item.get("preprocessing")
+        preprocessor = (
+            FeatureStandardizer.from_dict(preproc_raw) if isinstance(preproc_raw, dict) else None
+        )
+        slots.append(
+            ModelSlot(
+                model=model,
+                config=config,
+                metrics=item.get("metrics") if isinstance(item.get("metrics"), dict) else {},
+                preprocessor=preprocessor,
+                threshold=float(item.get("threshold", 0.5)),
+                name=str(item.get("name", "Loaded slot")),
+            )
+        )
+    input_dim = payload.get("input_dim")
+    return slots, int(input_dim) if input_dim is not None else None
 
 
 def _tensorflow():

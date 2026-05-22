@@ -19,22 +19,22 @@ from .experiments import (
     train_single_model,
     train_single_model_cv,
 )
-from .modeling import ModelConfig, predict_probability
-from .persistence import load_dataset, load_model_bundle, save_dataset, save_model_bundle
+from .modeling import ModelConfig, NumpyBinaryClassifier, predict_probability
+from .model_communication import FUSION_CHOICES, ModelPanel, PanelMember, fit_stacking_weights
+from .model_runner import ModelRunQueue, available_backends, run_model_queue, select_best_from_runs
+from .persistence import (
+    load_dataset,
+    load_model_bundle,
+    load_model_registry,
+    save_dataset,
+    save_model_bundle,
+    save_model_registry,
+)
 from .preprocessing import FeatureStandardizer
 from .presets import generate_builtin_preset, load_preset_file, preset_labels, preset_metadata, save_preset_file
 from .reporting import build_experiment_report, export_experiment_report
+from .registry import ModelSlot
 from .scoring import score_prediction_csv
-
-
-@dataclass
-class ModelSlot:
-    model: Any
-    config: ModelConfig
-    metrics: dict[str, float | int]
-    preprocessor: FeatureStandardizer | None
-    threshold: float
-    name: str
 
 
 @dataclass
@@ -54,6 +54,8 @@ class AppState:
     status_message: str = "Ready"
     model_slots: list[ModelSlot] = field(default_factory=list)
     active_slot_index: int | None = None
+    panel_fusion: str = "mean"
+    communication_log: list[dict[str, Any]] = field(default_factory=list)
 
 
 def run_app() -> None:
@@ -134,6 +136,16 @@ def run_app() -> None:
                 _distill_model(window, state, values)
             elif event == "-MERGE_SLOTS-":
                 _merge_slots(window, state, values)
+            elif event == "-RUN_MULTI_BACKEND-":
+                _start_multi_backend_run(window, state, values)
+            elif event == "-PANEL_PREDICT-":
+                _panel_predict(window, state, values)
+            elif event == "-SAVE_REGISTRY-":
+                _save_registry(window, state, values)
+            elif event == "-LOAD_REGISTRY-":
+                _load_registry(window, state, values)
+            elif event == "-BUILD_STACKED_ENSEMBLE-":
+                _build_stacked_ensemble(window, state, values)
             elif event == "-TRIAL_DONE-":
                 index, total, result = values[event]
                 _log(window, f"Trial {index}/{total}: {_format_config(result.config)} | {_format_metrics(result.metrics)}")
@@ -206,6 +218,15 @@ def _layout(sg):
             sg.Input("8", key="-TRIALS-", size=(6, 1)),
             sg.Text("Map"),
             sg.Combo(["linear", "quadratic", "rff"], default_value="rff", readonly=True, key="-FEATURE_MAP-", size=(10, 1)),
+            sg.Text("Backend"),
+            sg.Combo(
+                ["auto"] + available_backends(),
+                default_value="auto",
+                readonly=True,
+                key="-BACKEND-",
+                size=(8, 1),
+                tooltip="auto picks Keras when TensorFlow is installed, else NumPy",
+            ),
         ],
         [
             sg.Text("LR Sched"),
@@ -262,19 +283,45 @@ def _layout(sg):
     ]
 
     slots_column = [
-        [sg.Text("Model Registry / Slots")],
-        [sg.Listbox(values=[], size=(40, 10), key="-MODEL_SLOTS-", enable_events=True, expand_y=True)],
+        [sg.Text("Model Registry / Multi-Model")],
+        [
+            sg.Text("Fusion"),
+            sg.Combo(
+                list(FUSION_CHOICES),
+                default_value="mean",
+                readonly=True,
+                key="-PANEL_FUSION-",
+                size=(12, 1),
+                tooltip="How panel members combine predictions",
+            ),
+        ],
+        [sg.Listbox(values=[], size=(40, 9), key="-MODEL_SLOTS-", enable_events=True, expand_y=True)],
         [
             sg.Button("Store Model", key="-STORE_MODEL_SLOT-", expand_x=True),
             sg.Button("Activate Slot", key="-ACTIVATE_MODEL_SLOT-", expand_x=True),
         ],
         [
-            sg.Button("Build Ensemble", key="-BUILD_ENSEMBLE-", expand_x=True),
-            sg.Button("Compare Models", key="-COMPARE_MODELS-", expand_x=True),
+            sg.Button("Run Multi-Backend", key="-RUN_MULTI_BACKEND-", expand_x=True),
+            sg.Button("Panel Predict", key="-PANEL_PREDICT-", expand_x=True),
         ],
         [
+            sg.Button("Build Ensemble", key="-BUILD_ENSEMBLE-", expand_x=True),
+            sg.Button("Stacked Ensemble", key="-BUILD_STACKED_ENSEMBLE-", expand_x=True),
+        ],
+        [
+            sg.Button("Compare Models", key="-COMPARE_MODELS-", expand_x=True),
             sg.Button("Distill Model", key="-DISTILL_MODEL-", expand_x=True),
+        ],
+        [
             sg.Button("Merge Slots", key="-MERGE_SLOTS-", expand_x=True),
+            sg.Button("Save Registry", key="-SAVE_REGISTRY-", expand_x=True),
+        ],
+        [sg.Button("Load Registry", key="-LOAD_REGISTRY-", expand_x=True)],
+        [sg.Text("Registry JSON")],
+        [
+            sg.Input(key="-REGISTRY_PATH-", expand_x=True),
+            sg.FileSaveAs(file_types=(("Registry JSON", "*.json"),)),
+            sg.FileBrowse(file_types=(("Registry JSON", "*.json"), ("All files", "*.*"))),
         ],
     ]
 
@@ -359,25 +406,17 @@ def _clear_data(window, state: AppState) -> None:
     _log(window, "Cleared dataset.")
 
 
-def _start_train_once(window, state: AppState, values: dict[str, Any]) -> None:
-    _ensure_not_busy(state)
-    dataset = validate_dataset(state.features, state.labels, min_samples=4, require_two_classes=True)
-
-    # Parse L1 penalty
+def _config_from_values(values: dict[str, Any]) -> ModelConfig:
     l1_raw = values.get("-L1_PENALTY-", "0.0").strip()
     l1_penalty = float(l1_raw) if l1_raw else 0.0
-
-    # Parse feature selection k
     feat_k_raw = values.get("-FEATURE_K-", "").strip()
     feature_selection_k = int(feat_k_raw) if feat_k_raw else None
-
     grad_clip_raw = values.get("-GRADIENT_CLIP-", "0.0").strip()
     try:
         gradient_clip = float(grad_clip_raw) if grad_clip_raw else 0.0
     except ValueError:
         raise ValueError("Gradient clip must be a float.")
-
-    config = ModelConfig(
+    return ModelConfig(
         hidden_layers=(32,),
         learning_rate=0.001,
         batch_size=_positive_int(values["-BATCH_SIZE-"], "batch size"),
@@ -387,7 +426,14 @@ def _start_train_once(window, state: AppState, values: dict[str, Any]) -> None:
         feature_selection_k=feature_selection_k,
         lr_schedule=values.get("-LR_SCHEDULE-", "constant"),
         gradient_clip=gradient_clip,
+        backend=values.get("-BACKEND-", "auto"),
     )
+
+
+def _start_train_once(window, state: AppState, values: dict[str, Any]) -> None:
+    _ensure_not_busy(state)
+    dataset = validate_dataset(state.features, state.labels, min_samples=4, require_two_classes=True)
+    config = _config_from_values(values)
 
     use_cv = values.get("-USE_CV-", False)
     if use_cv:
@@ -570,6 +616,30 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
     elif kind == "batch_predictions":
         path, count = result
         _log(window, f"Exported {count} batch prediction(s) to {path}.")
+    elif kind == "multi_backend":
+        best = select_best_from_runs(result)
+        state.model = best.model
+        state.latest_config = best.config
+        state.latest_metrics = best.metrics
+        state.latest_threshold = best.threshold
+        state.preprocessor = best.preprocessor
+        state.feature_importances = best.feature_importances
+        state.trial_history = [_summarize_trial(item) for item in result]
+        state.uncertainty_metadata = best.uncertainty
+        for item in result:
+            slot = ModelSlot(
+                model=item.model,
+                config=item.config,
+                metrics=item.metrics.copy(),
+                preprocessor=item.preprocessor,
+                threshold=item.threshold,
+                name=f"{item.config.backend} (F1: {item.metrics.get('f1', 0.0):.4f})",
+            )
+            state.model_slots.append(slot)
+        state.active_slot_index = len(state.model_slots) - 1
+        _update_slots_listbox(window, state)
+        _log(window, f"Multi-backend sweep complete ({len(result)} runs). Best: {_format_config(best.config)}")
+        _log(window, f"Best metrics: {_format_metrics(best.metrics)}")
     elif kind == "distill":
         training_result = result
         state.model = training_result.model
@@ -686,6 +756,11 @@ def _set_busy(window, busy: bool) -> None:
         "-WEIGHT_ANALYSIS-",
         "-DISTILL_MODEL-",
         "-MERGE_SLOTS-",
+        "-RUN_MULTI_BACKEND-",
+        "-PANEL_PREDICT-",
+        "-SAVE_REGISTRY-",
+        "-LOAD_REGISTRY-",
+        "-BUILD_STACKED_ENSEMBLE-",
     ):
         if key in window.AllKeysDict:
             window[key].update(disabled=busy)
@@ -726,6 +801,7 @@ def _format_config(config: ModelConfig) -> str:
         f"batch={config.batch_size}",
         f"epochs={config.max_epochs}",
         f"map={config.feature_map}",
+        f"backend={config.backend}",
     ]
     if getattr(config, 'l1_penalty', 0.0) > 0:
         parts.append(f"L1={config.l1_penalty:g}")
@@ -948,6 +1024,89 @@ def _activate_model_slot(window, state: AppState, values: dict[str, Any]) -> Non
     _update_slots_listbox(window, state)
 
 
+def _start_multi_backend_run(window, state: AppState, values: dict[str, Any]) -> None:
+    _ensure_not_busy(state)
+    dataset = validate_dataset(state.features, state.labels, min_samples=4, require_two_classes=True)
+    config = _config_from_values(values)
+    queue = ModelRunQueue.multi_backend_sweep(config)
+
+    def task() -> tuple[str, list[ExperimentResult]]:
+        results = run_model_queue(
+            dataset.features,
+            dataset.labels,
+            queue,
+            progress_callback=lambda index, total, result: window.write_event_value(
+                "-TRIAL_DONE-", (index, total, result)
+            ),
+        )
+        return "multi_backend", results
+
+    _start_worker(window, state, f"Running {len(queue.specs)} backend(s)...", task)
+
+
+def _panel_predict(window, state: AppState, values: dict[str, Any]) -> None:
+    if not state.model_slots:
+        raise ValueError("Store at least one model slot before panel prediction.")
+    vector_raw = values.get("-PREDICTION_VECTOR-", "").strip()
+    if not vector_raw:
+        raise ValueError("Enter a prediction vector JSON for panel deliberation.")
+    vector = parse_prediction_vector(vector_raw, state.input_dim)
+    fusion = values.get("-PANEL_FUSION-", state.panel_fusion)
+    state.panel_fusion = fusion
+
+    members = [
+        PanelMember(
+            name=slot.name,
+            model=slot.model,
+            preprocessor=slot.preprocessor,
+            weight=max(1e-6, float(slot.metrics.get("f1", 1.0))),
+            threshold=slot.threshold,
+        )
+        for slot in state.model_slots
+    ]
+    panel = ModelPanel(members, fusion=fusion)
+    prediction = panel.predict(vector, threshold=state.latest_threshold)
+    state.communication_log.extend(message.to_dict() for message in prediction.messages)
+    _log(window, "=== Panel Deliberation ===")
+    _log(window, panel.format_deliberation(prediction))
+    consensus_label = 1 if float(prediction.consensus[0]) >= state.latest_threshold else 0
+    _log(
+        window,
+        f"Panel outcome: label={consensus_label}, p={float(prediction.consensus[0]):.4f}, "
+        f"disagreement={float(prediction.disagreement[0]):.4f}",
+    )
+
+
+def _save_registry(window, state: AppState, values: dict[str, Any]) -> None:
+    if not state.model_slots:
+        raise ValueError("No model slots to save.")
+    path = save_model_registry(
+        _required_path(values["-REGISTRY_PATH-"], "registry path"),
+        state.model_slots,
+        input_dim=state.input_dim,
+    )
+    _log(window, f"Saved {len(state.model_slots)} slot(s) to {path}.")
+
+
+def _load_registry(window, state: AppState, values: dict[str, Any]) -> None:
+    slots, input_dim = load_model_registry(_required_path(values["-REGISTRY_PATH-"], "registry path"))
+    if state.input_dim is not None and input_dim is not None and input_dim != state.input_dim:
+        raise ValueError(f"Registry expects {input_dim} features, current dataset uses {state.input_dim}.")
+    state.model_slots = slots
+    state.active_slot_index = 0 if slots else None
+    if input_dim is not None and state.input_dim is None:
+        state.input_dim = input_dim
+    if slots:
+        active = slots[state.active_slot_index or 0]
+        state.model = active.model
+        state.latest_config = active.config
+        state.latest_metrics = active.metrics.copy()
+        state.preprocessor = active.preprocessor
+        state.latest_threshold = active.threshold
+    _update_slots_listbox(window, state)
+    _log(window, f"Loaded {len(slots)} slot(s) from registry.")
+
+
 def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
     if not state.model_slots:
         _log(window, "No model slots stored to build an ensemble.")
@@ -955,8 +1114,10 @@ def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
     
     from .experiments import EnsemblePredictor, evaluate_predictions
     
+    fusion = values.get("-PANEL_FUSION-", "mean")
+    weights = [max(1e-6, float(slot.metrics.get("f1", 1.0))) for slot in state.model_slots] if fusion == "weighted" else None
     models = [(slot.model, slot.preprocessor) for slot in state.model_slots]
-    ensemble = EnsemblePredictor(models)
+    ensemble = EnsemblePredictor(models, fusion=fusion, member_weights=weights)
     
     state.model = ensemble
     state.preprocessor = None
@@ -982,11 +1143,55 @@ def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
         metrics=state.latest_metrics.copy(),
         preprocessor=None,
         threshold=0.5,
-        name=f"Ensemble ({len(models)} models)",
+        name=f"Ensemble [{fusion}] ({len(models)} models)",
     )
     state.model_slots.append(slot)
     state.active_slot_index = len(state.model_slots) - 1
     _update_slots_listbox(window, state)
+
+
+def _build_stacked_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
+    if len(state.model_slots) < 2:
+        _log(window, "Need at least 2 model slots for stacked fusion.")
+        return
+    if not state.features or not state.labels:
+        _log(window, "Load a dataset to fit stacking weights on validation data.")
+        return
+
+    from .experiments import EnsemblePredictor, evaluate_predictions, split_train_validation
+
+    dataset = validate_dataset(state.features, state.labels, min_samples=4, require_two_classes=True)
+    x_train, y_train, x_val, y_val = split_train_validation(dataset, seed=42)
+    members = [
+        PanelMember(
+            name=slot.name,
+            model=slot.model,
+            preprocessor=slot.preprocessor,
+            threshold=slot.threshold,
+        )
+        for slot in state.model_slots
+    ]
+    stacking_coef = fit_stacking_weights(members, x_val, y_val)
+    models = [(slot.model, slot.preprocessor) for slot in state.model_slots]
+    ensemble = EnsemblePredictor(models, fusion="stacking", stacking_coef=stacking_coef)
+    state.model = ensemble
+    state.preprocessor = None
+    state.latest_config = ModelConfig(backend="auto", feature_map=values.get("-FEATURE_MAP-", "linear"))
+    probs = ensemble.predict(dataset.features).reshape(-1)
+    metrics = evaluate_predictions(dataset.labels, probs, threshold=0.5)
+    state.latest_metrics = metrics
+    slot = ModelSlot(
+        model=ensemble,
+        config=state.latest_config,
+        metrics=metrics.copy(),
+        preprocessor=None,
+        threshold=0.5,
+        name=f"Stacked Ensemble ({len(models)} models)",
+    )
+    state.model_slots.append(slot)
+    state.active_slot_index = len(state.model_slots) - 1
+    _update_slots_listbox(window, state)
+    _log(window, f"Built stacked ensemble with {len(models)} members (F1: {metrics.get('f1', 0.0):.4f}).")
 
 
 def _compare_models(window, state: AppState, values: dict[str, Any]) -> None:
@@ -1061,24 +1266,7 @@ def _distill_model(window, state: AppState, values: dict[str, Any]) -> None:
 
     dataset = validate_dataset(state.features, state.labels, min_samples=4, require_two_classes=True)
 
-    l1_raw = values.get("-L1_PENALTY-", "0.0").strip()
-    l1_penalty = float(l1_raw) if l1_raw else 0.0
-    feat_k_raw = values.get("-FEATURE_K-", "").strip()
-    feature_selection_k = int(feat_k_raw) if feat_k_raw else None
-    grad_clip_raw = values.get("-GRADIENT_CLIP-", "0.0").strip()
-    gradient_clip = float(grad_clip_raw) if grad_clip_raw else 0.0
-
-    config = ModelConfig(
-        hidden_layers=(32,),
-        learning_rate=0.001,
-        batch_size=_positive_int(values["-BATCH_SIZE-"], "batch size"),
-        max_epochs=_positive_int(values["-EPOCHS-"], "epochs"),
-        feature_map=values["-FEATURE_MAP-"],
-        l1_penalty=l1_penalty,
-        feature_selection_k=feature_selection_k,
-        lr_schedule=values.get("-LR_SCHEDULE-", "constant"),
-        gradient_clip=gradient_clip,
-    )
+    config = _config_from_values(values)
 
     from .experiments import train_distilled_model
 

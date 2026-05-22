@@ -2,7 +2,6 @@ import numpy as np
 from unittest.mock import patch
 from italtensor.app import (
     AppState,
-    ModelSlot,
     _apply_preset_metadata,
     _format_uncertainty,
     _invalidate_model_artifacts,
@@ -16,6 +15,7 @@ from italtensor.app import (
 from italtensor.data import validate_dataset
 from italtensor.modeling import ModelConfig
 from italtensor.preprocessing import FeatureStandardizer
+from italtensor.registry import ModelSlot
 
 
 class FakeElement:

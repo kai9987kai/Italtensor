@@ -939,9 +939,25 @@ def train_single_model_cv(
 
 
 class EnsemblePredictor:
-    """Combines multiple models to produce averaged predictions and compute uncertainty."""
-    def __init__(self, models: list[tuple[Any, FeatureStandardizer | None]]):
+    """Combines multiple models with configurable fusion strategies."""
+
+    def __init__(
+        self,
+        models: list[tuple[Any, FeatureStandardizer | None]],
+        *,
+        fusion: str = "mean",
+        member_weights: list[float] | None = None,
+        stacking_coef: np.ndarray | None = None,
+    ):
+        from .model_communication import FUSION_CHOICES
+
+        fusion_norm = (fusion or "mean").lower().strip()
+        if fusion_norm not in FUSION_CHOICES:
+            raise ValueError(f"fusion must be one of: {', '.join(FUSION_CHOICES)}.")
         self.models = models
+        self.fusion = fusion_norm
+        self.member_weights = member_weights
+        self.stacking_coef = stacking_coef
 
     @property
     def input_dim(self) -> int:
@@ -957,18 +973,35 @@ class EnsemblePredictor:
         return (None, self.input_dim)
 
     def predict(self, samples: Sequence[float] | np.ndarray, verbose: int = 0) -> np.ndarray:
+        fused = self._collect_probs(samples)
+        return fused.reshape(-1, 1).astype(np.float32)
+
+    def _collect_probs(self, samples: Sequence[float] | np.ndarray) -> np.ndarray:
         sample_array = np.asarray(samples, dtype=np.float32)
         if sample_array.ndim == 1:
             sample_array = sample_array.reshape(1, -1)
-        
+
         all_probs = []
         for model, preprocessor in self.models:
             prepared = preprocessor.transform(sample_array) if preprocessor is not None else sample_array
             probs = predict_probability(model, prepared)
-            all_probs.append(probs)
-        
-        mean_probs = np.mean(all_probs, axis=0).reshape(-1, 1).astype(np.float32)
-        return mean_probs
+            all_probs.append(probs.reshape(-1))
+
+        stacked = np.stack(all_probs, axis=0)
+        if self.fusion == "median":
+            return np.median(stacked, axis=0).astype(np.float32)
+        if self.fusion == "vote":
+            return (np.mean((stacked >= 0.5).astype(np.float32), axis=0)).astype(np.float32)
+        if self.fusion == "weighted" and self.member_weights:
+            weights = np.asarray(self.member_weights, dtype=np.float32)
+            weights = weights / max(weights.sum(), 1e-6)
+            return np.average(stacked, axis=0, weights=weights).astype(np.float32)
+        if self.fusion == "stacking" and self.stacking_coef is not None:
+            meta = stacked.T
+            logits = meta @ self.stacking_coef.reshape(-1, 1)
+            clipped = np.clip(logits.reshape(-1), -50.0, 50.0)
+            return (1.0 / (1.0 + np.exp(-clipped))).astype(np.float32)
+        return np.mean(stacked, axis=0).astype(np.float32)
 
     def predict_with_uncertainty(self, samples: Sequence[float] | np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Return mean probabilities and prediction standard deviation (disagreement)."""
@@ -997,7 +1030,10 @@ class EnsemblePredictor:
                 "preprocessing": preprocessor.to_dict() if preprocessor is not None else None,
             })
         return {
-            "ensemble_format_version": 1,
+            "ensemble_format_version": 2,
+            "fusion": self.fusion,
+            "member_weights": self.member_weights,
+            "stacking_coef": self.stacking_coef.astype(float).tolist() if self.stacking_coef is not None else None,
             "models": serialized_models,
         }
 
@@ -1015,7 +1051,16 @@ class EnsemblePredictor:
             else:
                 raise ValueError("Deserializing Keras models directly from dict is not supported in EnsemblePredictor.")
             models.append((model, preprocessor))
-        return cls(models)
+        return cls(
+            models,
+            fusion=str(data.get("fusion", "mean")),
+            member_weights=data.get("member_weights"),
+            stacking_coef=(
+                np.asarray(data["stacking_coef"], dtype=np.float32)
+                if data.get("stacking_coef") is not None
+                else None
+            ),
+        )
 
 
 def train_distilled_model(

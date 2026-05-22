@@ -21,6 +21,7 @@ class ModelConfig:
     feature_selection_k: int | None = None
     lr_schedule: str = "constant"
     gradient_clip: float = 0.0
+    backend: str = "auto"
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -37,6 +38,7 @@ class ModelConfig:
             "feature_selection_k": self.feature_selection_k,
             "lr_schedule": self.lr_schedule,
             "gradient_clip": self.gradient_clip,
+            "backend": self.backend,
         }
 
     @classmethod
@@ -55,6 +57,7 @@ class ModelConfig:
             feature_selection_k=value.get("feature_selection_k") if value.get("feature_selection_k") is None else int(value.get("feature_selection_k")),
             lr_schedule=str(value.get("lr_schedule", "constant")),
             gradient_clip=float(value.get("gradient_clip", 0.0)),
+            backend=str(value.get("backend", "auto")),
         )
 
 
@@ -183,7 +186,20 @@ def train_model(
     validation_data: tuple[np.ndarray, np.ndarray] | None = None,
     class_weight: dict[int, float] | None = None,
     verbose: int = 0,
+    force_backend: str | None = None,
 ):
+    from .model_runner import BACKEND_KERAS, BACKEND_NUMPY, resolve_backend
+
+    resolved = resolve_backend(force_backend or getattr(config, "backend", "auto"))
+    if resolved == BACKEND_NUMPY:
+        return train_numpy_model(
+            features,
+            labels,
+            config,
+            validation_data=validation_data,
+            class_weight=class_weight,
+        )
+
     tf = _try_tensorflow()
     if tf is None:
         return train_numpy_model(

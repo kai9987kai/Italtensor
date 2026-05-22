@@ -30,6 +30,10 @@ The app runs without TensorFlow by default. When TensorFlow is unavailable, Ital
 - Probability diagnostics including Brier score, log loss, calibration error, ROC-AUC, and average precision.
 - Split-conformal-style uncertainty diagnostics and prediction sets for model abstention experiments.
 - Trial-history export for comparing auto-experiment runs.
+- Explicit training backend control: `auto`, `numpy`, or `keras` (when TensorFlow is installed).
+- Multi-backend run queue: train NumPy and Keras models in one sweep and store each in the registry.
+- Model panel communication: per-model votes, consensus fusion (mean, median, vote, weighted, stacking), and disagreement scores.
+- Persistable model registry (`.json`) for NumPy models and ensembles across sessions.
 - JSON or Markdown experiment reports.
 - Model save/load:
   - `.italtensor-model.json` for NumPy fallback models
@@ -164,6 +168,15 @@ TensorFlow-specific tests skip when TensorFlow is not installed.
 - Validation metrics need enough examples from both classes. The app requires at least two samples per class for train/validation splitting.
 - Conformal-style uncertainty is strongest when the dataset is large enough for the dedicated calibration split. On tiny datasets, it falls back to validation-reused diagnostics.
 
+## Multi-Model Controls
+
+- **Backend** selector on the training panel chooses `auto`, `numpy`, or `keras`. `auto` uses Keras when TensorFlow is installed, otherwise NumPy.
+- **Run Multi-Backend** trains one model per available backend with the same hyperparameters, stores each run in the registry, and activates the best validation F1.
+- **Fusion** on the registry panel controls how ensembles combine member predictions: `mean`, `median`, `vote`, `weighted` (by slot F1), or `stacking` (linear meta-learner on validation probabilities).
+- **Panel Predict** runs every stored slot on the prediction vector and logs a communication trace (per-model votes plus panel consensus and disagreement).
+- **Stacked Ensemble** fits Wolpert-style stacking weights on the validation split, then adds a stacked ensemble slot.
+- **Save/Load Registry** writes `italtensor.model_registry` JSON files containing NumPy models and ensembles (Keras slots must be saved individually).
+
 ## Research And Design Anchors
 
 - Polynomial feature expansion follows the same idea exposed by scikit-learn `PolynomialFeatures`.
@@ -171,4 +184,6 @@ TensorFlow-specific tests skip when TensorFlow is not installed.
 - Conformal prediction design is informed by Vovk, Gammerman, and Shafer's [Algorithmic Learning in a Random World](https://link.springer.com/book/10.1007/978-3-031-06649-8), Angelopoulos and Bates' [gentle introduction](https://arxiv.org/abs/2107.07511), and Romano, Sesia, and Candes' classification-set work, [Classification with Valid and Adaptive Coverage](https://papers.nips.cc/paper/2020/hash/244edd7e85dc81602b7615cd705545f5-Abstract.html).
 - Batch review priority follows classic uncertainty-sampling intuition from Burr Settles' [Active Learning Literature Survey](https://burrsettles.com/pub/settles.activelearning.pdf): examples closest to the model's decision boundary are often the most informative to inspect or label next.
 - Batch drift flags are a lightweight standardized-distance diagnostic inspired by distance-based OOD detection work such as Lee et al.'s [simple unified framework for detecting out-of-distribution samples](https://proceedings.neurips.cc/paper/2018/file/abdeb6f575ac5c6676b747bca8d09cc2-Paper.pdf). Italtensor uses per-row z-score summaries rather than a full covariance model to stay dependency-free.
+- Multi-model stacking follows David Wolpert's stacked generalization idea: base models produce validation probabilities, and a linear meta-learner combines them ([stacked generalization](https://www.ml.cmu.edu/research/dap-papers/dap-wolpert-stacked-generalization.pdf)).
+- Panel vote fusion and disagreement scores echo ensemble diversity diagnostics used in mixture-of-experts and committee-based classifiers; high disagreement flags inputs worth human review alongside conformal abstention.
 - Brier/log-loss style probability evaluation and threshold tuning are standard classification-evaluation tools; Italtensor exposes both threshold-tuned metrics and fixed-threshold baselines so validation gains are visible instead of hidden.
