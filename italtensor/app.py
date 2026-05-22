@@ -11,7 +11,7 @@ from .data import (
     parse_training_example,
     validate_dataset,
 )
-from .experiments import ExperimentResult, run_experiments, select_best_result, train_single_model
+from .experiments import ExperimentResult, run_experiments, select_best_result, train_single_model, train_single_model_cv
 from .modeling import ModelConfig, predict_probability
 from .persistence import load_dataset, load_model_bundle, save_dataset, save_model_bundle
 from .preprocessing import FeatureStandardizer
@@ -276,18 +276,35 @@ def _clear_data(window, state: AppState) -> None:
 def _start_train_once(window, state: AppState, values: dict[str, Any]) -> None:
     _ensure_not_busy(state)
     dataset = validate_dataset(state.features, state.labels, min_samples=4, require_two_classes=True)
+
+    # Parse L1 penalty
+    l1_raw = values.get("-L1_PENALTY-", "0.0").strip()
+    l1_penalty = float(l1_raw) if l1_raw else 0.0
+
+    # Parse feature selection k
+    feat_k_raw = values.get("-FEATURE_K-", "").strip()
+    feature_selection_k = int(feat_k_raw) if feat_k_raw else None
+
     config = ModelConfig(
         hidden_layers=(32,),
         learning_rate=0.001,
         batch_size=_positive_int(values["-BATCH_SIZE-"], "batch size"),
         max_epochs=_positive_int(values["-EPOCHS-"], "epochs"),
         feature_map=values["-FEATURE_MAP-"],
+        l1_penalty=l1_penalty,
+        feature_selection_k=feature_selection_k,
     )
 
-    def task() -> tuple[str, ExperimentResult]:
-        return "single", train_single_model(dataset.features, dataset.labels, config)
-
-    _start_worker(window, state, "Training one model...", task)
+    use_cv = values.get("-USE_CV-", False)
+    if use_cv:
+        n_splits = _positive_int(values.get("-KFOLD_SPLITS-", "5"), "CV folds")
+        def task() -> tuple[str, ExperimentResult]:
+            return "single", train_single_model_cv(dataset.features, dataset.labels, config, n_splits=n_splits)
+        _start_worker(window, state, f"Training with {n_splits}-Fold CV...", task)
+    else:
+        def task() -> tuple[str, ExperimentResult]:
+            return "single", train_single_model(dataset.features, dataset.labels, config)
+        _start_worker(window, state, "Training one model...", task)
 
 
 def _start_auto_experiments(window, state: AppState, values: dict[str, Any]) -> None:
@@ -404,6 +421,8 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.preprocessor = training_result.preprocessor
         state.feature_importances = training_result.feature_importances
         _log(window, f"Training complete: {_format_metrics(training_result.metrics)}")
+        _log(window, _format_calibration(training_result.metrics))
+        _log(window, _format_cv_summary(training_result.metrics))
         _log(window, _format_importances(training_result.feature_importances))
     elif kind == "experiments":
         best = select_best_result(result)
@@ -415,6 +434,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.feature_importances = best.feature_importances
         _log(window, f"Best config: {_format_config(best.config)}")
         _log(window, f"Best metrics: {_format_metrics(best.metrics)}")
+        _log(window, _format_calibration(best.metrics))
         _log(window, _format_importances(best.feature_importances))
 
 
@@ -506,10 +526,18 @@ def _int_value(raw_value: str, label: str) -> int:
 
 
 def _format_config(config: ModelConfig) -> str:
-    return (
-        f"layers={list(config.hidden_layers)}, lr={config.learning_rate:g}, "
-        f"batch={config.batch_size}, epochs={config.max_epochs}, map={config.feature_map}"
-    )
+    parts = [
+        f"layers={list(config.hidden_layers)}",
+        f"lr={config.learning_rate:g}",
+        f"batch={config.batch_size}",
+        f"epochs={config.max_epochs}",
+        f"map={config.feature_map}",
+    ]
+    if getattr(config, 'l1_penalty', 0.0) > 0:
+        parts.append(f"L1={config.l1_penalty:g}")
+    if getattr(config, 'feature_selection_k', None) is not None:
+        parts.append(f"feat_k={config.feature_selection_k}")
+    return ", ".join(parts)
 
 
 def _dataset_summary(state: AppState) -> str:
@@ -530,6 +558,8 @@ def _format_metrics(metrics: dict[str, float | int]) -> str:
         "recall",
         "threshold",
         "validation_loss",
+        "brier_score",
+        "ece",
         "class_weight_0",
         "class_weight_1",
     ]
@@ -541,6 +571,13 @@ def _format_metrics(metrics: dict[str, float | int]) -> str:
     for key in ("true_positive", "true_negative", "false_positive", "false_negative"):
         if key in metrics:
             parts.append(f"{key}={metrics[key]}")
+    # Cross-validation metrics
+    cv_keys = sorted(k for k in metrics if k.startswith("cv_"))
+    if cv_keys:
+        parts.append("--- CV ---")
+        for key in cv_keys:
+            value = metrics[key]
+            parts.append(f"{key}={value:.4f}" if isinstance(value, float) else f"{key}={value}")
     return ", ".join(parts) if parts else "no metrics"
 
 
@@ -554,5 +591,34 @@ def _format_importances(importances: list[dict[str, float | int]]) -> str:
     return "Top features: " + ", ".join(parts)
 
 
+def _format_calibration(metrics: dict[str, float | int]) -> str:
+    brier = metrics.get("brier_score")
+    ece = metrics.get("ece")
+    if brier is None and ece is None:
+        return ""
+    parts = ["Calibration diagnostics:"]
+    if brier is not None:
+        parts.append(f"Brier={float(brier):.4f}")
+    if ece is not None:
+        parts.append(f"ECE={float(ece):.4f}")
+    return " ".join(parts)
+
+
+def _format_cv_summary(metrics: dict[str, float | int]) -> str:
+    cv_folds = metrics.get("cv_folds")
+    if cv_folds is None:
+        return ""
+    lines = [f"Cross-validation ({cv_folds} folds):"]
+    for base_key in ["f1", "accuracy", "balanced_accuracy", "validation_loss", "brier_score", "ece"]:
+        mean_key = f"cv_mean_{base_key}"
+        std_key = f"cv_std_{base_key}"
+        if mean_key in metrics:
+            mean_val = float(metrics[mean_key])
+            std_val = float(metrics.get(std_key, 0.0))
+            lines.append(f"  {base_key}: {mean_val:.4f} ± {std_val:.4f}")
+    return "\n".join(lines)
+
+
 def _log(window, message: str) -> None:
-    window["-LOG-"].update(f"{message}\n", append=True)
+    if message:
+        window["-LOG-"].update(f"{message}\n", append=True)

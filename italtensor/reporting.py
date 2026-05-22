@@ -75,7 +75,30 @@ def format_markdown_report(report: dict[str, Any]) -> str:
         "",
         "## Metrics",
     ]
-    lines.extend(f"- {key}: {_format_value(value)}" for key, value in metrics.items())
+    # Core metrics (exclude cv_ prefixed and calibration for separate sections)
+    core_keys = [k for k in metrics if not k.startswith("cv_")]
+    calibration_keys = {"brier_score", "ece"}
+    for key in core_keys:
+        if key not in calibration_keys:
+            lines.append(f"- {key}: {_format_value(metrics[key])}")
+
+    # Calibration section
+    if any(k in metrics for k in calibration_keys):
+        lines.extend(["", "## Calibration Diagnostics"])
+        for key in ["brier_score", "ece"]:
+            if key in metrics:
+                lines.append(f"- {key}: {_format_value(metrics[key])}")
+
+    # Cross-validation section
+    cv_keys = sorted(k for k in metrics if k.startswith("cv_"))
+    if cv_keys:
+        cv_folds = metrics.get("cv_folds", "?")
+        lines.extend(["", f"## Cross-Validation ({cv_folds} Folds)"])
+        for key in cv_keys:
+            if key == "cv_folds":
+                continue
+            lines.append(f"- {key}: {_format_value(metrics[key])}")
+
     lines.extend(["", "## Top Feature Importances"])
     if importances:
         for item in importances:
