@@ -170,7 +170,6 @@ def _parse_csv_rows(
     rows: Iterable[Sequence[str]], expected_dim: int | None
 ) -> list[tuple[list[float], int]]:
     parsed: list[tuple[list[float], int]] = []
-    skipped_header = False
     inferred_dim = expected_dim
 
     for row_number, row in enumerate(rows, start=1):
@@ -180,8 +179,7 @@ def _parse_csv_rows(
             features = _parse_feature_vector([_parse_csv_float(cell) for cell in row[:-1]], inferred_dim)
             label = _parse_label(_parse_csv_label(row[-1]))
         except DataValidationError as exc:
-            if row_number == 1 and not skipped_header:
-                skipped_header = True
+            if row_number == 1 and _looks_like_header(row):
                 continue
             raise DataValidationError(f"CSV row {row_number}: {exc}") from exc
 
@@ -209,3 +207,13 @@ def _parse_csv_label(cell: str) -> int:
     if stripped not in {"0", "1"}:
         raise DataValidationError("Final CSV column must be label 0 or 1.")
     return int(stripped)
+
+
+def _looks_like_header(row: Sequence[str]) -> bool:
+    for cell in row:
+        try:
+            float(cell.strip())
+        except ValueError:
+            continue
+        return False
+    return True

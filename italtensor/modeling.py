@@ -68,6 +68,7 @@ def train_model(
     config: ModelConfig,
     *,
     validation_data: tuple[np.ndarray, np.ndarray] | None = None,
+    class_weight: dict[int, float] | None = None,
     verbose: int = 0,
 ):
     tf = _tensorflow()
@@ -89,6 +90,7 @@ def train_model(
         epochs=config.max_epochs,
         batch_size=config.batch_size,
         callbacks=callbacks,
+        class_weight=class_weight,
         verbose=verbose,
     )
     return model, {name: [float(item) for item in values] for name, values in history.history.items()}

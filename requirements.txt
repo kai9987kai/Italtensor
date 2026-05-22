@@ -1,0 +1,5 @@
+tensorflow
+PySimpleGUI>=6,<7
+numpy
+scikit-learn
+pytest
