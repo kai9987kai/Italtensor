@@ -40,11 +40,18 @@ def save_model_bundle(
         model_path = model_path.with_suffix(".keras")
 
     resolved_preprocessor = preprocessor or FeatureStandardizer.identity(input_dim)
-    if resolved_preprocessor.mean.shape[0] != input_dim:
-        raise ValueError(
-            f"Preprocessing metadata expects {resolved_preprocessor.mean.shape[0]} features, "
-            f"model expects {input_dim}."
-        )
+    if resolved_preprocessor.selected_indices is None:
+        if resolved_preprocessor.mean.shape[0] != input_dim:
+            raise ValueError(
+                f"Preprocessing metadata expects {resolved_preprocessor.mean.shape[0]} features, "
+                f"model expects {input_dim}."
+            )
+    else:
+        max_idx = max(resolved_preprocessor.selected_indices) if resolved_preprocessor.selected_indices else 0
+        if max_idx >= input_dim:
+            raise ValueError(
+                f"Feature selection index {max_idx} is out of bounds for input dimension {input_dim}."
+            )
 
     if is_numpy_model:
         model_path.write_text(json.dumps(model.to_dict(), indent=2), encoding="utf-8")

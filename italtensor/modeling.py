@@ -17,6 +17,8 @@ class ModelConfig:
     feature_map: str = "linear"
     rff_components: int = 64
     rff_gamma: float = 1.0
+    l1_penalty: float = 0.0
+    feature_selection_k: int | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -29,6 +31,8 @@ class ModelConfig:
             "feature_map": self.feature_map,
             "rff_components": self.rff_components,
             "rff_gamma": self.rff_gamma,
+            "l1_penalty": self.l1_penalty,
+            "feature_selection_k": self.feature_selection_k,
         }
 
     @classmethod
@@ -43,6 +47,8 @@ class ModelConfig:
             feature_map=str(value.get("feature_map", "linear")),
             rff_components=int(value.get("rff_components", 64)),
             rff_gamma=float(value.get("rff_gamma", 1.0)),
+            l1_penalty=float(value.get("l1_penalty", 0.0)),
+            feature_selection_k=value.get("feature_selection_k") if value.get("feature_selection_k") is None else int(value.get("feature_selection_k")),
         )
 
 
@@ -55,6 +61,8 @@ class NumpyBinaryClassifier:
     rff_weights: np.ndarray | None = None
     rff_bias: np.ndarray | None = None
     backend: str = "numpy-logistic"
+    calibration_a: float = 1.0
+    calibration_b: float = 0.0
 
     @property
     def input_dim(self) -> int:
@@ -76,6 +84,9 @@ class NumpyBinaryClassifier:
         if mapped.shape[1] != self.weights.shape[0]:
             raise ValueError(f"Model weights expect {self.weights.shape[0]} mapped features, got {mapped.shape[1]}.")
         logits = mapped @ self.weights + self.bias
+        if self.calibration_a != 1.0 or self.calibration_b != 0.0:
+            calibrated_logits = self.calibration_a * logits + self.calibration_b
+            return _sigmoid(calibrated_logits).reshape(-1, 1).astype(np.float32)
         return _sigmoid(logits).reshape(-1, 1).astype(np.float32)
 
     def to_dict(self) -> dict[str, object]:
@@ -88,6 +99,8 @@ class NumpyBinaryClassifier:
             "rff_bias": self.rff_bias.astype(float).tolist() if self.rff_bias is not None else None,
             "weights": self.weights.astype(float).tolist(),
             "bias": float(self.bias),
+            "calibration_a": float(self.calibration_a),
+            "calibration_b": float(self.calibration_b),
         }
 
     @classmethod
@@ -126,6 +139,8 @@ class NumpyBinaryClassifier:
             feature_map=feature_map,
             rff_weights=parsed_rff_weights,
             rff_bias=parsed_rff_bias,
+            calibration_a=float(value.get("calibration_a", 1.0)),
+            calibration_b=float(value.get("calibration_b", 0.0)),
         )
 
 
@@ -225,6 +240,7 @@ def train_numpy_model(
         history["val_loss"] = []
         history["val_accuracy"] = []
 
+    l1 = getattr(config, "l1_penalty", 0.0)
     best_loss = float("inf")
     best_weights = weights.copy()
     best_bias = bias
@@ -241,7 +257,14 @@ def train_numpy_model(
         weights = weights - learning_rate * gradient_w
         bias = bias - learning_rate * gradient_b
 
+        # Soft-thresholding operator for L1 regularization
+        if l1 > 0:
+            thresh = learning_rate * l1
+            weights = np.sign(weights) * np.maximum(0.0, np.abs(weights) - thresh)
+
         train_loss = _binary_loss(y_train, _sigmoid(x_train_mapped @ weights + bias), sample_weights, l2, weights)
+        if l1 > 0:
+            train_loss += l1 * float(np.sum(np.abs(weights)))
         history["loss"].append(train_loss)
 
         if validation_data is not None:
@@ -250,6 +273,8 @@ def train_numpy_model(
             x_val_mapped = feature_map.transform(np.asarray(x_val, dtype=np.float32))
             val_probabilities = _sigmoid(x_val_mapped @ weights + bias)
             val_loss = _binary_loss(y_val, val_probabilities, None, l2, weights)
+            if l1 > 0:
+                val_loss += l1 * float(np.sum(np.abs(weights)))
             val_accuracy = float(np.mean((val_probabilities >= 0.5).astype(np.int32) == y_val.astype(np.int32)))
             history["val_loss"].append(val_loss)
             history["val_accuracy"].append(val_accuracy)

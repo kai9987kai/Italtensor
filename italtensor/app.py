@@ -42,9 +42,24 @@ def run_app() -> None:
             "PySimpleGUI is not installed. Install dependencies with: python -m pip install -r requirements.txt"
         ) from exc
 
-    sg.theme("SystemDefault")
+    theme_dict = {
+        'BACKGROUND': '#0E0F11',
+        'TEXT': '#E4E6EB',
+        'INPUT': '#1C1D21',
+        'TEXT_INPUT': '#FFFFFF',
+        'SCROLL': '#1C1D21',
+        'BUTTON': ('#FFFFFF', '#6366F1'),
+        'PROGRESS': ('#6366F1', '#1C1D21'),
+        'BORDER': 0,
+        'SLIDER_DEPTH': 0,
+        'PROGRESS_DEPTH': 0,
+    }
+    sg.theme_add_new('ItaltensorPremiumDark', theme_dict)
+    sg.theme('ItaltensorPremiumDark')
+    sg.set_options(font=('Segoe UI', 10))
+    
     state = AppState()
-    window = sg.Window("Italtensor", _layout(sg), finalize=True)
+    window = sg.Window("Italtensor Premium Workbench", _layout(sg), finalize=True)
     _refresh_state(window, state)
 
     while True:
@@ -153,6 +168,15 @@ def _layout(sg):
             sg.Input("8", key="-TRIALS-", size=(6, 1)),
             sg.Text("Map"),
             sg.Combo(["linear", "quadratic", "rff"], default_value="rff", readonly=True, key="-FEATURE_MAP-", size=(10, 1)),
+        ],
+        [
+            sg.Text("L1 Lasso"),
+            sg.Input("0.0", key="-L1_PENALTY-", size=(6, 1)),
+            sg.Text("Feat Sel K"),
+            sg.Input("", key="-FEATURE_K-", size=(6, 1), tooltip="Leave empty for all features"),
+            sg.Checkbox("Enable CV", default=False, key="-USE_CV-"),
+            sg.Text("Folds"),
+            sg.Input("5", key="-KFOLD_SPLITS-", size=(4, 1)),
         ],
         [sg.Button("Train once", key="-TRAIN_ONCE-"), sg.Button("Run auto experiments", key="-AUTO_EXPERIMENTS-")],
         [sg.Text("Model path")],

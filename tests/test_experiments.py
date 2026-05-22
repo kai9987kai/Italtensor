@@ -143,3 +143,49 @@ def test_permutation_feature_importance_identifies_controlling_feature():
 
     assert importances[0]["feature_index"] == 0
     assert importances[0]["importance"] > importances[1]["importance"]
+
+
+def test_platt_scaling_and_calibration_diagnostics():
+    from italtensor.experiments import fit_platt_scaling, compute_ece
+    labels = np.asarray([0, 0, 1, 1], dtype=np.int32)
+    probs = np.asarray([0.1, 0.2, 0.8, 0.9], dtype=np.float32)
+
+    # Test ECE calculation
+    ece = compute_ece(labels, probs, n_bins=2)
+    assert 0.0 <= ece <= 1.0
+
+    # Test Platt scaling fit
+    a, b = fit_platt_scaling(probs, labels)
+    calibrated_logits = a * np.log(probs / (1.0 - probs)) + b
+    calibrated_probs = 1.0 / (1.0 + np.exp(-calibrated_logits))
+    assert all(0.0 <= p <= 1.0 for p in calibrated_probs)
+
+
+def test_stratified_kfold_indices():
+    from italtensor.experiments import stratified_kfold_indices
+    labels = np.asarray([0, 0, 0, 0, 0, 1, 1, 1, 1, 1], dtype=np.int32)
+    splits = stratified_kfold_indices(labels, n_splits=5, seed=42)
+    assert len(splits) == 5
+    for train_idx, val_idx in splits:
+        assert len(train_idx) == 8
+        assert len(val_idx) == 2
+        # Check that validation set is stratified (one 0 and one 1)
+        assert np.sum(labels[val_idx] == 0) == 1
+        assert np.sum(labels[val_idx] == 1) == 1
+
+
+def test_train_single_model_cv():
+    from italtensor.experiments import train_single_model_cv
+    features = np.asarray(
+        [[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0], [0.2, 0.3], [0.8, 0.9], [0.1, 0.2], [0.9, 0.8]],
+        dtype=np.float32,
+    )
+    labels = np.asarray([0, 0, 1, 1, 0, 1, 0, 1], dtype=np.int32)
+    config = ModelConfig(hidden_layers=(16,), learning_rate=0.01, feature_selection_k=1)
+    
+    result = train_single_model_cv(features, labels, config, n_splits=3)
+    assert result.config.feature_selection_k == 1
+    assert "cv_mean_f1" in result.metrics
+    assert "cv_std_f1" in result.metrics
+    assert result.metrics["cv_folds"] == 3
+
