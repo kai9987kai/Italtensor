@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .data import Dataset, dataset_from_jsonable, dataset_to_jsonable
-from .modeling import ModelConfig
+from .modeling import ModelConfig, NumpyBinaryClassifier
 from .preprocessing import FeatureStandardizer
 
 
@@ -33,7 +33,10 @@ def save_model_bundle(
     feature_importances: list[dict[str, float | int]] | None = None,
 ) -> tuple[Path, Path]:
     model_path = Path(path)
-    if model_path.suffix != ".keras":
+    is_numpy_model = isinstance(model, NumpyBinaryClassifier)
+    if is_numpy_model:
+        model_path = model_path.with_suffix(".italtensor-model.json")
+    elif model_path.suffix != ".keras":
         model_path = model_path.with_suffix(".keras")
 
     resolved_preprocessor = preprocessor or FeatureStandardizer.identity(input_dim)
@@ -43,9 +46,15 @@ def save_model_bundle(
             f"model expects {input_dim}."
         )
 
-    model.save(str(model_path))
+    if is_numpy_model:
+        model_path.write_text(json.dumps(model.to_dict(), indent=2), encoding="utf-8")
+    else:
+        model.save(str(model_path))
     metadata_path = model_metadata_path(model_path)
     metadata = {
+        "model_format_version": 1,
+        "model_backend": "numpy-logistic" if is_numpy_model else "tensorflow-keras",
+        "model_feature_map": getattr(model, "feature_map", None),
         "input_dim": input_dim,
         "label_schema": {"negative": 0, "positive": 1},
         "best_config": config.to_dict(),
@@ -61,8 +70,15 @@ def save_model_bundle(
 
 def load_model_bundle(path: str | Path):
     model_path = Path(path)
-    tf = _tensorflow()
-    model = tf.keras.models.load_model(str(model_path))
+    if model_path.suffix == ".json":
+        payload = json.loads(model_path.read_text(encoding="utf-8"))
+        if payload.get("backend") == "numpy-logistic":
+            model = NumpyBinaryClassifier.from_dict(payload)
+        else:
+            raise ValueError("Unsupported JSON model file.")
+    else:
+        tf = _tensorflow()
+        model = tf.keras.models.load_model(str(model_path))
 
     metadata_path = model_metadata_path(model_path)
     metadata: dict[str, Any] = {}

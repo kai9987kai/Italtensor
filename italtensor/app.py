@@ -143,6 +143,7 @@ def _layout(sg):
             sg.Text("Input dim:"),
             sg.Text("-", key="-INPUT_DIM-", size=(6, 1)),
         ],
+        [sg.Text("Dataset:"), sg.Text("No data", key="-DATASET_SUMMARY-", expand_x=True)],
         [
             sg.Text("Epochs"),
             sg.Input("50", key="-EPOCHS-", size=(6, 1)),
@@ -150,13 +151,21 @@ def _layout(sg):
             sg.Input("16", key="-BATCH_SIZE-", size=(6, 1)),
             sg.Text("Trials"),
             sg.Input("8", key="-TRIALS-", size=(6, 1)),
+            sg.Text("Map"),
+            sg.Combo(["linear", "quadratic", "rff"], default_value="rff", readonly=True, key="-FEATURE_MAP-", size=(10, 1)),
         ],
         [sg.Button("Train once", key="-TRAIN_ONCE-"), sg.Button("Run auto experiments", key="-AUTO_EXPERIMENTS-")],
         [sg.Text("Model path")],
         [
             sg.Input(key="-MODEL_PATH-", expand_x=True),
-            sg.FileSaveAs(button_text="Choose save", file_types=(("Keras models", "*.keras"),)),
-            sg.FileBrowse(button_text="Choose load", file_types=(("Keras models", "*.keras"), ("All files", "*.*"))),
+            sg.FileSaveAs(
+                button_text="Choose save",
+                file_types=(("Italtensor models", "*.italtensor-model.json;*.keras"), ("All files", "*.*")),
+            ),
+            sg.FileBrowse(
+                button_text="Choose load",
+                file_types=(("Italtensor models", "*.italtensor-model.json;*.keras"), ("All files", "*.*")),
+            ),
         ],
         [sg.Button("Save model", key="-SAVE_MODEL-"), sg.Button("Load model", key="-LOAD_MODEL-")],
         [sg.Text("Report path")],
@@ -248,6 +257,7 @@ def _start_train_once(window, state: AppState, values: dict[str, Any]) -> None:
         learning_rate=0.001,
         batch_size=_positive_int(values["-BATCH_SIZE-"], "batch size"),
         max_epochs=_positive_int(values["-EPOCHS-"], "epochs"),
+        feature_map=values["-FEATURE_MAP-"],
     )
 
     def task() -> tuple[str, ExperimentResult]:
@@ -288,12 +298,15 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         preprocessor=state.preprocessor,
         feature_importances=state.feature_importances,
     )
+    window["-MODEL_PATH-"].update(str(model_path))
     _log(window, f"Saved model to {model_path} and metadata to {metadata_path}.")
 
 
 def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     model, metadata = load_model_bundle(_required_path(values["-MODEL_PATH-"], "model path"))
     input_dim = metadata.get("input_dim")
+    if input_dim is None:
+        input_dim = getattr(model, "input_dim", None)
     if input_dim is None:
         model_input = getattr(model, "input_shape", None)
         input_dim = int(model_input[-1]) if model_input else None
@@ -416,6 +429,7 @@ def _invalidate_model_artifacts(state: AppState) -> None:
 def _refresh_state(window, state: AppState) -> None:
     window["-SAMPLE_COUNT-"].update(str(len(state.labels)))
     window["-INPUT_DIM-"].update(str(state.input_dim) if state.input_dim is not None else "-")
+    window["-DATASET_SUMMARY-"].update(_dataset_summary(state))
     window["-STATUS-"].update(state.status_message if state.busy else "Ready")
 
 
@@ -470,8 +484,17 @@ def _int_value(raw_value: str, label: str) -> int:
 def _format_config(config: ModelConfig) -> str:
     return (
         f"layers={list(config.hidden_layers)}, lr={config.learning_rate:g}, "
-        f"batch={config.batch_size}, epochs={config.max_epochs}"
+        f"batch={config.batch_size}, epochs={config.max_epochs}, map={config.feature_map}"
     )
+
+
+def _dataset_summary(state: AppState) -> str:
+    if not state.labels:
+        return "No data"
+    zeros = state.labels.count(0)
+    ones = state.labels.count(1)
+    trainable = "trainable" if zeros >= 2 and ones >= 2 else "needs 2 samples per class"
+    return f"class 0={zeros}, class 1={ones}, {trainable}"
 
 
 def _format_metrics(metrics: dict[str, float | int]) -> str:

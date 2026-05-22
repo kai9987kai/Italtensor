@@ -74,6 +74,12 @@ def test_builtin_presets_are_trainable():
         assert set(y_val.tolist()) == {0, 1}
 
 
+def test_experimental_builtin_presets_are_available():
+    names = {preset.name for preset in BUILT_IN_PRESETS}
+
+    assert {"Concentric rings", "Two moons", "Rare event signal"}.issubset(names)
+
+
 def test_save_as_preset_uses_existing_dataset_json_shape(tmp_path):
     dataset = validate_dataset([[1.0, 2.0], [3.0, 4.0]], [0, 1])
     path = save_preset_file(tmp_path / "shape.json", dataset, name="Shape")

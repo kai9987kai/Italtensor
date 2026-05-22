@@ -47,6 +47,24 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         description="Six features where only the first two drive the label, useful for feature importance.",
         default_samples=120,
     ),
+    PresetInfo(
+        key="concentric_rings",
+        name="Concentric rings",
+        description="A radial nonlinear dataset for trying RFF feature maps.",
+        default_samples=120,
+    ),
+    PresetInfo(
+        key="two_moons",
+        name="Two moons",
+        description="Interleaving crescent shapes for nonlinear boundary experiments.",
+        default_samples=120,
+    ),
+    PresetInfo(
+        key="rare_event_signal",
+        name="Rare event signal",
+        description="A heavily imbalanced dataset with a compact positive region.",
+        default_samples=160,
+    ),
 )
 
 
@@ -76,6 +94,12 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _imbalanced_blobs(total, rng)
     elif preset.key == "signal_plus_noise":
         features, labels = _signal_plus_noise(total, rng)
+    elif preset.key == "concentric_rings":
+        features, labels = _concentric_rings(total, rng)
+    elif preset.key == "two_moons":
+        features, labels = _two_moons(total, rng)
+    elif preset.key == "rare_event_signal":
+        features, labels = _rare_event_signal(total, rng)
     else:
         raise ValueError(f"Unsupported preset: {preset.key}")
     return validate_dataset(features.tolist(), labels.astype(int).tolist(), min_samples=preset.min_samples, require_two_classes=True)
@@ -178,6 +202,45 @@ def _signal_plus_noise(total: int, rng: np.random.Generator) -> tuple[np.ndarray
     noise = rng.normal(0.0, 1.0, size=(total, 4))
     features = np.concatenate([informative, noise], axis=1).astype(np.float32)
     return features, labels
+
+
+def _concentric_rings(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    labels = _balanced_labels(total)
+    inner_count = int(np.sum(labels == 0))
+    outer_count = int(np.sum(labels == 1))
+    inner_angles = rng.uniform(0.0, 2.0 * np.pi, size=inner_count)
+    outer_angles = rng.uniform(0.0, 2.0 * np.pi, size=outer_count)
+    inner_radius = rng.normal(0.65, 0.07, size=inner_count)
+    outer_radius = rng.normal(1.35, 0.08, size=outer_count)
+    inner = np.column_stack([inner_radius * np.cos(inner_angles), inner_radius * np.sin(inner_angles)])
+    outer = np.column_stack([outer_radius * np.cos(outer_angles), outer_radius * np.sin(outer_angles)])
+    features = np.vstack([inner, outer]).astype(np.float32)
+    return _shuffle(features, labels, rng)
+
+
+def _two_moons(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    labels = _balanced_labels(total)
+    first_count = int(np.sum(labels == 0))
+    second_count = int(np.sum(labels == 1))
+    first_theta = rng.uniform(0.0, np.pi, size=first_count)
+    second_theta = rng.uniform(0.0, np.pi, size=second_count)
+    first = np.column_stack([np.cos(first_theta), np.sin(first_theta)])
+    second = np.column_stack([1.0 - np.cos(second_theta), 0.45 - np.sin(second_theta)])
+    features = np.vstack([first, second]) + rng.normal(0.0, 0.08, size=(total, 2))
+    return _shuffle(features.astype(np.float32), labels, rng)
+
+
+def _rare_event_signal(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    positive_count = max(2, round(total * 0.08))
+    negative_count = total - positive_count
+    if negative_count < 2:
+        negative_count = 2
+        positive_count = total - negative_count
+    labels = np.asarray([0] * negative_count + [1] * positive_count, dtype=np.int32)
+    negatives = rng.normal(0.0, 0.85, size=(negative_count, 4))
+    positives = rng.normal((1.7, 1.5, 0.0, 0.0), (0.25, 0.25, 1.0, 1.0), size=(positive_count, 4))
+    features = np.vstack([negatives, positives]).astype(np.float32)
+    return _shuffle(features, labels, rng)
 
 
 def _balanced_labels(total: int) -> np.ndarray:

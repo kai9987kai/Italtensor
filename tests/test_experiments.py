@@ -18,18 +18,20 @@ from italtensor.preprocessing import FeatureStandardizer
 
 
 def test_generate_random_configs_is_deterministic_and_bounded():
-    first = generate_random_configs(trials=4, seed=7)
-    second = generate_random_configs(trials=4, seed=7)
+    first = generate_random_configs(trials=24, seed=7)
+    second = generate_random_configs(trials=24, seed=7)
 
     assert first == second
-    assert len(first) == 4
+    assert len(first) == 24
     assert all(config.hidden_layers in {(16,), (32,), (64,), (64, 32)} for config in first)
     assert all(config.learning_rate in {0.01, 0.001, 0.0003} for config in first)
+    assert all(config.feature_map in {"linear", "quadratic", "rff"} for config in first)
+    assert {"quadratic", "rff"}.issubset({config.feature_map for config in first})
 
 
 def test_generate_random_configs_rejects_more_than_search_space():
-    with pytest.raises(ValueError, match="cannot exceed 72"):
-        generate_random_configs(trials=73)
+    with pytest.raises(ValueError, match="cannot exceed 216"):
+        generate_random_configs(trials=217)
 
 
 def test_select_best_result_ranks_f1_accuracy_then_loss():
