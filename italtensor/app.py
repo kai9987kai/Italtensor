@@ -28,6 +28,16 @@ from .scoring import score_prediction_csv
 
 
 @dataclass
+class ModelSlot:
+    model: Any
+    config: ModelConfig
+    metrics: dict[str, float | int]
+    preprocessor: FeatureStandardizer | None
+    threshold: float
+    name: str
+
+
+@dataclass
 class AppState:
     features: list[list[float]] = field(default_factory=list)
     labels: list[int] = field(default_factory=list)
@@ -42,6 +52,8 @@ class AppState:
     uncertainty_metadata: dict[str, Any] = field(default_factory=dict)
     busy: bool = False
     status_message: str = "Ready"
+    model_slots: list[ModelSlot] = field(default_factory=list)
+    active_slot_index: int | None = None
 
 
 def run_app() -> None:
@@ -108,6 +120,20 @@ def run_app() -> None:
                 _predict(window, state, values)
             elif event == "-EXPORT_BATCH_PREDICTIONS-":
                 _start_batch_predictions(window, state, values)
+            elif event == "-STORE_MODEL_SLOT-":
+                _store_model_slot(window, state, values)
+            elif event == "-ACTIVATE_MODEL_SLOT-":
+                _activate_model_slot(window, state, values)
+            elif event == "-BUILD_ENSEMBLE-":
+                _build_ensemble(window, state, values)
+            elif event == "-COMPARE_MODELS-":
+                _compare_models(window, state, values)
+            elif event == "-WEIGHT_ANALYSIS-":
+                _run_weight_analysis(window, state, values)
+            elif event == "-DISTILL_MODEL-":
+                _distill_model(window, state, values)
+            elif event == "-MERGE_SLOTS-":
+                _merge_slots(window, state, values)
             elif event == "-TRIAL_DONE-":
                 index, total, result = values[event]
                 _log(window, f"Trial {index}/{total}: {_format_config(result.config)} | {_format_metrics(result.metrics)}")
@@ -182,6 +208,12 @@ def _layout(sg):
             sg.Combo(["linear", "quadratic", "rff"], default_value="rff", readonly=True, key="-FEATURE_MAP-", size=(10, 1)),
         ],
         [
+            sg.Text("LR Sched"),
+            sg.Combo(["constant", "cosine", "step_decay"], default_value="constant", readonly=True, key="-LR_SCHEDULE-", size=(10, 1)),
+            sg.Text("Grad Clip"),
+            sg.Input("0.0", key="-GRADIENT_CLIP-", size=(6, 1)),
+        ],
+        [
             sg.Text("L1 Lasso"),
             sg.Input("0.0", key="-L1_PENALTY-", size=(6, 1)),
             sg.Text("Feat Sel K"),
@@ -190,7 +222,11 @@ def _layout(sg):
             sg.Text("Folds"),
             sg.Input("5", key="-KFOLD_SPLITS-", size=(4, 1)),
         ],
-        [sg.Button("Train once", key="-TRAIN_ONCE-"), sg.Button("Run auto experiments", key="-AUTO_EXPERIMENTS-")],
+        [
+            sg.Button("Train once", key="-TRAIN_ONCE-"),
+            sg.Button("Run auto experiments", key="-AUTO_EXPERIMENTS-"),
+            sg.Button("Weight Analysis", key="-WEIGHT_ANALYSIS-"),
+        ],
         [sg.Text("Model path")],
         [
             sg.Input(key="-MODEL_PATH-", expand_x=True),
@@ -225,8 +261,31 @@ def _layout(sg):
         [sg.Text("Status:"), sg.Text("Ready", key="-STATUS-", expand_x=True)],
     ]
 
+    slots_column = [
+        [sg.Text("Model Registry / Slots")],
+        [sg.Listbox(values=[], size=(40, 10), key="-MODEL_SLOTS-", enable_events=True, expand_y=True)],
+        [
+            sg.Button("Store Model", key="-STORE_MODEL_SLOT-", expand_x=True),
+            sg.Button("Activate Slot", key="-ACTIVATE_MODEL_SLOT-", expand_x=True),
+        ],
+        [
+            sg.Button("Build Ensemble", key="-BUILD_ENSEMBLE-", expand_x=True),
+            sg.Button("Compare Models", key="-COMPARE_MODELS-", expand_x=True),
+        ],
+        [
+            sg.Button("Distill Model", key="-DISTILL_MODEL-", expand_x=True),
+            sg.Button("Merge Slots", key="-MERGE_SLOTS-", expand_x=True),
+        ],
+    ]
+
     return [
-        [sg.Column(data_column, expand_x=True), sg.VSeparator(), sg.Column(training_column, expand_x=True)],
+        [
+            sg.Column(data_column, expand_x=True, vertical_alignment="top"),
+            sg.VSeparator(),
+            sg.Column(training_column, expand_x=True, vertical_alignment="top"),
+            sg.VSeparator(),
+            sg.Column(slots_column, expand_x=True, vertical_alignment="top"),
+        ],
         [sg.Multiline(size=(110, 18), key="-LOG-", autoscroll=True, disabled=True, expand_x=True, expand_y=True)],
         [sg.Button("Exit")],
     ]
@@ -312,6 +371,12 @@ def _start_train_once(window, state: AppState, values: dict[str, Any]) -> None:
     feat_k_raw = values.get("-FEATURE_K-", "").strip()
     feature_selection_k = int(feat_k_raw) if feat_k_raw else None
 
+    grad_clip_raw = values.get("-GRADIENT_CLIP-", "0.0").strip()
+    try:
+        gradient_clip = float(grad_clip_raw) if grad_clip_raw else 0.0
+    except ValueError:
+        raise ValueError("Gradient clip must be a float.")
+
     config = ModelConfig(
         hidden_layers=(32,),
         learning_rate=0.001,
@@ -320,6 +385,8 @@ def _start_train_once(window, state: AppState, values: dict[str, Any]) -> None:
         feature_map=values["-FEATURE_MAP-"],
         l1_penalty=l1_penalty,
         feature_selection_k=feature_selection_k,
+        lr_schedule=values.get("-LR_SCHEDULE-", "constant"),
+        gradient_clip=gradient_clip,
     )
 
     use_cv = values.get("-USE_CV-", False)
@@ -503,6 +570,34 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
     elif kind == "batch_predictions":
         path, count = result
         _log(window, f"Exported {count} batch prediction(s) to {path}.")
+    elif kind == "distill":
+        training_result = result
+        state.model = training_result.model
+        state.latest_config = training_result.config
+        state.latest_metrics = training_result.metrics
+        state.latest_threshold = training_result.threshold
+        state.preprocessor = training_result.preprocessor
+        state.feature_importances = training_result.feature_importances
+        state.trial_history = [_summarize_trial(training_result)]
+        state.uncertainty_metadata = training_result.uncertainty
+        
+        # Auto-store in slots
+        slot = ModelSlot(
+            model=state.model,
+            config=state.latest_config,
+            metrics=state.latest_metrics.copy(),
+            preprocessor=state.preprocessor,
+            threshold=state.latest_threshold,
+            name=f"Distilled Student (F1: {state.latest_metrics.get('f1', 0.0):.4f})",
+        )
+        state.model_slots.append(slot)
+        state.active_slot_index = len(state.model_slots) - 1
+        _update_slots_listbox(window, state)
+        
+        _log(window, f"Distillation complete! Distilled student stored in slot '{slot.name}'.")
+        _log(window, f"Metrics: {_format_metrics(training_result.metrics)}")
+        _log(window, _format_calibration(training_result.metrics))
+        _log(window, _format_uncertainty(training_result.uncertainty))
 
 
 def _start_worker(window, state: AppState, status: str, task: Callable[[], tuple[str, Any]]) -> None:
@@ -564,6 +659,7 @@ def _refresh_state(window, state: AppState) -> None:
     window["-INPUT_DIM-"].update(str(state.input_dim) if state.input_dim is not None else "-")
     window["-DATASET_SUMMARY-"].update(_dataset_summary(state))
     window["-STATUS-"].update(state.status_message if state.busy else "Ready")
+    _update_slots_listbox(window, state)
 
 
 def _set_busy(window, busy: bool) -> None:
@@ -583,8 +679,16 @@ def _set_busy(window, busy: bool) -> None:
         "-EXPORT_REPORT-",
         "-PREDICT-",
         "-EXPORT_BATCH_PREDICTIONS-",
+        "-STORE_MODEL_SLOT-",
+        "-ACTIVATE_MODEL_SLOT-",
+        "-BUILD_ENSEMBLE-",
+        "-COMPARE_MODELS-",
+        "-WEIGHT_ANALYSIS-",
+        "-DISTILL_MODEL-",
+        "-MERGE_SLOTS-",
     ):
-        window[key].update(disabled=busy)
+        if key in window.AllKeysDict:
+            window[key].update(disabled=busy)
 
 
 def _ensure_not_busy(state: AppState) -> None:
@@ -681,6 +785,12 @@ def _format_metrics(metrics: dict[str, float | int]) -> str:
         "conformal_empty_rate",
         "class_weight_0",
         "class_weight_1",
+        "bootstrap_f1_lower",
+        "bootstrap_f1_upper",
+        "bootstrap_accuracy_lower",
+        "bootstrap_accuracy_upper",
+        "bootstrap_balanced_accuracy_lower",
+        "bootstrap_balanced_accuracy_upper",
     ]
     parts = []
     for key in ordered:
@@ -740,6 +850,13 @@ def _format_uncertainty(uncertainty: dict[str, Any]) -> str:
     ):
         if key in uncertainty:
             parts.append(f"{key}={float(uncertainty[key]):.4f}")
+    bootstrap_ci = uncertainty.get("bootstrap_ci")
+    if bootstrap_ci:
+        parts.append("bootstrap_ci={")
+        ci_parts = []
+        for metric, (lower, upper) in bootstrap_ci.items():
+            ci_parts.append(f"{metric}=[{lower:.4f}, {upper:.4f}]")
+        parts.append(", ".join(ci_parts) + "}")
     return " ".join(parts)
 
 
@@ -775,3 +892,262 @@ def _format_cv_summary(metrics: dict[str, float | int]) -> str:
 def _log(window, message: str) -> None:
     if message:
         window["-LOG-"].update(f"{message}\n", append=True)
+
+
+def _update_slots_listbox(window, state: AppState) -> None:
+    if "-MODEL_SLOTS-" not in window.AllKeysDict:
+        return
+    display_list = []
+    for idx, slot in enumerate(state.model_slots):
+        prefix = "* " if idx == state.active_slot_index else "  "
+        f1 = slot.metrics.get("f1", 0.0)
+        display_list.append(f"{prefix}{slot.name} (F1: {f1:.4f})")
+    window["-MODEL_SLOTS-"].update(values=display_list)
+
+
+def _store_model_slot(window, state: AppState, values: dict[str, Any]) -> None:
+    import PySimpleGUI as sg
+    if state.model is None:
+        _log(window, "No model trained yet to store.")
+        return
+    name = sg.popup_get_text("Enter a name for this model slot:", title="Store Model Slot", default_text=f"Model {len(state.model_slots) + 1}")
+    if not name:
+        return
+    name = name.strip()
+    if not name:
+        return
+    slot = ModelSlot(
+        model=state.model,
+        config=state.latest_config,
+        metrics=state.latest_metrics.copy(),
+        preprocessor=state.preprocessor,
+        threshold=state.latest_threshold,
+        name=name,
+    )
+    state.model_slots.append(slot)
+    state.active_slot_index = len(state.model_slots) - 1
+    _log(window, f"Stored model in slot '{name}' (F1: {slot.metrics.get('f1', 0.0):.4f}).")
+    _update_slots_listbox(window, state)
+
+
+def _activate_model_slot(window, state: AppState, values: dict[str, Any]) -> None:
+    selected = values.get("-MODEL_SLOTS-")
+    if not selected:
+        _log(window, "Please select a slot from the listbox first.")
+        return
+    display_list = window["-MODEL_SLOTS-"].get_list_values()
+    idx = display_list.index(selected[0])
+    state.active_slot_index = idx
+    slot = state.model_slots[idx]
+    state.model = slot.model
+    state.latest_config = slot.config
+    state.latest_metrics = slot.metrics.copy()
+    state.preprocessor = slot.preprocessor
+    state.latest_threshold = slot.threshold
+    _log(window, f"Activated slot '{slot.name}'. Predictions and weight analysis will now run on this model.")
+    _update_slots_listbox(window, state)
+
+
+def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
+    if not state.model_slots:
+        _log(window, "No model slots stored to build an ensemble.")
+        return
+    
+    from .experiments import EnsemblePredictor, evaluate_predictions
+    
+    models = [(slot.model, slot.preprocessor) for slot in state.model_slots]
+    ensemble = EnsemblePredictor(models)
+    
+    state.model = ensemble
+    state.preprocessor = None
+    
+    state.latest_config = ModelConfig(
+        lr_schedule="constant",
+        gradient_clip=0.0,
+    )
+    
+    if state.features and state.labels:
+        dataset = validate_dataset(state.features, state.labels, min_samples=4)
+        probs = ensemble.predict(dataset.features).reshape(-1)
+        metrics = evaluate_predictions(dataset.labels, probs, threshold=0.5)
+        state.latest_metrics = metrics
+        _log(window, f"Built Ensemble with {len(models)} models. Evaluated on full dataset (F1: {metrics.get('f1', 0.0):.4f}).")
+    else:
+        state.latest_metrics = {}
+        _log(window, f"Built Ensemble with {len(models)} models (no evaluation dataset available).")
+        
+    slot = ModelSlot(
+        model=ensemble,
+        config=state.latest_config,
+        metrics=state.latest_metrics.copy(),
+        preprocessor=None,
+        threshold=0.5,
+        name=f"Ensemble ({len(models)} models)",
+    )
+    state.model_slots.append(slot)
+    state.active_slot_index = len(state.model_slots) - 1
+    _update_slots_listbox(window, state)
+
+
+def _compare_models(window, state: AppState, values: dict[str, Any]) -> None:
+    if not state.model_slots:
+        _log(window, "No model slots stored to compare.")
+        return
+    
+    _log(window, "=== Model Comparison ===")
+    header = f"{'Model Name':<25} | {'F1':<8} | {'Accuracy':<8} | {'Brier':<8} | {'ECE':<8}"
+    _log(window, header)
+    _log(window, "-" * len(header))
+    for slot in state.model_slots:
+        f1 = slot.metrics.get("f1", 0.0)
+        acc = slot.metrics.get("accuracy", 0.0)
+        brier = slot.metrics.get("brier_score", 0.0)
+        ece = slot.metrics.get("ece", 0.0)
+        _log(window, f"{slot.name:<25} | {f1:<8.4f} | {acc:<8.4f} | {brier:<8.4f} | {ece:<8.4f}")
+    _log(window, "========================")
+
+
+def _run_weight_analysis(window, state: AppState, values: dict[str, Any]) -> None:
+    if state.model is None:
+        _log(window, "No active model to analyze.")
+        return
+    
+    try:
+        from .analysis import weight_statistics
+        stats = weight_statistics(state.model)
+        
+        _log(window, f"=== Weight Analysis ({state.model.__class__.__name__}) ===")
+        _log(window, f"  Mean:      {stats['mean']:.6f}")
+        _log(window, f"  Std Dev:   {stats['std']:.6f}")
+        _log(window, f"  Min:       {stats['min']:.6f}")
+        _log(window, f"  Max:       {stats['max']:.6f}")
+        _log(window, f"  Sparsity:  {stats['sparsity']:.2f}% zeros")
+        _log(window, f"  L1 Norm:   {stats['l1_norm']:.6f}")
+        _log(window, f"  L2 Norm:   {stats['l2_norm']:.6f}")
+        _log(window, "==========================")
+    except Exception as exc:
+        _log(window, f"Weight analysis error: {exc}")
+
+
+def _distill_model(window, state: AppState, values: dict[str, Any]) -> None:
+    _ensure_not_busy(state)
+    import PySimpleGUI as sg
+    
+    selected = values.get("-MODEL_SLOTS-")
+    if not selected:
+        if state.model is None:
+            _log(window, "Please select a teacher model slot from the registry first, or train a model.")
+            return
+        teacher_model = state.model
+        teacher_prep = state.preprocessor
+        teacher_name = "Active Model"
+    else:
+        display_list = window["-MODEL_SLOTS-"].get_list_values()
+        idx = display_list.index(selected[0])
+        slot = state.model_slots[idx]
+        teacher_model = slot.model
+        teacher_prep = slot.preprocessor
+        teacher_name = slot.name
+
+    alpha_str = sg.popup_get_text("Enter distillation coefficient alpha (0.0 to 1.0):", title="Knowledge Distillation", default_text="0.5")
+    if not alpha_str:
+        return
+    try:
+        alpha = float(alpha_str)
+        if not (0.0 <= alpha <= 1.0):
+            raise ValueError()
+    except ValueError:
+        raise ValueError("Distillation alpha must be a float between 0.0 and 1.0.")
+
+    dataset = validate_dataset(state.features, state.labels, min_samples=4, require_two_classes=True)
+
+    l1_raw = values.get("-L1_PENALTY-", "0.0").strip()
+    l1_penalty = float(l1_raw) if l1_raw else 0.0
+    feat_k_raw = values.get("-FEATURE_K-", "").strip()
+    feature_selection_k = int(feat_k_raw) if feat_k_raw else None
+    grad_clip_raw = values.get("-GRADIENT_CLIP-", "0.0").strip()
+    gradient_clip = float(grad_clip_raw) if grad_clip_raw else 0.0
+
+    config = ModelConfig(
+        hidden_layers=(32,),
+        learning_rate=0.001,
+        batch_size=_positive_int(values["-BATCH_SIZE-"], "batch size"),
+        max_epochs=_positive_int(values["-EPOCHS-"], "epochs"),
+        feature_map=values["-FEATURE_MAP-"],
+        l1_penalty=l1_penalty,
+        feature_selection_k=feature_selection_k,
+        lr_schedule=values.get("-LR_SCHEDULE-", "constant"),
+        gradient_clip=gradient_clip,
+    )
+
+    from .experiments import train_distilled_model
+
+    def task() -> tuple[str, ExperimentResult]:
+        res = train_distilled_model(dataset.features, dataset.labels, teacher_model, teacher_prep, config, alpha)
+        return "distill", res
+
+    _start_worker(window, state, f"Distilling student from {teacher_name}...", task)
+
+
+def _merge_slots(window, state: AppState, values: dict[str, Any]) -> None:
+    if not state.model_slots:
+        _log(window, "No model slots stored to merge.")
+        return
+
+    numpy_slots = [slot for slot in state.model_slots if isinstance(slot.model, NumpyBinaryClassifier)]
+    if len(numpy_slots) < 2:
+        _log(window, "Need at least 2 NumPy model slots stored in the registry to perform merging.")
+        return
+
+    try:
+        from .experiments import merge_models, evaluate_predictions
+        models_list = [(slot.model, slot.preprocessor) for slot in numpy_slots]
+
+        import PySimpleGUI as sg
+        choice = sg.popup_yes_no("Weight models by their validation F1 scores? (No = equal weights)", title="Merge Weights")
+        if choice == "Yes":
+            weights = [max(1e-4, slot.metrics.get("f1", 0.0)) for slot in numpy_slots]
+            _log(window, f"Merging {len(numpy_slots)} models weighted by F1: {weights}")
+        else:
+            weights = None
+            _log(window, f"Merging {len(numpy_slots)} models with equal weights.")
+
+        merged_model, merged_prep = merge_models(models_list, weights)
+
+        state.model = merged_model
+        state.preprocessor = merged_prep
+        state.latest_config = ModelConfig(
+            lr_schedule="constant",
+            gradient_clip=0.0,
+        )
+
+        if state.features and state.labels:
+            dataset = validate_dataset(state.features, state.labels, min_samples=4)
+            if merged_prep is not None:
+                x_std = merged_prep.transform(dataset.features)
+            else:
+                x_std = dataset.features
+            probs = merged_model.predict(x_std).reshape(-1)
+            metrics = evaluate_predictions(dataset.labels, probs, threshold=0.5)
+            state.latest_metrics = metrics
+            state.latest_threshold = 0.5
+            _log(window, f"Merged model evaluated on full dataset (F1: {metrics.get('f1', 0.0):.4f}).")
+        else:
+            state.latest_metrics = {}
+            state.latest_threshold = 0.5
+            _log(window, "Merged model created (no evaluation dataset available).")
+
+        slot = ModelSlot(
+            model=merged_model,
+            config=state.latest_config,
+            metrics=state.latest_metrics.copy(),
+            preprocessor=merged_prep,
+            threshold=state.latest_threshold,
+            name=f"Merged Slot (F1: {state.latest_metrics.get('f1', 0.0):.4f})",
+        )
+        state.model_slots.append(slot)
+        state.active_slot_index = len(state.model_slots) - 1
+        _update_slots_listbox(window, state)
+
+    except Exception as exc:
+        _log(window, f"Merge error: {exc}")

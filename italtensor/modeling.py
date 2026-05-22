@@ -19,6 +19,8 @@ class ModelConfig:
     rff_gamma: float = 1.0
     l1_penalty: float = 0.0
     feature_selection_k: int | None = None
+    lr_schedule: str = "constant"
+    gradient_clip: float = 0.0
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -33,6 +35,8 @@ class ModelConfig:
             "rff_gamma": self.rff_gamma,
             "l1_penalty": self.l1_penalty,
             "feature_selection_k": self.feature_selection_k,
+            "lr_schedule": self.lr_schedule,
+            "gradient_clip": self.gradient_clip,
         }
 
     @classmethod
@@ -49,6 +53,8 @@ class ModelConfig:
             rff_gamma=float(value.get("rff_gamma", 1.0)),
             l1_penalty=float(value.get("l1_penalty", 0.0)),
             feature_selection_k=value.get("feature_selection_k") if value.get("feature_selection_k") is None else int(value.get("feature_selection_k")),
+            lr_schedule=str(value.get("lr_schedule", "constant")),
+            gradient_clip=float(value.get("gradient_clip", 0.0)),
         )
 
 
@@ -233,7 +239,9 @@ def train_numpy_model(
     weights = rng.normal(0.0, 0.05, size=x_train_mapped.shape[1]).astype(np.float32)
     bias = 0.0
     sample_weights = _sample_weights(y_train, class_weight)
-    learning_rate = min(max(config.learning_rate, 1e-4), 0.1)
+    base_lr = min(max(config.learning_rate, 1e-4), 0.1)
+    lr_schedule = getattr(config, "lr_schedule", "constant")
+    gradient_clip = getattr(config, "gradient_clip", 0.0)
     l2 = 1e-4
     history: dict[str, list[float]] = {"loss": []}
     if validation_data is not None:
@@ -247,13 +255,32 @@ def train_numpy_model(
     stale_epochs = 0
     epochs = max(1, int(config.max_epochs))
 
-    for _ in range(epochs):
+    for epoch in range(epochs):
+        # Adjust learning rate based on schedule
+        if lr_schedule == "cosine":
+            lr_min = 1e-6
+            learning_rate = lr_min + 0.5 * (base_lr - lr_min) * (1.0 + np.cos(np.pi * epoch / epochs))
+        elif lr_schedule == "step_decay":
+            decay_steps = epoch // max(1, int(config.patience))
+            learning_rate = base_lr * (0.5 ** decay_steps)
+        else:
+            learning_rate = base_lr
+
         logits = x_train_mapped @ weights + bias
         probabilities = _sigmoid(logits)
         errors = (probabilities - y_train) * sample_weights
         normalizer = max(float(sample_weights.sum()), 1.0)
         gradient_w = (x_train_mapped.T @ errors) / normalizer + l2 * weights
         gradient_b = float(errors.sum() / normalizer)
+
+        # Gradient clipping
+        if gradient_clip > 0.0:
+            grad_norm = float(np.sqrt(np.sum(gradient_w**2) + gradient_b**2))
+            if grad_norm > gradient_clip:
+                scale = gradient_clip / (grad_norm + 1e-8)
+                gradient_w = gradient_w * scale
+                gradient_b = gradient_b * scale
+
         weights = weights - learning_rate * gradient_w
         bias = bias - learning_rate * gradient_b
 
