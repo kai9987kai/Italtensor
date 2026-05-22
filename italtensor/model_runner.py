@@ -13,7 +13,8 @@ from .modeling import ModelConfig, train_model
 BACKEND_AUTO = "auto"
 BACKEND_NUMPY = "numpy"
 BACKEND_KERAS = "keras"
-BACKEND_CHOICES = (BACKEND_AUTO, BACKEND_NUMPY, BACKEND_KERAS)
+BACKEND_MPS = "mps"
+BACKEND_CHOICES = (BACKEND_AUTO, BACKEND_NUMPY, BACKEND_KERAS, BACKEND_MPS)
 
 
 def tensorflow_available() -> bool:
@@ -26,7 +27,7 @@ def tensorflow_available() -> bool:
 
 def available_backends() -> list[str]:
     """Backends that can actually run in the current environment."""
-    backends = [BACKEND_NUMPY]
+    backends = [BACKEND_NUMPY, BACKEND_MPS]
     if tensorflow_available():
         backends.append(BACKEND_KERAS)
     return backends
@@ -46,6 +47,8 @@ def resolve_backend(preference: str = BACKEND_AUTO) -> str:
                 "Install with: python -m pip install -r requirements-tensorflow.txt"
             )
         return BACKEND_KERAS
+    if pref == BACKEND_MPS:
+        return BACKEND_MPS
     return BACKEND_KERAS if tensorflow_available() else BACKEND_NUMPY
 
 
@@ -65,6 +68,16 @@ def train_with_backend(
         from .modeling import train_numpy_model
 
         return train_numpy_model(
+            features,
+            labels,
+            config,
+            validation_data=validation_data,
+            class_weight=class_weight,
+        )
+    if resolved == BACKEND_MPS:
+        from .mps import train_mps_model
+
+        return train_mps_model(
             features,
             labels,
             config,
@@ -118,6 +131,13 @@ class ModelRunQueue:
                     backend=BACKEND_NUMPY,
                 )
             )
+        queue.add(
+            ModelRunSpec(
+                name="mps-chain",
+                config=_config_with_backend(base_config, BACKEND_MPS),
+                backend=BACKEND_MPS,
+            )
+        )
         if include_keras is None:
             include_keras = tensorflow_available()
         if include_keras and tensorflow_available():

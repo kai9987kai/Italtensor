@@ -8,6 +8,7 @@ import numpy as np
 
 from .data import Dataset, validate_dataset
 from .modeling import ModelConfig, train_model, predict_probability, NumpyBinaryClassifier
+from .mps import MPSBinaryClassifier
 from .preprocessing import FeatureStandardizer
 
 
@@ -344,6 +345,99 @@ def conformal_label_set(probability: float, quantile: float) -> list[int]:
     if (1.0 - p_positive) <= qhat:
         labels.append(1)
     return labels
+
+
+def aps_nonconformity_score(label: int, prob_positive: float) -> float:
+    """Adaptive Prediction Sets (APS) score: cumulative prob mass until true label is included."""
+    p0 = min(max(1.0 - float(prob_positive), 0.0), 1.0)
+    p1 = min(max(float(prob_positive), 0.0), 1.0)
+    ordered = sorted(((0, p0), (1, p1)), key=lambda item: item[1], reverse=True)
+    cumulative = 0.0
+    for class_label, prob in ordered:
+        cumulative += prob
+        if class_label == int(label):
+            return cumulative
+    return 1.0
+
+
+def aps_quantile(
+    labels: np.ndarray,
+    probabilities: np.ndarray,
+    alpha: float = 0.1,
+) -> float:
+    """Calibration quantile for APS at miscoverage level alpha."""
+    if not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must be between 0 and 1.")
+    y_true = np.asarray(labels, dtype=np.int32).reshape(-1)
+    y_prob = np.asarray(probabilities, dtype=np.float32).reshape(-1)
+    if y_true.shape[0] == 0:
+        return 1.0
+    scores = np.asarray([aps_nonconformity_score(int(y), float(p)) for y, p in zip(y_true, y_prob)])
+    sorted_scores = np.sort(np.clip(scores, 0.0, 1.0))
+    rank = int(np.ceil((y_true.shape[0] + 1) * (1.0 - alpha))) - 1
+    rank = min(max(rank, 0), y_true.shape[0] - 1)
+    return float(sorted_scores[rank])
+
+
+def aps_label_set(probability: float, tau: float) -> list[int]:
+    """Return APS prediction set at threshold tau (Romano et al., 2020)."""
+    p0 = min(max(1.0 - float(probability), 0.0), 1.0)
+    p1 = min(max(float(probability), 0.0), 1.0)
+    ordered = sorted(((0, p0), (1, p1)), key=lambda item: item[1], reverse=True)
+    labels: list[int] = []
+    cumulative = 0.0
+    for class_label, prob in ordered:
+        labels.append(class_label)
+        cumulative += prob
+        if cumulative >= min(max(float(tau), 0.0), 1.0):
+            break
+    return labels
+
+
+def aps_metrics(
+    labels: np.ndarray,
+    probabilities: np.ndarray,
+    *,
+    alpha: float = 0.1,
+    calibration_labels: np.ndarray | None = None,
+    calibration_probabilities: np.ndarray | None = None,
+    calibration_source: str = "dedicated_calibration",
+) -> dict[str, float | int | str]:
+    """Summarize APS set coverage; calibrate tau on a separate split when provided."""
+    y_true = np.asarray(labels, dtype=np.int32).reshape(-1)
+    y_prob = np.asarray(probabilities, dtype=np.float32).reshape(-1)
+    if y_true.shape[0] != y_prob.shape[0]:
+        raise ValueError("Labels and probabilities must be the same length.")
+    if calibration_labels is not None and calibration_probabilities is not None:
+        tau = aps_quantile(calibration_labels, calibration_probabilities, alpha=alpha)
+        source = calibration_source
+    else:
+        tau = aps_quantile(y_true, y_prob, alpha=alpha)
+        source = "evaluation_self"
+    if y_true.shape[0] == 0:
+        return {
+            "aps_alpha": float(alpha),
+            "aps_tau": tau,
+            "aps_coverage": 0.0,
+            "aps_singleton_rate": 0.0,
+            "aps_empty_rate": 0.0,
+            "aps_both_rate": 0.0,
+            "aps_mean_set_size": 0.0,
+            "aps_source": source,
+        }
+    sets = [aps_label_set(float(probability), tau) for probability in y_prob]
+    set_sizes = np.asarray([len(label_set) for label_set in sets], dtype=np.float32)
+    coverage = np.asarray([int(label) in label_set for label, label_set in zip(y_true, sets, strict=True)])
+    return {
+        "aps_alpha": float(alpha),
+        "aps_tau": tau,
+        "aps_coverage": float(np.mean(coverage)),
+        "aps_singleton_rate": float(np.mean(set_sizes == 1)),
+        "aps_empty_rate": float(np.mean(set_sizes == 0)),
+        "aps_both_rate": float(np.mean(set_sizes == 2)),
+        "aps_mean_set_size": float(np.mean(set_sizes)),
+        "aps_source": source,
+    }
 
 
 def conformal_metrics(
@@ -698,8 +792,8 @@ def train_single_model(
         class_weight=class_weight,
     )
     
-    # Perform post-hoc Platt scaling calibration if it's a Numpy model
-    if isinstance(model, NumpyBinaryClassifier):
+    # Perform post-hoc Platt scaling calibration on NumPy / MPS backends
+    if isinstance(model, (NumpyBinaryClassifier, MPSBinaryClassifier)):
         # 1. Predict uncalibrated probabilities on validation
         uncal_val_probs = predict_probability(model, x_val_std)
         # 2. Fit Platt scaling
@@ -726,7 +820,16 @@ def train_single_model(
         val_probs,
         calibration_source=conformal_source,
     )
+    aps_summary = aps_metrics(
+        y_val,
+        val_probs,
+        calibration_labels=y_cal,
+        calibration_probabilities=cal_probs,
+        calibration_source=conformal_source,
+    )
+    uncertainty.update(aps_summary)
     metrics.update({key: value for key, value in uncertainty.items() if isinstance(value, int | float)})
+    metrics.update({key: value for key, value in aps_summary.items() if isinstance(value, int | float)})
     metrics["threshold_gain_f1"] = float(metrics["f1"] - metrics["fixed_threshold_f1"])
     metrics["threshold_gain_balanced_accuracy"] = float(
         metrics["balanced_accuracy"] - metrics["fixed_threshold_balanced_accuracy"]
@@ -743,16 +846,16 @@ def train_single_model(
         metrics["bootstrap_accuracy_upper"] = ci["accuracy"][1]
         metrics["bootstrap_balanced_accuracy_lower"] = ci["balanced_accuracy"][0]
         metrics["bootstrap_balanced_accuracy_upper"] = ci["balanced_accuracy"][1]
-    except Exception:
-        pass
-    
+    except Exception as exc:
+        uncertainty["bootstrap_ci_error"] = str(exc)
+
     # Add validation loss and class weights
     if "val_loss" in history and history["val_loss"]:
         metrics["validation_loss"] = float(history["val_loss"][-1])
     else:
         probs_clipped = np.clip(val_probs, 1e-7, 1.0 - 1e-7)
         metrics["validation_loss"] = float(-np.mean(y_val * np.log(probs_clipped) + (1.0 - y_val) * np.log(1.0 - probs_clipped)))
-        
+
     metrics["threshold"] = threshold
     if class_weight is not None:
         metrics["class_weight_0"] = float(class_weight.get(0, 1.0))
@@ -1153,15 +1256,15 @@ def train_distilled_model(
         metrics["bootstrap_accuracy_upper"] = ci["accuracy"][1]
         metrics["bootstrap_balanced_accuracy_lower"] = ci["balanced_accuracy"][0]
         metrics["bootstrap_balanced_accuracy_upper"] = ci["balanced_accuracy"][1]
-    except Exception:
-        pass
-        
+    except Exception as exc:
+        uncertainty["bootstrap_ci_error"] = str(exc)
+
     if "val_loss" in history and history["val_loss"]:
         metrics["validation_loss"] = float(history["val_loss"][-1])
     else:
         probs_clipped = np.clip(val_probs, 1e-7, 1.0 - 1e-7)
         metrics["validation_loss"] = float(-np.mean(y_val_hard * np.log(probs_clipped) + (1.0 - y_val_hard) * np.log(1.0 - probs_clipped)))
-        
+
     return ExperimentResult(
         model=student_model,
         preprocessor=preprocessor,

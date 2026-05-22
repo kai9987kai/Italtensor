@@ -35,6 +35,8 @@ from .presets import generate_builtin_preset, load_preset_file, preset_labels, p
 from .reporting import build_experiment_report, export_experiment_report
 from .registry import ModelSlot
 from .scoring import score_prediction_csv
+from .audit import audit_dataset, format_audit_summary
+from .learning_curves import learning_curve_points
 
 
 @dataclass
@@ -108,6 +110,10 @@ def run_app() -> None:
                 _load_dataset(window, state, values)
             elif event == "-CLEAR_DATA-":
                 _clear_data(window, state)
+            elif event == "-AUDIT_DATASET-":
+                _audit_dataset(window, state)
+            elif event == "-LEARNING_CURVE-":
+                _start_learning_curve(window, state, values)
             elif event == "-TRAIN_ONCE-":
                 _start_train_once(window, state, values)
             elif event == "-AUTO_EXPERIMENTS-":
@@ -209,6 +215,8 @@ def _layout(sg):
             sg.Text("-", key="-INPUT_DIM-", size=(6, 1)),
         ],
         [sg.Text("Dataset:"), sg.Text("No data", key="-DATASET_SUMMARY-", expand_x=True)],
+        [sg.Text("Audit:"), sg.Text("—", key="-AUDIT_SUMMARY-", expand_x=True)],
+        [sg.Button("Audit dataset", key="-AUDIT_DATASET-"), sg.Button("Learning curve", key="-LEARNING_CURVE-")],
         [
             sg.Text("Epochs"),
             sg.Input("50", key="-EPOCHS-", size=(6, 1)),
@@ -225,7 +233,7 @@ def _layout(sg):
                 readonly=True,
                 key="-BACKEND-",
                 size=(8, 1),
-                tooltip="auto picks Keras when TensorFlow is installed, else NumPy",
+                tooltip="auto: Keras if TF installed else NumPy; mps: tensor-chain classifier",
             ),
         ],
         [
@@ -247,6 +255,8 @@ def _layout(sg):
             sg.Button("Train once", key="-TRAIN_ONCE-"),
             sg.Button("Run auto experiments", key="-AUTO_EXPERIMENTS-"),
             sg.Button("Weight Analysis", key="-WEIGHT_ANALYSIS-"),
+            sg.Text("MPS χ"),
+            sg.Input("8", key="-MPS_BOND-", size=(4, 1)),
         ],
         [sg.Text("Model path")],
         [
@@ -354,7 +364,7 @@ def _load_builtin_preset(window, state: AppState, values: dict[str, Any]) -> Non
         sample_count=_positive_int(values["-PRESET_SAMPLES-"], "preset samples"),
         seed=_int_value(values["-PRESET_SEED-"], "preset seed"),
     )
-    _replace_dataset(state, dataset)
+    _replace_dataset(state, dataset, window=window)
     metadata = preset_metadata(values["-PRESET_NAME-"])
     _apply_preset_metadata(window, metadata)
     _log(window, f"Loaded preset '{values['-PRESET_NAME-']}' with {dataset.sample_count} samples.")
@@ -363,7 +373,7 @@ def _load_builtin_preset(window, state: AppState, values: dict[str, Any]) -> Non
 
 def _import_preset(window, state: AppState, values: dict[str, Any]) -> None:
     dataset, metadata = load_preset_file(_required_path(values["-PRESET_PATH-"], "preset path"))
-    _replace_dataset(state, dataset)
+    _replace_dataset(state, dataset, window=window)
     _apply_preset_metadata(window, metadata)
     _log(window, f"Imported preset '{metadata['name']}' with {dataset.sample_count} samples.")
     _log(window, _format_preset_metadata(metadata))
@@ -382,7 +392,7 @@ def _save_preset(window, state: AppState, values: dict[str, Any]) -> None:
 
 def _load_csv(window, state: AppState, values: dict[str, Any]) -> None:
     dataset = load_csv_dataset(_required_path(values["-CSV_PATH-"], "CSV path"))
-    _replace_dataset(state, dataset)
+    _replace_dataset(state, dataset, window=window)
     _log(window, f"Loaded {dataset.sample_count} samples from CSV.")
 
 
@@ -394,7 +404,7 @@ def _save_dataset(window, state: AppState, values: dict[str, Any]) -> None:
 
 def _load_dataset(window, state: AppState, values: dict[str, Any]) -> None:
     dataset = load_dataset(_required_path(values["-DATASET_PATH-"], "dataset path"))
-    _replace_dataset(state, dataset)
+    _replace_dataset(state, dataset, window=window)
     _log(window, f"Loaded {dataset.sample_count} samples from dataset JSON.")
 
 
@@ -403,7 +413,27 @@ def _clear_data(window, state: AppState) -> None:
     state.labels.clear()
     state.input_dim = None
     _invalidate_model_artifacts(state)
+    window["-AUDIT_SUMMARY-"].update("—")
     _log(window, "Cleared dataset.")
+
+
+def _audit_dataset(window, state: AppState) -> None:
+    if len(state.labels) < 1:
+        raise ValueError("Add data before running an audit.")
+    summary = format_audit_summary(audit_dataset(state.features, state.labels))
+    window["-AUDIT_SUMMARY-"].update(summary[:120] + ("…" if len(summary) > 120 else ""))
+    _log(window, summary)
+
+
+def _start_learning_curve(window, state: AppState, values: dict[str, Any]) -> None:
+    _ensure_not_busy(state)
+    dataset = validate_dataset(state.features, state.labels, min_samples=8, require_two_classes=True)
+    config = _config_from_values(values)
+
+    def task() -> tuple[str, list[dict[str, Any]]]:
+        return "learning_curve", learning_curve_points(dataset.features, dataset.labels, config)
+
+    _start_worker(window, state, "Computing learning curve...", task)
 
 
 def _config_from_values(values: dict[str, Any]) -> ModelConfig:
@@ -416,6 +446,13 @@ def _config_from_values(values: dict[str, Any]) -> ModelConfig:
         gradient_clip = float(grad_clip_raw) if grad_clip_raw else 0.0
     except ValueError:
         raise ValueError("Gradient clip must be a float.")
+    mps_bond_raw = values.get("-MPS_BOND-", "8").strip()
+    try:
+        mps_bond_dim = int(mps_bond_raw) if mps_bond_raw else 8
+    except ValueError as exc:
+        raise ValueError("MPS bond dimension must be an integer.") from exc
+    if mps_bond_dim < 2:
+        raise ValueError("MPS bond dimension must be at least 2.")
     return ModelConfig(
         hidden_layers=(32,),
         learning_rate=0.001,
@@ -427,6 +464,7 @@ def _config_from_values(values: dict[str, Any]) -> ModelConfig:
         lr_schedule=values.get("-LR_SCHEDULE-", "constant"),
         gradient_clip=gradient_clip,
         backend=values.get("-BACKEND-", "auto"),
+        mps_bond_dim=mps_bond_dim,
     )
 
 
@@ -616,6 +654,14 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
     elif kind == "batch_predictions":
         path, count = result
         _log(window, f"Exported {count} batch prediction(s) to {path}.")
+    elif kind == "learning_curve":
+        for point in result:
+            _log(
+                window,
+                f"Curve fraction={point['train_fraction']:.2f} "
+                f"samples={point['train_samples']} "
+                f"F1={point['f1']:.4f} acc={point['accuracy']:.4f}",
+            )
     elif kind == "multi_backend":
         best = select_best_from_runs(result)
         state.model = best.model
@@ -686,11 +732,21 @@ def _start_worker(window, state: AppState, status: str, task: Callable[[], tuple
     threading.Thread(target=run, daemon=True).start()
 
 
-def _replace_dataset(state: AppState, dataset) -> None:
+def _replace_dataset(state: AppState, dataset, *, window=None) -> None:
     state.features = dataset.features.astype(float).tolist()
     state.labels = dataset.labels.astype(int).tolist()
     state.input_dim = dataset.input_dim
     _invalidate_model_artifacts(state)
+    if window is not None:
+        _refresh_audit_summary(window, state)
+
+
+def _refresh_audit_summary(window, state: AppState) -> None:
+    if len(state.labels) < 1:
+        window["-AUDIT_SUMMARY-"].update("—")
+        return
+    summary = format_audit_summary(audit_dataset(state.features, state.labels))
+    window["-AUDIT_SUMMARY-"].update(summary[:120] + ("…" if len(summary) > 120 else ""))
 
 
 def _apply_preset_metadata(window, metadata: dict[str, Any]) -> None:
@@ -761,6 +817,8 @@ def _set_busy(window, busy: bool) -> None:
         "-SAVE_REGISTRY-",
         "-LOAD_REGISTRY-",
         "-BUILD_STACKED_ENSEMBLE-",
+        "-AUDIT_DATASET-",
+        "-LEARNING_CURVE-",
     ):
         if key in window.AllKeysDict:
             window[key].update(disabled=busy)
@@ -923,9 +981,17 @@ def _format_uncertainty(uncertainty: dict[str, Any]) -> str:
         "conformal_target_coverage",
         "conformal_singleton_rate",
         "conformal_empty_rate",
+        "aps_alpha",
+        "aps_tau",
+        "aps_coverage",
+        "aps_singleton_rate",
+        "aps_mean_set_size",
     ):
         if key in uncertainty:
             parts.append(f"{key}={float(uncertainty[key]):.4f}")
+    aps_source = uncertainty.get("aps_source")
+    if aps_source:
+        parts.append(f"aps_source={aps_source}")
     bootstrap_ci = uncertainty.get("bootstrap_ci")
     if bootstrap_ci:
         parts.append("bootstrap_ci={")

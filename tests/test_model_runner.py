@@ -37,8 +37,10 @@ def test_model_run_queue_numpy_only():
     config = ModelConfig(max_epochs=5, feature_map="linear", backend="numpy")
     queue = ModelRunQueue.multi_backend_sweep(config, include_keras=False)
     results = run_model_queue(features, labels, queue)
-    assert len(results) == 1
-    assert isinstance(results[0].model, NumpyBinaryClassifier)
+    assert len(results) == 2
+    backends = {item.config.backend for item in results}
+    assert backends == {"numpy", "mps"}
+    assert any(isinstance(item.model, NumpyBinaryClassifier) for item in results)
 
 
 def test_select_best_from_runs():

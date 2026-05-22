@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "italtensor"
+version = "0.2.0"
+description = "Local desktop workbench for binary classification with tensor-chain and conformal tooling"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+  "PySimpleGUI>=6,<7",
+  "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+tensorflow = ["tensorflow>=2.15"]
+dev = ["pytest>=7.4"]
+
+[project.scripts]
+italtensor = "italtensor.app:run_app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["italtensor*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: marks tests as slow (deselect with '-m \"not slow\"')"]

@@ -8,6 +8,7 @@ from typing import Any
 from .data import Dataset, dataset_from_jsonable, dataset_to_jsonable
 from .experiments import EnsemblePredictor
 from .modeling import ModelConfig, NumpyBinaryClassifier
+from .mps import MPSBinaryClassifier
 from .preprocessing import FeatureStandardizer
 from .registry import ModelSlot
 
@@ -39,10 +40,11 @@ def save_model_bundle(
     model_path = Path(path)
     is_ensemble = isinstance(model, EnsemblePredictor)
     is_numpy_model = isinstance(model, NumpyBinaryClassifier)
+    is_mps_model = isinstance(model, MPSBinaryClassifier)
     if is_ensemble:
         model_path = model_path.with_suffix(".italtensor-ensemble.json")
-        model_path.write_text(json.dumps(model.to_dict(), indent=2), encoding="utf-8")
-        model_backend = "ensemble"
+    elif is_mps_model:
+        model_path = model_path.with_suffix(".italtensor-mps.json")
     elif is_numpy_model:
         model_path = model_path.with_suffix(".italtensor-model.json")
     elif model_path.suffix != ".keras":
@@ -62,9 +64,7 @@ def save_model_bundle(
                 f"Feature selection index {max_idx} is out of bounds for input dimension {input_dim}."
             )
 
-    if is_ensemble:
-        pass
-    elif is_numpy_model:
+    if is_ensemble or is_numpy_model or is_mps_model:
         model_path.write_text(json.dumps(model.to_dict(), indent=2), encoding="utf-8")
     else:
         model.save(str(model_path))
@@ -74,7 +74,11 @@ def save_model_bundle(
         "model_backend": (
             "ensemble"
             if is_ensemble
-            else ("numpy-logistic" if is_numpy_model else "tensorflow-keras")
+            else (
+                "mps-binary"
+                if is_mps_model
+                else ("numpy-logistic" if is_numpy_model else "tensorflow-keras")
+            )
         ),
         "model_feature_map": getattr(model, "feature_map", None),
         "input_dim": input_dim,
@@ -98,6 +102,8 @@ def load_model_bundle(path: str | Path):
         payload = json.loads(model_path.read_text(encoding="utf-8"))
         if payload.get("ensemble_format_version") is not None:
             model = EnsemblePredictor.from_dict(payload)
+        elif payload.get("backend") == "mps-binary":
+            model = MPSBinaryClassifier.from_dict(payload)
         elif payload.get("backend") == "numpy-logistic":
             model = NumpyBinaryClassifier.from_dict(payload)
         else:
@@ -121,7 +127,19 @@ def load_model_bundle(path: str | Path):
 
 
 def model_metadata_path(model_path: str | Path) -> Path:
-    return Path(str(model_path) + ".json")
+    """Sidecar metadata path: model.italtensor-model.json -> model.italtensor-meta.json."""
+    path = Path(model_path)
+    name = path.name
+    for suffix in (
+        ".italtensor-ensemble.json",
+        ".italtensor-mps.json",
+        ".italtensor-model.json",
+        ".keras",
+    ):
+        if name.endswith(suffix):
+            stem = name[: -len(suffix)]
+            return path.with_name(f"{stem}.italtensor-meta.json")
+    return path.with_suffix(path.suffix + ".italtensor-meta.json")
 
 
 def save_model_registry(path: str | Path, slots: list[ModelSlot], *, input_dim: int | None = None) -> Path:
@@ -133,6 +151,8 @@ def save_model_registry(path: str | Path, slots: list[ModelSlot], *, input_dim: 
             model_payload = {"kind": "ensemble", "data": model.to_dict()}
         elif isinstance(model, NumpyBinaryClassifier):
             model_payload = {"kind": "numpy", "data": model.to_dict()}
+        elif isinstance(model, MPSBinaryClassifier):
+            model_payload = {"kind": "mps", "data": model.to_dict()}
         else:
             raise ValueError(
                 f"Slot '{slot.name}' uses a backend that cannot be stored in a registry file. "
@@ -176,6 +196,8 @@ def load_model_registry(path: str | Path) -> tuple[list["ModelSlot"], int | None
             model = EnsemblePredictor.from_dict(data)
         elif kind == "numpy":
             model = NumpyBinaryClassifier.from_dict(data)
+        elif kind == "mps":
+            model = MPSBinaryClassifier.from_dict(data)
         else:
             raise ValueError(f"Unsupported registry model kind: {kind}")
         config_raw = item.get("config")

@@ -22,6 +22,8 @@ class ModelConfig:
     lr_schedule: str = "constant"
     gradient_clip: float = 0.0
     backend: str = "auto"
+    mps_bond_dim: int = 8
+    mps_physical_dim: int = 4
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -39,6 +41,8 @@ class ModelConfig:
             "lr_schedule": self.lr_schedule,
             "gradient_clip": self.gradient_clip,
             "backend": self.backend,
+            "mps_bond_dim": self.mps_bond_dim,
+            "mps_physical_dim": self.mps_physical_dim,
         }
 
     @classmethod
@@ -58,6 +62,8 @@ class ModelConfig:
             lr_schedule=str(value.get("lr_schedule", "constant")),
             gradient_clip=float(value.get("gradient_clip", 0.0)),
             backend=str(value.get("backend", "auto")),
+            mps_bond_dim=int(value.get("mps_bond_dim", 8)),
+            mps_physical_dim=int(value.get("mps_physical_dim", 4)),
         )
 
 
@@ -188,9 +194,19 @@ def train_model(
     verbose: int = 0,
     force_backend: str | None = None,
 ):
-    from .model_runner import BACKEND_KERAS, BACKEND_NUMPY, resolve_backend
+    from .model_runner import BACKEND_KERAS, BACKEND_MPS, BACKEND_NUMPY, resolve_backend
 
     resolved = resolve_backend(force_backend or getattr(config, "backend", "auto"))
+    if resolved == BACKEND_MPS:
+        from .mps import train_mps_model
+
+        return train_mps_model(
+            features,
+            labels,
+            config,
+            validation_data=validation_data,
+            class_weight=class_weight,
+        )
     if resolved == BACKEND_NUMPY:
         return train_numpy_model(
             features,
@@ -348,11 +364,16 @@ def train_numpy_model(
 
 
 def predict_probability(model: Any, samples: Sequence[float] | np.ndarray) -> np.ndarray:
+    from .mps import MPSBinaryClassifier
+
     sample_array = np.asarray(samples, dtype=np.float32)
     if sample_array.ndim == 1:
         sample_array = sample_array.reshape(1, -1)
     if sample_array.ndim != 2:
         raise ValueError("Prediction input must be one vector or a 2D feature array.")
+    if isinstance(model, (NumpyBinaryClassifier, MPSBinaryClassifier)):
+        predictions = model.predict(sample_array, verbose=0)
+        return np.asarray(predictions, dtype=np.float32).reshape(-1)
     predictions = model.predict(sample_array, verbose=0)
     return np.asarray(predictions, dtype=np.float32).reshape(-1)
 

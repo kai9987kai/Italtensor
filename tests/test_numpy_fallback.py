@@ -128,7 +128,7 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
     probabilities = predict_probability(loaded, [[1.0, 0.0]])
 
     assert model_path.name == "fallback.italtensor-model.json"
-    assert metadata_path.name == "fallback.italtensor-model.json.json"
+    assert metadata_path.name == "fallback.italtensor-meta.json"
     assert isinstance(loaded, NumpyBinaryClassifier)
     assert metadata["model_format_version"] == 1
     assert metadata["model_backend"] == "numpy-logistic"

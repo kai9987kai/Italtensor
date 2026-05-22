@@ -28,20 +28,31 @@ The app runs without TensorFlow by default. When TensorFlow is unavailable, Ital
 - Feature standardization fitted only on the training split.
 - Permutation-style feature importance on validation data.
 - Probability diagnostics including Brier score, log loss, calibration error, ROC-AUC, and average precision.
-- Split-conformal-style uncertainty diagnostics and prediction sets for model abstention experiments.
+- Split-conformal and **APS** (Adaptive Prediction Sets) uncertainty diagnostics for abstention experiments.
+- **MPS tensor-chain** binary classifier (`backend=mps`): ordered features as sites, bond dimension χ, soft site embeddings.
+- Dataset **audit** (imbalance, duplicates, constant/correlated features) in the workbench and reports.
+- **Learning curve** diagnostics (F1 vs. training fraction).
 - Trial-history export for comparing auto-experiment runs.
-- Explicit training backend control: `auto`, `numpy`, or `keras` (when TensorFlow is installed).
-- Multi-backend run queue: train NumPy and Keras models in one sweep and store each in the registry.
+- Explicit training backend control: `auto`, `numpy`, `mps`, or `keras` (when TensorFlow is installed).
+- Multi-backend run queue: train NumPy, MPS, and Keras models in one sweep and store each in the registry.
 - Model panel communication: per-model votes, consensus fusion (mean, median, vote, weighted, stacking), and disagreement scores.
 - Persistable model registry (`.json`) for NumPy models and ensembles across sessions.
 - JSON or Markdown experiment reports.
 - Model save/load:
   - `.italtensor-model.json` for NumPy fallback models
+  - `.italtensor-mps.json` for MPS chain models
+  - `.italtensor-meta.json` sidecar metadata (no double `.json` suffix)
   - `.keras` for TensorFlow/Keras models when TensorFlow is installed
 
 ## Install
 
-Base install:
+Editable install (recommended):
+
+```powershell
+python -m pip install -e .
+```
+
+Base install from requirements:
 
 ```powershell
 python -m pip install -r requirements.txt
