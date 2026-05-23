@@ -17,11 +17,13 @@ The app runs without TensorFlow by default. When TensorFlow is unavailable, Ital
   - Two moons
   - Rare event signal
   - Overlapping margin
+  - Noisy labels
   - Sparse interaction signal
   - Deployment drift probe
 - Save and import reusable dataset presets.
 - Train once or run random-search experiments.
 - Batch prediction CSV export for scoring unlabeled rows.
+- Dataset audit for imbalance, duplicates, label conflicts, constant features, and correlated features.
 - No-TensorFlow fallback trainer with linear, quadratic, and random Fourier feature maps.
 - Validation-tuned decision threshold plus fixed-`0.5` baseline metrics.
 - Class weighting for imbalanced binary datasets.
@@ -29,7 +31,7 @@ The app runs without TensorFlow by default. When TensorFlow is unavailable, Ital
 - Permutation-style feature importance on validation data.
 - Probability diagnostics including Brier score, log loss, calibration error, ROC-AUC, and average precision.
 - Split-conformal and **APS** (Adaptive Prediction Sets) uncertainty diagnostics for abstention experiments.
-- **MPS tensor-chain** binary classifier (`backend=mps`): ordered features as sites, bond dimension χ, soft site embeddings.
+- **MPS tensor-chain** binary classifier (`backend=mps`): ordered features as sites, bond dimension chi, soft site embeddings.
 - Dataset **audit** (imbalance, duplicates, constant/correlated features) in the workbench and reports.
 - **Learning curve** diagnostics (F1 vs. training fraction).
 - Trial-history export for comparing auto-experiment runs.
@@ -159,6 +161,8 @@ Experiment reports include dataset availability, class counts when a dataset is 
 The uncertainty output is intended as an experimental local diagnostic. When each class has enough samples, Italtensor uses a separate calibration split to estimate a split-conformal-style quantile, then evaluates coverage on the validation split. Prediction displays a label set such as `{0}`, `{1}`, `{0,1}`, or `abstain`. Tiny datasets fall back to validation-reused uncertainty and mark that source in model metadata and reports.
 
 Batch prediction exports rank rows for review using threshold-distance uncertainty, conformal ambiguity, and row-level drift diagnostics. Rows near the decision threshold, rows whose conformal set contains both labels, or rows whose standardized features cross the OOD flag threshold get higher review priority so the file can double as a lightweight active-learning queue.
+
+Dataset audits run from the desktop and are embedded in JSON/Markdown reports. They summarize class balance, duplicate feature rows, possible label conflicts, constant columns, highly correlated feature pairs, and compact warnings before you spend time tuning a model.
 
 ## Testing
 

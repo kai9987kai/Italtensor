@@ -215,7 +215,7 @@ def _layout(sg):
             sg.Text("-", key="-INPUT_DIM-", size=(6, 1)),
         ],
         [sg.Text("Dataset:"), sg.Text("No data", key="-DATASET_SUMMARY-", expand_x=True)],
-        [sg.Text("Audit:"), sg.Text("—", key="-AUDIT_SUMMARY-", expand_x=True)],
+        [sg.Text("Audit:"), sg.Text("-", key="-AUDIT_SUMMARY-", expand_x=True)],
         [sg.Button("Audit dataset", key="-AUDIT_DATASET-"), sg.Button("Learning curve", key="-LEARNING_CURVE-")],
         [
             sg.Text("Epochs"),
@@ -255,7 +255,7 @@ def _layout(sg):
             sg.Button("Train once", key="-TRAIN_ONCE-"),
             sg.Button("Run auto experiments", key="-AUTO_EXPERIMENTS-"),
             sg.Button("Weight Analysis", key="-WEIGHT_ANALYSIS-"),
-            sg.Text("MPS χ"),
+            sg.Text("MPS chi"),
             sg.Input("8", key="-MPS_BOND-", size=(4, 1)),
         ],
         [sg.Text("Model path")],
@@ -413,7 +413,7 @@ def _clear_data(window, state: AppState) -> None:
     state.labels.clear()
     state.input_dim = None
     _invalidate_model_artifacts(state)
-    window["-AUDIT_SUMMARY-"].update("—")
+    window["-AUDIT_SUMMARY-"].update("-")
     _log(window, "Cleared dataset.")
 
 
@@ -421,7 +421,7 @@ def _audit_dataset(window, state: AppState) -> None:
     if len(state.labels) < 1:
         raise ValueError("Add data before running an audit.")
     summary = format_audit_summary(audit_dataset(state.features, state.labels))
-    window["-AUDIT_SUMMARY-"].update(summary[:120] + ("…" if len(summary) > 120 else ""))
+    window["-AUDIT_SUMMARY-"].update(summary[:120] + ("..." if len(summary) > 120 else ""))
     _log(window, summary)
 
 
@@ -564,6 +564,7 @@ def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
         sample_count=len(state.labels),
         input_dim=state.input_dim,
         labels=state.labels,
+        features=state.features,
         config=state.latest_config,
         metrics=state.latest_metrics,
         threshold=state.latest_threshold,
@@ -743,10 +744,10 @@ def _replace_dataset(state: AppState, dataset, *, window=None) -> None:
 
 def _refresh_audit_summary(window, state: AppState) -> None:
     if len(state.labels) < 1:
-        window["-AUDIT_SUMMARY-"].update("—")
+        window["-AUDIT_SUMMARY-"].update("-")
         return
     summary = format_audit_summary(audit_dataset(state.features, state.labels))
-    window["-AUDIT_SUMMARY-"].update(summary[:120] + ("…" if len(summary) > 120 else ""))
+    window["-AUDIT_SUMMARY-"].update(summary[:120] + ("..." if len(summary) > 120 else ""))
 
 
 def _apply_preset_metadata(window, metadata: dict[str, Any]) -> None:
@@ -1027,7 +1028,7 @@ def _format_cv_summary(metrics: dict[str, float | int]) -> str:
         if mean_key in metrics:
             mean_val = float(metrics[mean_key])
             std_val = float(metrics.get(std_key, 0.0))
-            lines.append(f"  {base_key}: {mean_val:.4f} ± {std_val:.4f}")
+            lines.append(f"  {base_key}: {mean_val:.4f} +/- {std_val:.4f}")
     return "\n".join(lines)
 
 

@@ -42,6 +42,7 @@ def test_report_export_json_and_markdown(tmp_path):
         sample_count=4,
         input_dim=2,
         labels=[0, 0, 1, 1],
+        features=[[0.0, 0.0], [0.0, 0.0], [1.0, 1.0], [2.0, 2.0]],
         config=ModelConfig(hidden_layers=(16,), max_epochs=3),
         metrics={"f1": 0.75, "threshold": 0.4},
         threshold=0.4,
@@ -72,12 +73,14 @@ def test_report_export_json_and_markdown(tmp_path):
     saved_markdown = markdown_path.read_text(encoding="utf-8")
     assert saved_json["dataset"]["class_counts"] == {"0": 2, "1": 2}
     assert saved_json["dataset"]["available"] is True
+    assert saved_json["dataset"]["audit"]["duplicate_row_count"] == 1
     assert saved_json["model"]["threshold"] == 0.4
     assert saved_json["uncertainty"]["conformal_source"] == "dedicated_calibration"
     assert saved_json["uncertainty"]["conformal_quantile"] == 0.35
     assert saved_json["uncertainty"]["conformal_calibration_count"] == 8
     assert saved_json["trial_history"][0]["config"]["feature_map"] == "rff"
     assert "Feature 0" in saved_markdown
+    assert "## Dataset Audit" in saved_markdown
     assert "Trial 1" in saved_markdown
     assert "## Uncertainty" in saved_markdown
     assert "conformal_source" in saved_markdown

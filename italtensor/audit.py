@@ -17,14 +17,15 @@ def audit_dataset(features: list[list[float]] | np.ndarray, labels: list[int] | 
     }
     minority = min(class_counts.values())
     majority = max(class_counts.values())
-    duplicate_count, conflict_count = _duplicate_and_conflict_counts(x, y)
+    duplicate_rows, label_conflicts = _duplicate_and_conflict_summary(x, y)
     constant_features = _constant_features(x)
+    constant_feature_details = _constant_feature_details(x, constant_features)
     high_correlations = _high_correlations(x)
     warnings = _audit_warnings(
         sample_count=dataset.sample_count,
         class_counts=class_counts,
-        duplicate_count=duplicate_count,
-        conflict_count=conflict_count,
+        duplicate_count=int(duplicate_rows["duplicate_row_count"]),
+        conflict_count=int(label_conflicts["conflicting_row_count"]),
         constant_features=constant_features,
         high_correlations=high_correlations,
     )
@@ -32,12 +33,17 @@ def audit_dataset(features: list[list[float]] | np.ndarray, labels: list[int] | 
         "sample_count": dataset.sample_count,
         "input_dim": dataset.input_dim,
         "class_counts": class_counts,
+        "class_balance": _class_balance(class_counts),
         "minority_class_count": int(minority),
         "majority_class_count": int(majority),
         "imbalance_ratio": float(majority / max(minority, 1)),
-        "duplicate_row_count": duplicate_count,
-        "label_conflict_count": conflict_count,
+        "duplicate_rows": duplicate_rows,
+        "duplicate_row_count": int(duplicate_rows["duplicate_row_count"]),
+        "label_conflicts": label_conflicts,
+        "label_conflict_count": int(label_conflicts["conflict_group_count"]),
+        "conflicting_row_count": int(label_conflicts["conflicting_row_count"]),
         "constant_features": constant_features,
+        "constant_feature_details": constant_feature_details,
         "high_correlations": high_correlations,
         "warnings": warnings,
     }
@@ -60,18 +66,58 @@ def _as_dataset(features: list[list[float]] | np.ndarray, labels: list[int] | np
     return validate_dataset(feature_list, label_list, min_samples=1)
 
 
-def _duplicate_and_conflict_counts(features: np.ndarray, labels: np.ndarray) -> tuple[int, int]:
-    seen: dict[tuple[float, ...], set[int]] = {}
-    duplicate_count = 0
-    for row, label in zip(features, labels, strict=True):
+def _class_balance(class_counts: dict[str, int]) -> dict[str, float | int]:
+    indexed_counts = {int(label): int(count) for label, count in class_counts.items()}
+    majority_label = max(indexed_counts, key=indexed_counts.get)
+    minority_label = min(indexed_counts, key=indexed_counts.get)
+    majority_count = indexed_counts[majority_label]
+    minority_count = indexed_counts[minority_label]
+    total = max(sum(indexed_counts.values()), 1)
+    return {
+        "majority_label": int(majority_label),
+        "minority_label": int(minority_label),
+        "majority_count": int(majority_count),
+        "minority_count": int(minority_count),
+        "minority_fraction": float(minority_count / total),
+        "majority_to_minority_ratio": float(majority_count / max(minority_count, 1)),
+    }
+
+
+def _duplicate_and_conflict_summary(
+    features: np.ndarray,
+    labels: np.ndarray,
+    limit: int = 20,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    groups: dict[tuple[float, ...], dict[str, Any]] = {}
+    for row_index, (row, label) in enumerate(zip(features, labels, strict=True)):
         key = tuple(round(float(value), 8) for value in row)
-        if key in seen:
-            duplicate_count += 1
-            seen[key].add(int(label))
-        else:
-            seen[key] = {int(label)}
-    conflict_count = sum(1 for labels_for_row in seen.values() if len(labels_for_row) > 1)
-    return duplicate_count, conflict_count
+        if key not in groups:
+            groups[key] = {
+                "features": [float(value) for value in key],
+                "labels": {"0": 0, "1": 0},
+                "row_indices": [],
+            }
+        groups[key]["labels"][str(int(label))] += 1
+        groups[key]["row_indices"].append(int(row_index))
+
+    duplicate_groups = [group for group in groups.values() if len(group["row_indices"]) > 1]
+    conflict_groups = [group for group in groups.values() if group["labels"]["0"] and group["labels"]["1"]]
+    duplicate_groups.sort(key=lambda group: len(group["row_indices"]), reverse=True)
+    conflict_groups.sort(key=lambda group: len(group["row_indices"]), reverse=True)
+    duplicate_row_count = sum(len(group["row_indices"]) - 1 for group in duplicate_groups)
+    conflicting_row_count = sum(len(group["row_indices"]) for group in conflict_groups)
+    return (
+        {
+            "duplicate_group_count": len(duplicate_groups),
+            "duplicate_row_count": int(duplicate_row_count),
+            "groups": duplicate_groups[:limit],
+        },
+        {
+            "conflict_group_count": len(conflict_groups),
+            "conflicting_row_count": int(conflicting_row_count),
+            "groups": conflict_groups[:limit],
+        },
+    )
 
 
 def _constant_features(features: np.ndarray) -> list[int]:
@@ -79,6 +125,16 @@ def _constant_features(features: np.ndarray) -> list[int]:
         return list(range(features.shape[1]))
     std = features.std(axis=0)
     return [int(index) for index, value in enumerate(std) if float(value) < 1e-8]
+
+
+def _constant_feature_details(features: np.ndarray, indices: list[int]) -> list[dict[str, float | int]]:
+    return [
+        {
+            "feature_index": int(index),
+            "value": float(features[0, index]) if features.shape[0] else 0.0,
+        }
+        for index in indices
+    ]
 
 
 def _high_correlations(features: np.ndarray, threshold: float = 0.95, limit: int = 12) -> list[dict[str, float | int]]:

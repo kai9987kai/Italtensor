@@ -16,8 +16,8 @@ def build_experiment_report(
     *,
     sample_count: int,
     input_dim: int | None,
-    features: list[list[float]] | None = None,
     labels: list[int],
+    features: list[list[float]] | None = None,
     config: ModelConfig | None,
     metrics: dict[str, float | int],
     threshold: float,
@@ -43,7 +43,7 @@ def build_experiment_report(
             "sample_count": int(sample_count),
             "input_dim": input_dim,
             "class_counts": class_counts,
-            "audit": audit_dataset(features, labels) if features and labels else None,
+            "audit": audit_dataset(features, labels) if features is not None and labels else None,
         },
         "model": {
             "config": config.to_dict() if config is not None else None,
@@ -92,7 +92,9 @@ def format_markdown_report(report: dict[str, Any]) -> str:
             [
                 f"- Imbalance ratio: {_format_value(audit.get('imbalance_ratio', '-'))}",
                 f"- Duplicate rows: {audit.get('duplicate_row_count', '-')}",
+                f"- Duplicate groups: {audit.get('duplicate_rows', {}).get('duplicate_group_count', '-')}",
                 f"- Label conflicts: {audit.get('label_conflict_count', '-')}",
+                f"- Conflicting rows: {audit.get('conflicting_row_count', '-')}",
                 f"- Constant features: {audit.get('constant_features', [])}",
                 f"- High correlation pairs: {len(audit.get('high_correlations', []))}",
                 f"- Warnings: {audit.get('warnings', [])}",

@@ -82,6 +82,7 @@ def test_experimental_builtin_presets_are_available():
         "Two moons",
         "Rare event signal",
         "Overlapping margin",
+        "Noisy labels",
         "Sparse interaction signal",
         "Deployment drift probe",
     }.issubset(names)
@@ -111,6 +112,13 @@ def test_deployment_drift_preset_has_shifted_prediction_example():
 
     assert metadata["input_dim"] == 4
     assert any(example["name"] == "Drift review row" for example in metadata["prediction_examples"])
+
+
+def test_noisy_labels_preset_has_margin_example():
+    metadata = preset_metadata("Noisy labels")
+
+    assert metadata["recommended_feature_map"] == "linear"
+    assert any(example["name"] == "Ambiguous noisy margin" for example in metadata["prediction_examples"])
 
 
 def test_save_as_preset_uses_existing_dataset_json_shape(tmp_path):

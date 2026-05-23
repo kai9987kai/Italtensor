@@ -132,6 +132,19 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="noisy_labels",
+        name="Noisy labels",
+        description="Mostly separable diagonal blobs with controlled label flips for robustness checks.",
+        default_samples=140,
+        recommended_feature_map="linear",
+        training_defaults={"epochs": 70, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Clean negative region", "features": [-1.1, -0.9], "expected_label": 0},
+            {"name": "Clean positive region", "features": [1.1, 0.9], "expected_label": 1},
+            {"name": "Ambiguous noisy margin", "features": [0.0, 0.0], "expected_label": None},
+        ),
+    ),
+    PresetInfo(
         key="sparse_interaction_signal",
         name="Sparse interaction signal",
         description="Sixteen features where a few sparse terms and one interaction drive the label.",
@@ -217,6 +230,8 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _rare_event_signal(total, rng)
     elif preset.key == "overlapping_margin":
         features, labels = _overlapping_margin(total, rng)
+    elif preset.key == "noisy_labels":
+        features, labels = _noisy_labels(total, rng)
     elif preset.key == "sparse_interaction_signal":
         features, labels = _sparse_interaction_signal(total, rng)
     elif preset.key == "deployment_drift_probe":
@@ -385,6 +400,15 @@ def _overlapping_margin(total: int, rng: np.random.Generator) -> tuple[np.ndarra
     features = np.vstack([negatives, positives]).astype(np.float32)
     features[margin_indices] = rng.normal(0.0, 0.18, size=(margin_count, 2)).astype(np.float32)
     return _shuffle(features, labels, rng)
+
+
+def _noisy_labels(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    features, labels = _linear_blobs(total, rng)
+    flip_count = max(2, int(round(total * 0.12)))
+    flip_indices = rng.choice(total, size=flip_count, replace=False)
+    labels = labels.copy()
+    labels[flip_indices] = 1 - labels[flip_indices]
+    return features.astype(np.float32), labels.astype(np.int32)
 
 
 def _sparse_interaction_signal(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
