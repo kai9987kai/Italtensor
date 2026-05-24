@@ -25,6 +25,7 @@ def build_experiment_report(
     feature_importances: list[dict[str, float | int]],
     trial_history: list[dict[str, Any]] | None = None,
     uncertainty_metadata: dict[str, Any] | None = None,
+    stress_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     label_array = np.asarray(labels, dtype=np.int32)
     dataset_available = bool(sample_count and label_array.size)
@@ -52,6 +53,7 @@ def build_experiment_report(
         "preprocessing": preprocessor.to_dict() if preprocessor is not None else None,
         "metrics": metrics,
         "uncertainty": uncertainty_metadata or None,
+        "stress_lab": stress_report or None,
         "feature_importances": feature_importances,
         "trial_history": trial_history or [],
     }
@@ -73,6 +75,7 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     importances = report.get("feature_importances", [])
     trial_history = report.get("trial_history", [])
     uncertainty = report.get("uncertainty") or {}
+    stress_lab = report.get("stress_lab") or {}
     audit = dataset.get("audit") or {}
 
     lines = [
@@ -160,6 +163,31 @@ def format_markdown_report(report: dict[str, Any]) -> str:
             lines.append(
                 f"- Feature {item.get('feature_index')}: "
                 f"importance={_format_value(item.get('importance', 0.0))}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Robustness Stress Lab"])
+    if stress_lab:
+        summary = stress_lab.get("summary", {})
+        base = stress_lab.get("base", {})
+        lines.extend(
+            [
+                f"- Base F1: {_format_value(base.get('f1', '-'))}",
+                f"- Worst F1: {_format_value(summary.get('worst_f1', '-'))}",
+                f"- Stress F1 ratio: {_format_value(summary.get('stress_f1_ratio', '-'))}",
+                f"- Max label flip rate: {_format_value(summary.get('max_label_flip_rate', '-'))}",
+                f"- Worst case: {summary.get('worst_case', '-')}",
+            ]
+        )
+        for item in stress_lab.get("perturbations", [])[:8]:
+            label = item.get("kind", "-")
+            if "feature_index" in item:
+                label = f"{label}[x{int(item['feature_index']) + 1}]"
+            lines.append(
+                f"- {label}@{_format_value(item.get('level', '-'))}: "
+                f"F1={_format_value(item.get('f1', '-'))}, "
+                f"flip={_format_value(item.get('label_flip_rate', '-'))}"
             )
     else:
         lines.append("- None")

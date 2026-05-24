@@ -85,6 +85,8 @@ def test_experimental_builtin_presets_are_available():
         "Noisy labels",
         "Sparse interaction signal",
         "Deployment drift probe",
+        "Active learning margin",
+        "Spurious shortcut",
     }.issubset(names)
 
 
@@ -119,6 +121,21 @@ def test_noisy_labels_preset_has_margin_example():
 
     assert metadata["recommended_feature_map"] == "linear"
     assert any(example["name"] == "Ambiguous noisy margin" for example in metadata["prediction_examples"])
+
+
+def test_active_learning_margin_preset_has_boundary_query_example():
+    metadata = preset_metadata("Active learning margin")
+
+    assert metadata["recommended_feature_map"] == "linear"
+    assert any(example["name"] == "Boundary query" for example in metadata["prediction_examples"])
+
+
+def test_spurious_shortcut_preset_has_conflict_example():
+    metadata = preset_metadata("Spurious shortcut")
+
+    assert metadata["input_dim"] == 3
+    assert metadata["feature_names"] == ["stable_signal", "context_noise", "shortcut_signal"]
+    assert any(example["name"] == "Shortcut conflict" for example in metadata["prediction_examples"])
 
 
 def test_save_as_preset_uses_existing_dataset_json_shape(tmp_path):

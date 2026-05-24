@@ -64,6 +64,23 @@ def test_report_export_json_and_markdown(tmp_path):
             "conformal_evaluation_count": 8,
             "conformal_singleton_rate": 0.75,
         },
+        stress_report={
+            "base": {"f1": 0.75},
+            "summary": {
+                "worst_f1": 0.5,
+                "stress_f1_ratio": 0.6667,
+                "max_label_flip_rate": 0.25,
+                "worst_case": "feature_dropout@0.25",
+            },
+            "perturbations": [
+                {
+                    "kind": "feature_dropout",
+                    "level": 0.25,
+                    "f1": 0.5,
+                    "label_flip_rate": 0.25,
+                }
+            ],
+        },
     )
 
     json_path = export_experiment_report(tmp_path / "report.json", report)
@@ -74,16 +91,21 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["dataset"]["class_counts"] == {"0": 2, "1": 2}
     assert saved_json["dataset"]["available"] is True
     assert saved_json["dataset"]["audit"]["duplicate_row_count"] == 1
+    assert saved_json["dataset"]["audit"]["duplicate_rows"]["duplicate_group_count"] == 1
+    assert saved_json["dataset"]["audit"]["class_balance"]["minority_fraction"] == 0.5
     assert saved_json["model"]["threshold"] == 0.4
     assert saved_json["uncertainty"]["conformal_source"] == "dedicated_calibration"
     assert saved_json["uncertainty"]["conformal_quantile"] == 0.35
     assert saved_json["uncertainty"]["conformal_calibration_count"] == 8
+    assert saved_json["stress_lab"]["summary"]["worst_f1"] == 0.5
     assert saved_json["trial_history"][0]["config"]["feature_map"] == "rff"
     assert "Feature 0" in saved_markdown
     assert "## Dataset Audit" in saved_markdown
     assert "Trial 1" in saved_markdown
     assert "## Uncertainty" in saved_markdown
     assert "conformal_source" in saved_markdown
+    assert "## Robustness Stress Lab" in saved_markdown
+    assert "feature_dropout" in saved_markdown
 
 
 def test_report_marks_dataset_unavailable_for_model_only_export():

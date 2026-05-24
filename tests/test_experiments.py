@@ -21,7 +21,7 @@ from italtensor.experiments import (
     train_single_model,
 )
 from italtensor.data import validate_dataset
-from italtensor.modeling import ModelConfig
+from italtensor.modeling import ModelConfig, NumpyBinaryClassifier, predict_probability
 from italtensor.preprocessing import FeatureStandardizer
 
 
@@ -200,6 +200,40 @@ def test_train_single_model_returns_uncertainty_metadata():
     assert result.metrics["conformal_quantile"] == pytest.approx(result.uncertainty["conformal_quantile"])
     assert result.uncertainty["conformal_source"] == "dedicated_calibration"
     assert "conformal_source" not in result.metrics
+
+
+def test_train_single_model_uses_calibration_split_for_platt_scaling(monkeypatch):
+    features = np.asarray([[float(i), float(i % 3)] for i in range(12)], dtype=np.float32)
+    labels = np.asarray([0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1], dtype=np.int32)
+    config = ModelConfig(learning_rate=0.05, max_epochs=3, patience=2, random_seed=13)
+    dataset = validate_dataset(features.tolist(), labels.tolist(), min_samples=4, require_two_classes=True)
+    x_train, _, x_cal, expected_y_cal, x_val, _ = split_train_calibration_validation(dataset, seed=config.random_seed)
+    preprocessor = FeatureStandardizer.fit(x_train)
+    fake_model = NumpyBinaryClassifier(weights=np.asarray([0.2, -0.1], dtype=np.float32), bias=0.0)
+    expected_cal_probs = predict_probability(fake_model, preprocessor.transform(x_cal))
+    expected_val_probs = predict_probability(fake_model, preprocessor.transform(x_val))
+    seen: dict[str, np.ndarray] = {}
+
+    def fake_train_model(x_train, y_train, train_config, *, validation_data=None, class_weight=None):
+        assert validation_data is not None
+        _, tuning_labels = validation_data
+        np.testing.assert_array_equal(tuning_labels, expected_y_cal)
+        return fake_model, {"val_loss": [0.7]}
+
+    def fake_fit_platt(probabilities, fit_labels):
+        seen["fit_labels"] = np.asarray(fit_labels, dtype=np.int32)
+        seen["fit_probabilities"] = np.asarray(probabilities, dtype=np.float32)
+        return 1.0, 0.0
+
+    monkeypatch.setattr("italtensor.experiments.train_model", fake_train_model)
+    monkeypatch.setattr("italtensor.experiments.fit_platt_scaling", fake_fit_platt)
+
+    result = train_single_model(features, labels, config)
+
+    np.testing.assert_array_equal(seen["fit_labels"], expected_y_cal)
+    np.testing.assert_allclose(seen["fit_probabilities"], expected_cal_probs)
+    assert not np.allclose(seen["fit_probabilities"], expected_val_probs)
+    assert "training_final_tuning_loss" in result.metrics
 
 
 def test_train_single_model_reuses_validation_for_tiny_datasets():

@@ -11,6 +11,7 @@ from .data import (
     parse_training_example,
     validate_dataset,
 )
+from .counterfactual import find_counterfactual, format_counterfactual_result
 from .experiments import (
     ExperimentResult,
     conformal_label_set,
@@ -34,9 +35,11 @@ from .preprocessing import FeatureStandardizer
 from .presets import generate_builtin_preset, load_preset_file, preset_labels, preset_metadata, save_preset_file
 from .reporting import build_experiment_report, export_experiment_report
 from .registry import ModelSlot
-from .scoring import score_prediction_csv
+from .scoring import load_reviewed_prediction_csv, score_prediction_csv
 from .audit import audit_dataset, format_audit_summary
 from .learning_curves import learning_curve_points
+from .slices import format_slice_summary, run_slice_diagnostics
+from .stress import format_stress_summary, run_stress_suite
 
 
 @dataclass
@@ -52,6 +55,8 @@ class AppState:
     feature_importances: list[dict[str, float | int]] = field(default_factory=list)
     trial_history: list[dict[str, Any]] = field(default_factory=list)
     uncertainty_metadata: dict[str, Any] = field(default_factory=dict)
+    latest_slice_report: dict[str, Any] | None = None
+    latest_stress_report: dict[str, Any] | None = None
     busy: bool = False
     status_message: str = "Ready"
     model_slots: list[ModelSlot] = field(default_factory=list)
@@ -114,6 +119,10 @@ def run_app() -> None:
                 _audit_dataset(window, state)
             elif event == "-LEARNING_CURVE-":
                 _start_learning_curve(window, state, values)
+            elif event == "-STRESS_TEST-":
+                _start_stress_test(window, state)
+            elif event == "-SLICE_DIAGNOSTICS-":
+                _start_slice_diagnostics(window, state)
             elif event == "-TRAIN_ONCE-":
                 _start_train_once(window, state, values)
             elif event == "-AUTO_EXPERIMENTS-":
@@ -126,8 +135,12 @@ def run_app() -> None:
                 _export_report(window, state, values)
             elif event == "-PREDICT-":
                 _predict(window, state, values)
+            elif event == "-COUNTERFACTUAL-":
+                _counterfactual(window, state, values)
             elif event == "-EXPORT_BATCH_PREDICTIONS-":
                 _start_batch_predictions(window, state, values)
+            elif event == "-IMPORT_REVIEWED_LABELS-":
+                _import_reviewed_labels(window, state, values)
             elif event == "-STORE_MODEL_SLOT-":
                 _store_model_slot(window, state, values)
             elif event == "-ACTIVATE_MODEL_SLOT-":
@@ -216,7 +229,12 @@ def _layout(sg):
         ],
         [sg.Text("Dataset:"), sg.Text("No data", key="-DATASET_SUMMARY-", expand_x=True)],
         [sg.Text("Audit:"), sg.Text("-", key="-AUDIT_SUMMARY-", expand_x=True)],
-        [sg.Button("Audit dataset", key="-AUDIT_DATASET-"), sg.Button("Learning curve", key="-LEARNING_CURVE-")],
+        [
+            sg.Button("Audit dataset", key="-AUDIT_DATASET-"),
+            sg.Button("Learning curve", key="-LEARNING_CURVE-"),
+            sg.Button("Stress test", key="-STRESS_TEST-"),
+            sg.Button("Slice diagnostics", key="-SLICE_DIAGNOSTICS-"),
+        ],
         [
             sg.Text("Epochs"),
             sg.Input("50", key="-EPOCHS-", size=(6, 1)),
@@ -278,7 +296,11 @@ def _layout(sg):
             sg.Button("Export report", key="-EXPORT_REPORT-"),
         ],
         [sg.Text("Prediction vector JSON")],
-        [sg.Input(key="-PREDICTION_VECTOR-", expand_x=True), sg.Button("Predict", key="-PREDICT-")],
+        [
+            sg.Input(key="-PREDICTION_VECTOR-", expand_x=True),
+            sg.Button("Predict", key="-PREDICT-"),
+            sg.Button("Counterfactual", key="-COUNTERFACTUAL-"),
+        ],
         [sg.Text("Batch prediction CSV")],
         [
             sg.Input(key="-BATCH_INPUT_PATH-", expand_x=True),
@@ -288,6 +310,7 @@ def _layout(sg):
             sg.Input(key="-BATCH_OUTPUT_PATH-", expand_x=True),
             sg.FileSaveAs(file_types=(("CSV files", "*.csv"), ("All files", "*.*"))),
             sg.Button("Export batch predictions", key="-EXPORT_BATCH_PREDICTIONS-"),
+            sg.Button("Import reviewed labels", key="-IMPORT_REVIEWED_LABELS-"),
         ],
         [sg.Text("Status:"), sg.Text("Ready", key="-STATUS-", expand_x=True)],
     ]
@@ -436,6 +459,44 @@ def _start_learning_curve(window, state: AppState, values: dict[str, Any]) -> No
     _start_worker(window, state, "Computing learning curve...", task)
 
 
+def _start_stress_test(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    if state.model is None:
+        raise ValueError("Train or load a model before running a stress test.")
+    dataset = validate_dataset(state.features, state.labels, min_samples=1, require_two_classes=False)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_stress_suite(
+            state.model,
+            dataset.features,
+            dataset.labels,
+            preprocessor=state.preprocessor,
+            threshold=state.latest_threshold,
+        )
+        return "stress_test", report
+
+    _start_worker(window, state, "Running robustness stress suite...", task)
+
+
+def _start_slice_diagnostics(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    if state.model is None:
+        raise ValueError("Train or load a model before running slice diagnostics.")
+    dataset = validate_dataset(state.features, state.labels, min_samples=1, require_two_classes=False)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_slice_diagnostics(
+            state.model,
+            dataset.features,
+            dataset.labels,
+            preprocessor=state.preprocessor,
+            threshold=state.latest_threshold,
+        )
+        return "slice_diagnostics", report
+
+    _start_worker(window, state, "Running slice diagnostics...", task)
+
+
 def _config_from_values(values: dict[str, Any]) -> ModelConfig:
     l1_raw = values.get("-L1_PENALTY-", "0.0").strip()
     l1_penalty = float(l1_raw) if l1_raw else 0.0
@@ -518,6 +579,8 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         feature_importances=state.feature_importances,
         trial_history=state.trial_history,
         uncertainty_metadata=state.uncertainty_metadata,
+        slice_report=state.latest_slice_report,
+        stress_report=state.latest_stress_report,
     )
     window["-MODEL_PATH-"].update(str(model_path))
     _log(window, f"Saved model to {model_path} and metadata to {metadata_path}.")
@@ -554,6 +617,8 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     state.trial_history = trial_history if isinstance(trial_history, list) else []
     uncertainty = metadata.get("uncertainty")
     state.uncertainty_metadata = uncertainty if isinstance(uncertainty, dict) else {}
+    state.latest_slice_report = None
+    state.latest_stress_report = None
     _log(window, f"Loaded model expecting {state.input_dim} features.")
 
 
@@ -594,6 +659,19 @@ def _predict(window, state: AppState, values: dict[str, Any]) -> None:
     )
 
 
+def _counterfactual(window, state: AppState, values: dict[str, Any]) -> None:
+    if state.model is None:
+        raise ValueError("Train or load a model before finding a counterfactual.")
+    vector = parse_prediction_vector(values["-PREDICTION_VECTOR-"], state.input_dim)
+    result = find_counterfactual(
+        state.model,
+        vector,
+        preprocessor=state.preprocessor,
+        threshold=state.latest_threshold,
+    )
+    _log(window, format_counterfactual_result(result))
+
+
 def _start_batch_predictions(window, state: AppState, values: dict[str, Any]) -> None:
     _ensure_not_busy(state)
     if state.model is None or state.input_dim is None:
@@ -616,6 +694,16 @@ def _start_batch_predictions(window, state: AppState, values: dict[str, Any]) ->
     _start_worker(window, state, "Exporting batch predictions...", task)
 
 
+def _import_reviewed_labels(window, state: AppState, values: dict[str, Any]) -> None:
+    path = _required_path(values["-BATCH_OUTPUT_PATH-"], "reviewed batch prediction CSV")
+    table, reviewed_labels = load_reviewed_prediction_csv(path, state.input_dim)
+    combined_features = state.features + table.features.astype(float).tolist()
+    combined_labels = state.labels + reviewed_labels.astype(int).tolist()
+    dataset = validate_dataset(combined_features, combined_labels, min_samples=1, require_two_classes=False)
+    _replace_dataset(state, dataset)
+    _log(window, f"Imported {reviewed_labels.shape[0]} reviewed label(s) from {path}. Current dataset: {len(state.labels)} samples.")
+
+
 def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> None:
     kind, result = payload
     state.busy = False
@@ -632,6 +720,8 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.feature_importances = training_result.feature_importances
         state.trial_history = [_summarize_trial(training_result)]
         state.uncertainty_metadata = training_result.uncertainty
+        state.latest_slice_report = None
+        state.latest_stress_report = None
         _log(window, f"Training complete: {_format_metrics(training_result.metrics)}")
         _log(window, _format_calibration(training_result.metrics))
         _log(window, _format_uncertainty(training_result.uncertainty))
@@ -647,6 +737,8 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.feature_importances = best.feature_importances
         state.trial_history = [_summarize_trial(item) for item in result]
         state.uncertainty_metadata = best.uncertainty
+        state.latest_slice_report = None
+        state.latest_stress_report = None
         _log(window, f"Best config: {_format_config(best.config)}")
         _log(window, f"Best metrics: {_format_metrics(best.metrics)}")
         _log(window, _format_calibration(best.metrics))
@@ -663,6 +755,32 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                 f"samples={point['train_samples']} "
                 f"F1={point['f1']:.4f} acc={point['accuracy']:.4f}",
             )
+    elif kind == "stress_test":
+        state.latest_stress_report = result
+        _log(window, format_stress_summary(result))
+        for item in result.get("perturbations", [])[:6]:
+            label = item["kind"]
+            if "feature_index" in item:
+                label = f"{label}[x{int(item['feature_index']) + 1}]"
+            _log(
+                window,
+                f"  {label}@{float(item['level']):.2f}: "
+                f"F1={float(item['f1']):.4f}, "
+                f"flip={float(item['label_flip_rate']):.4f}, "
+                f"prob_shift={float(item['mean_probability_shift']):.4f}",
+            )
+    elif kind == "slice_diagnostics":
+        state.latest_slice_report = result
+        _log(window, format_slice_summary(result))
+        for item in result.get("slices", [])[:6]:
+            _log(
+                window,
+                f"  x{int(item['feature_index']) + 1}[{float(item['left']):.4g}, {float(item['right']):.4g}]: "
+                f"n={int(item['count'])}, "
+                f"F1={float(item['f1']):.4f}, "
+                f"acc={float(item['accuracy']):.4f}, "
+                f"delta={float(item['f1_delta']):.4f}",
+            )
     elif kind == "multi_backend":
         best = select_best_from_runs(result)
         state.model = best.model
@@ -673,6 +791,8 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.feature_importances = best.feature_importances
         state.trial_history = [_summarize_trial(item) for item in result]
         state.uncertainty_metadata = best.uncertainty
+        state.latest_slice_report = None
+        state.latest_stress_report = None
         for item in result:
             slot = ModelSlot(
                 model=item.model,
@@ -697,6 +817,8 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.feature_importances = training_result.feature_importances
         state.trial_history = [_summarize_trial(training_result)]
         state.uncertainty_metadata = training_result.uncertainty
+        state.latest_slice_report = None
+        state.latest_stress_report = None
         
         # Auto-store in slots
         slot = ModelSlot(
@@ -779,6 +901,8 @@ def _invalidate_model_artifacts(state: AppState) -> None:
     state.feature_importances = []
     state.trial_history = []
     state.uncertainty_metadata = {}
+    state.latest_slice_report = None
+    state.latest_stress_report = None
 
 
 def _refresh_state(window, state: AppState) -> None:
@@ -805,7 +929,9 @@ def _set_busy(window, busy: bool) -> None:
         "-LOAD_MODEL-",
         "-EXPORT_REPORT-",
         "-PREDICT-",
+        "-COUNTERFACTUAL-",
         "-EXPORT_BATCH_PREDICTIONS-",
+        "-IMPORT_REVIEWED_LABELS-",
         "-STORE_MODEL_SLOT-",
         "-ACTIVATE_MODEL_SLOT-",
         "-BUILD_ENSEMBLE-",
@@ -820,6 +946,8 @@ def _set_busy(window, busy: bool) -> None:
         "-BUILD_STACKED_ENSEMBLE-",
         "-AUDIT_DATASET-",
         "-LEARNING_CURVE-",
+        "-STRESS_TEST-",
+        "-SLICE_DIAGNOSTICS-",
     ):
         if key in window.AllKeysDict:
             window[key].update(disabled=busy)
@@ -1087,6 +1215,8 @@ def _activate_model_slot(window, state: AppState, values: dict[str, Any]) -> Non
     state.latest_metrics = slot.metrics.copy()
     state.preprocessor = slot.preprocessor
     state.latest_threshold = slot.threshold
+    state.latest_slice_report = None
+    state.latest_stress_report = None
     _log(window, f"Activated slot '{slot.name}'. Predictions and weight analysis will now run on this model.")
     _update_slots_listbox(window, state)
 
@@ -1170,6 +1300,8 @@ def _load_registry(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_metrics = active.metrics.copy()
         state.preprocessor = active.preprocessor
         state.latest_threshold = active.threshold
+        state.latest_slice_report = None
+        state.latest_stress_report = None
     _update_slots_listbox(window, state)
     _log(window, f"Loaded {len(slots)} slot(s) from registry.")
 
@@ -1188,6 +1320,8 @@ def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
     
     state.model = ensemble
     state.preprocessor = None
+    state.latest_slice_report = None
+    state.latest_stress_report = None
     
     state.latest_config = ModelConfig(
         lr_schedule="constant",
@@ -1244,6 +1378,8 @@ def _build_stacked_ensemble(window, state: AppState, values: dict[str, Any]) -> 
     state.model = ensemble
     state.preprocessor = None
     state.latest_config = ModelConfig(backend="auto", feature_map=values.get("-FEATURE_MAP-", "linear"))
+    state.latest_slice_report = None
+    state.latest_stress_report = None
     probs = ensemble.predict(dataset.features).reshape(-1)
     metrics = evaluate_predictions(dataset.labels, probs, threshold=0.5)
     state.latest_metrics = metrics
@@ -1371,6 +1507,8 @@ def _merge_slots(window, state: AppState, values: dict[str, Any]) -> None:
 
         state.model = merged_model
         state.preprocessor = merged_prep
+        state.latest_slice_report = None
+        state.latest_stress_report = None
         state.latest_config = ModelConfig(
             lr_schedule="constant",
             gradient_clip=0.0,

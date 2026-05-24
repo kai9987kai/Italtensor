@@ -788,16 +788,16 @@ def train_single_model(
         x_train_std,
         y_train,
         config,
-        validation_data=(x_val_std, y_val),
+        validation_data=(x_cal_std, y_cal),
         class_weight=class_weight,
     )
     
     # Perform post-hoc Platt scaling calibration on NumPy / MPS backends
     if isinstance(model, (NumpyBinaryClassifier, MPSBinaryClassifier)):
-        # 1. Predict uncalibrated probabilities on validation
-        uncal_val_probs = predict_probability(model, x_val_std)
+        # 1. Predict uncalibrated probabilities on the calibration split
+        uncal_cal_probs = predict_probability(model, x_cal_std)
         # 2. Fit Platt scaling
-        a, b = fit_platt_scaling(uncal_val_probs, y_val)
+        a, b = fit_platt_scaling(uncal_cal_probs, y_cal)
         # 3. Apply calibration parameters to model
         model.calibration_a = a
         model.calibration_b = b
@@ -849,12 +849,11 @@ def train_single_model(
     except Exception as exc:
         uncertainty["bootstrap_ci_error"] = str(exc)
 
-    # Add validation loss and class weights
+    # Add final validation loss, calibration/tuning loss, and class weights.
+    probs_clipped = np.clip(val_probs, 1e-7, 1.0 - 1e-7)
+    metrics["validation_loss"] = float(-np.mean(y_val * np.log(probs_clipped) + (1.0 - y_val) * np.log(1.0 - probs_clipped)))
     if "val_loss" in history and history["val_loss"]:
-        metrics["validation_loss"] = float(history["val_loss"][-1])
-    else:
-        probs_clipped = np.clip(val_probs, 1e-7, 1.0 - 1e-7)
-        metrics["validation_loss"] = float(-np.mean(y_val * np.log(probs_clipped) + (1.0 - y_val) * np.log(1.0 - probs_clipped)))
+        metrics["training_final_tuning_loss"] = float(history["val_loss"][-1])
 
     metrics["threshold"] = threshold
     if class_weight is not None:
@@ -1350,4 +1349,3 @@ def merge_models(
     )
     
     return merged_classifier, merged_prep
-

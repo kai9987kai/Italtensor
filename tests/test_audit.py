@@ -1,3 +1,5 @@
+import pytest
+
 from italtensor.audit import audit_dataset, format_audit_summary
 
 
@@ -15,7 +17,12 @@ def test_audit_dataset_flags_duplicates_conflicts_and_constant_features():
 
     assert audit["duplicate_row_count"] == 2
     assert audit["label_conflict_count"] == 1
+    assert audit["conflicting_row_count"] == 3
+    assert audit["duplicate_rows"]["duplicate_group_count"] == 1
+    assert audit["duplicate_rows"]["groups"][0]["row_indices"] == [0, 1, 2]
+    assert audit["label_conflicts"]["groups"][0]["labels"] == {"0": 2, "1": 1}
     assert audit["constant_features"] == [2]
+    assert audit["constant_feature_details"] == [{"feature_index": 2, "value": 0.0}]
     assert "duplicate feature rows" in audit["warnings"]
     assert "same features appear with both labels" in audit["warnings"]
     assert "constant features" in audit["warnings"]
@@ -35,6 +42,9 @@ def test_audit_dataset_reports_class_imbalance_and_high_correlations():
     )
 
     assert audit["class_counts"] == {"0": 5, "1": 1}
+    assert audit["class_balance"]["majority_label"] == 0
+    assert audit["class_balance"]["minority_label"] == 1
+    assert audit["class_balance"]["minority_fraction"] == pytest.approx(1 / 6)
     assert audit["imbalance_ratio"] == 5.0
     assert audit["high_correlations"][0]["left"] == 0
     assert audit["high_correlations"][0]["right"] == 1

@@ -188,6 +188,35 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
             {"name": "Drift review row", "features": [0.0, 0.0, 4.5, -4.5], "expected_label": None},
         ),
     ),
+    PresetInfo(
+        key="active_learning_margin",
+        name="Active learning margin",
+        description="Dense linear classes with an ambiguous boundary belt for query-ranking and counterfactual recourse.",
+        default_samples=160,
+        recommended_feature_map="linear",
+        training_defaults={"epochs": 70, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Clear negative", "features": [-1.2, -0.55], "expected_label": 0},
+            {"name": "Boundary query", "features": [0.03, -0.02], "expected_label": None},
+            {"name": "Clear positive", "features": [1.2, 0.55], "expected_label": 1},
+            {"name": "Drifting candidate", "features": [0.0, 3.8], "expected_label": None},
+        ),
+    ),
+    PresetInfo(
+        key="spurious_shortcut",
+        name="Spurious shortcut",
+        description="A strong shortcut feature works during training but invites robustness and drift stress tests.",
+        default_samples=180,
+        input_dim=3,
+        recommended_feature_map="linear",
+        feature_names=("stable_signal", "context_noise", "shortcut_signal"),
+        training_defaults={"epochs": 70, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Shortcut negative", "features": [-0.7, 0.0, -1.2], "expected_label": 0},
+            {"name": "Shortcut positive", "features": [0.7, 0.0, 1.2], "expected_label": 1},
+            {"name": "Shortcut conflict", "features": [0.8, 0.0, -1.2], "expected_label": None},
+        ),
+    ),
 )
 
 
@@ -236,6 +265,10 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _sparse_interaction_signal(total, rng)
     elif preset.key == "deployment_drift_probe":
         features, labels = _deployment_drift_probe(total, rng)
+    elif preset.key == "active_learning_margin":
+        features, labels = _active_learning_margin(total, rng)
+    elif preset.key == "spurious_shortcut":
+        features, labels = _spurious_shortcut(total, rng)
     else:
         raise ValueError(f"Unsupported preset: {preset.key}")
     return validate_dataset(features.tolist(), labels.astype(int).tolist(), min_samples=preset.min_samples, require_two_classes=True)
@@ -433,6 +466,41 @@ def _deployment_drift_probe(total: int, rng: np.random.Generator) -> tuple[np.nd
     features[labels == 0, :2] = rng.normal(loc=(-0.85, -0.65), scale=0.28, size=(negative_count, 2))
     features[labels == 1, :2] = rng.normal(loc=(0.85, 0.65), scale=0.28, size=(positive_count, 2))
     features[:, 2:] = rng.normal(0.0, 0.35, size=(total, 2))
+    return _shuffle(features, labels, rng)
+
+
+def _active_learning_margin(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    labels = _balanced_labels(total)
+    negative_count = int(np.sum(labels == 0))
+    positive_count = int(np.sum(labels == 1))
+    margin_count = max(4, total // 5)
+    core_negative = max(2, negative_count - margin_count // 2)
+    core_positive = max(2, positive_count - (margin_count - margin_count // 2))
+    negative_margin = negative_count - core_negative
+    positive_margin = positive_count - core_positive
+
+    negatives = rng.normal(loc=(-1.1, -0.45), scale=(0.32, 0.28), size=(core_negative, 2))
+    positives = rng.normal(loc=(1.1, 0.45), scale=(0.32, 0.28), size=(core_positive, 2))
+    margin_negatives = rng.normal(loc=(-0.12, 0.0), scale=(0.18, 0.32), size=(negative_margin, 2))
+    margin_positives = rng.normal(loc=(0.12, 0.0), scale=(0.18, 0.32), size=(positive_margin, 2))
+    features = np.vstack([negatives, margin_negatives, positives, margin_positives]).astype(np.float32)
+    labels = np.asarray(
+        [0] * (core_negative + negative_margin) + [1] * (core_positive + positive_margin),
+        dtype=np.int32,
+    )
+    return _shuffle(features, labels, rng)
+
+
+def _spurious_shortcut(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    labels = _balanced_labels(total)
+    signed = np.where(labels == 1, 1.0, -1.0)
+    stable_signal = signed * 0.55 + rng.normal(0.0, 0.55, size=total)
+    context_noise = rng.normal(0.0, 1.0, size=total)
+    shortcut_signal = signed * 1.2 + rng.normal(0.0, 0.12, size=total)
+    conflict_count = max(2, total // 12)
+    conflict_indices = rng.choice(total, size=conflict_count, replace=False)
+    stable_signal[conflict_indices] *= -1.0
+    features = np.column_stack([stable_signal, context_noise, shortcut_signal]).astype(np.float32)
     return _shuffle(features, labels, rng)
 
 

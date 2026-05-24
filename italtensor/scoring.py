@@ -20,6 +20,9 @@ class PredictionTable:
     features: np.ndarray
 
 
+REVIEW_LABEL_COLUMN = "italtensor_review_label"
+
+
 def load_prediction_csv(path: str | Path, expected_dim: int | None = None) -> PredictionTable:
     rows: list[list[str]] = []
     csv_path = Path(path)
@@ -64,6 +67,57 @@ def load_prediction_csv(path: str | Path, expected_dim: int | None = None) -> Pr
     return PredictionTable(feature_names=feature_names, features=np.asarray(parsed, dtype=np.float32))
 
 
+def load_reviewed_prediction_csv(path: str | Path, expected_dim: int | None = None) -> tuple[PredictionTable, np.ndarray]:
+    rows: list[list[str]] = []
+    csv_path = Path(path)
+    with csv_path.open("r", newline="", encoding="utf-8-sig") as handle:
+        for row in csv.reader(handle):
+            if row and any(cell.strip() for cell in row):
+                rows.append(row)
+
+    if not rows:
+        raise DataValidationError("Reviewed prediction CSV file is empty.")
+    if not _looks_like_prediction_header(rows[0]):
+        raise DataValidationError("Reviewed prediction CSV must include a header row.")
+
+    header = [cell.strip() for cell in rows[0]]
+    try:
+        review_index = header.index(REVIEW_LABEL_COLUMN)
+    except ValueError as exc:
+        raise DataValidationError(f"Reviewed prediction CSV must contain a {REVIEW_LABEL_COLUMN} column.") from exc
+
+    feature_indices = _review_feature_indices(header)
+    inferred_dim = expected_dim
+    if inferred_dim is not None and len(feature_indices) != inferred_dim:
+        raise DataValidationError(f"Reviewed prediction CSV has {len(feature_indices)} feature columns, expected {inferred_dim}.")
+
+    feature_names = [header[index] or f"x{position + 1}" for position, index in enumerate(feature_indices)]
+    features: list[list[float]] = []
+    labels: list[int] = []
+    for row_number, row in enumerate(rows[1:], start=2):
+        review_value = row[review_index].strip() if review_index < len(row) else ""
+        if not review_value:
+            continue
+        if review_value not in {"0", "1"}:
+            raise DataValidationError(f"Reviewed prediction CSV row {row_number}: review label must be 0 or 1.")
+        try:
+            parsed_row = [_parse_prediction_float(row[index]) for index in feature_indices]
+        except IndexError as exc:
+            raise DataValidationError(f"Reviewed prediction CSV row {row_number}: missing feature column.") from exc
+        except DataValidationError as exc:
+            raise DataValidationError(f"Reviewed prediction CSV row {row_number}: {exc}") from exc
+        if inferred_dim is None:
+            inferred_dim = len(parsed_row)
+        if len(parsed_row) != inferred_dim:
+            raise DataValidationError(f"Reviewed prediction CSV row {row_number}: Expected {inferred_dim} features, got {len(parsed_row)}.")
+        features.append(parsed_row)
+        labels.append(int(review_value))
+
+    if not features:
+        raise DataValidationError(f"Reviewed prediction CSV has no rows with {REVIEW_LABEL_COLUMN} filled.")
+    return PredictionTable(feature_names=feature_names, features=np.asarray(features, dtype=np.float32)), np.asarray(labels, dtype=np.int32)
+
+
 def score_prediction_rows(
     model: Any,
     features: np.ndarray,
@@ -89,18 +143,22 @@ def score_prediction_rows(
             conformal_set = _format_label_set(conformal_label_set(probability_value, float(quantile)))
         uncertainty_score = _uncertainty_score(probability_value, threshold, conformal_set)
         ood_flag = drift_data["ood_flag"] == 1
+        query_score = _query_score(uncertainty_score, conformal_set, drift_data["drift_score"], ood_flag)
         scored.append(
             {
                 "probability": probability_value,
                 "label": label,
                 "conformal_set": conformal_set,
                 "uncertainty_score": uncertainty_score,
+                "active_query_score": query_score,
+                "active_query_rank": 0,
                 "drift_score": drift_data["drift_score"],
                 "max_abs_z": drift_data["max_abs_z"],
                 "ood_flag": drift_data["ood_flag"],
                 "review_priority": _review_priority(uncertainty_score, conformal_set, ood_flag),
             }
         )
+    _assign_query_ranks(scored)
     return scored
 
 
@@ -117,10 +175,13 @@ def export_prediction_csv(
         "italtensor_label",
         "italtensor_conformal_set",
         "italtensor_uncertainty_score",
+        "italtensor_active_query_score",
+        "italtensor_active_query_rank",
         "italtensor_drift_score",
         "italtensor_max_abs_z",
         "italtensor_ood_flag",
         "italtensor_review_priority",
+        REVIEW_LABEL_COLUMN,
     ]
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
@@ -133,10 +194,13 @@ def export_prediction_csv(
                     int(score["label"]),
                     score["conformal_set"],
                     f"{float(score['uncertainty_score']):.8f}",
+                    f"{float(score['active_query_score']):.8f}",
+                    int(score["active_query_rank"]),
                     _format_optional_float(score["drift_score"]),
                     _format_optional_float(score["max_abs_z"]),
                     score["ood_flag"],
                     score["review_priority"],
+                    "",
                 ]
             )
     return path
@@ -181,6 +245,17 @@ def _looks_like_prediction_header(row: list[str]) -> bool:
             continue
         return False
     return True
+
+
+def _review_feature_indices(header: list[str]) -> list[int]:
+    try:
+        score_start = header.index("italtensor_probability")
+    except ValueError as exc:
+        raise DataValidationError("Reviewed prediction CSV must contain scored Italtensor metadata columns.") from exc
+    feature_indices = list(range(score_start))
+    if not feature_indices:
+        raise DataValidationError("Reviewed prediction CSV must contain at least one feature column before Italtensor score columns.")
+    return feature_indices
 
 
 def _format_label_set(label_set: list[int]) -> str:
@@ -235,3 +310,33 @@ def _review_priority(uncertainty_score: float, conformal_set: str, drift_flag: b
     if uncertainty_score >= 0.6:
         return "medium"
     return "low"
+
+
+def _query_score(
+    uncertainty_score: float,
+    conformal_set: str,
+    drift_score: float | int | str,
+    drift_flag: bool,
+) -> float:
+    base = float(uncertainty_score)
+    if conformal_set == "{0,1}":
+        base = max(base, 0.9)
+    elif conformal_set == "abstain":
+        base = max(base, 1.0)
+
+    if isinstance(drift_score, str):
+        density_weight = 1.0
+    else:
+        density_weight = float(np.exp(-0.15 * float(drift_score) ** 2))
+    if drift_flag:
+        density_weight *= 0.5
+    return float(np.clip(base * density_weight, 0.0, 1.0))
+
+
+def _assign_query_ranks(scored_rows: list[dict[str, float | int | str]]) -> None:
+    ordered = sorted(
+        enumerate(scored_rows),
+        key=lambda item: (-float(item[1]["active_query_score"]), item[0]),
+    )
+    for rank, (index, _) in enumerate(ordered, start=1):
+        scored_rows[index]["active_query_rank"] = rank

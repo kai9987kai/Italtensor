@@ -20,9 +20,14 @@ The app runs without TensorFlow by default. When TensorFlow is unavailable, Ital
   - Noisy labels
   - Sparse interaction signal
   - Deployment drift probe
+  - Active learning margin
+  - Spurious shortcut
 - Save and import reusable dataset presets.
 - Train once or run random-search experiments.
-- Batch prediction CSV export for scoring unlabeled rows.
+- Batch prediction CSV export for scoring unlabeled rows, including active-learning query rank.
+- Reviewed-label import from scored batch CSV files for closed-loop active learning.
+- Counterfactual recourse: ask what small numeric changes would flip the current prediction.
+- Robustness stress lab for Gaussian noise, feature dropout, and single-feature shifts.
 - Dataset audit for imbalance, duplicates, label conflicts, constant features, and correlated features.
 - No-TensorFlow fallback trainer with linear, quadratic, and random Fourier feature maps.
 - Validation-tuned decision threshold plus fixed-`0.5` baseline metrics.
@@ -108,7 +113,7 @@ f1,f2,label
 
 Labels must be `0` or `1`. Feature values must be finite numbers. All rows must have the same number of features.
 
-Batch prediction CSV files are unlabeled: every column is treated as a numeric feature and the column count must match the trained model's raw input dimension. The exported CSV adds probability, predicted label, conformal set, uncertainty score, drift score, max absolute z-score, OOD flag, and review priority columns.
+Batch prediction CSV files are unlabeled: every column is treated as a numeric feature and the column count must match the trained model's raw input dimension. The exported CSV adds probability, predicted label, conformal set, uncertainty score, active-learning query score/rank, drift score, max absolute z-score, OOD flag, review priority, and a blank `italtensor_review_label` column.
 
 ## Dataset Presets
 
@@ -160,7 +165,13 @@ Experiment reports include dataset availability, class counts when a dataset is 
 
 The uncertainty output is intended as an experimental local diagnostic. When each class has enough samples, Italtensor uses a separate calibration split to estimate a split-conformal-style quantile, then evaluates coverage on the validation split. Prediction displays a label set such as `{0}`, `{1}`, `{0,1}`, or `abstain`. Tiny datasets fall back to validation-reused uncertainty and mark that source in model metadata and reports.
 
-Batch prediction exports rank rows for review using threshold-distance uncertainty, conformal ambiguity, and row-level drift diagnostics. Rows near the decision threshold, rows whose conformal set contains both labels, or rows whose standardized features cross the OOD flag threshold get higher review priority so the file can double as a lightweight active-learning queue.
+Batch prediction exports rank rows for review using threshold-distance uncertainty, conformal ambiguity, and row-level drift diagnostics. Rows near the decision threshold, rows whose conformal set contains both labels, or rows whose standardized features cross the OOD flag threshold get higher review priority. The separate active-query score favors uncertain in-distribution rows so the file can double as a lightweight active-learning queue without mistaking every shifted row for a good labeling candidate.
+
+After reviewing a scored batch file, fill `italtensor_review_label` with `0` or `1` on the rows you want to add, leave the rest blank, and click `Import reviewed labels`. Italtensor imports only reviewed rows, ignores the model-generated `italtensor_label`, appends the human labels to the training dataset, and invalidates the stale model so the next training run uses the expanded data.
+
+Counterfactual recourse is available next to `Predict`. It runs a small model-agnostic search over the raw numeric input and reports the nearest found feature changes that cross the current decision threshold. This is useful for local debugging: it shows whether a prediction flips because of one dominant feature, many small feature moves, or no nearby move in the search budget.
+
+The robustness stress lab runs against the current dataset and active model. It perturbs raw features with Gaussian noise, replaces random cells with dataset means to simulate missingness, and shifts individual features by one raw standard deviation. The output reports worst-case F1, label-flip rate, probability movement, and the most damaging perturbation. Stress results stay separate from validation metrics and are included in exported reports after you run the stress test.
 
 Dataset audits run from the desktop and are embedded in JSON/Markdown reports. They summarize class balance, duplicate feature rows, possible label conflicts, constant columns, highly correlated feature pairs, and compact warnings before you spend time tuning a model.
 
@@ -178,14 +189,16 @@ TensorFlow-specific tests skip when TensorFlow is not installed.
 - Italtensor is for local small-to-medium binary classification experiments, not production ML serving.
 - The fallback trainer is not a neural network; nonlinear feature maps make it stronger but still lightweight.
 - Existing `.keras` files require TensorFlow to load.
-- Fallback model metadata sidecars currently use `.italtensor-model.json.json`.
+- Counterfactual recourse is a model-debugging heuristic. It does not know which features are actually actionable, causal, legal, or safe to change.
+- Stress-lab results are perturbation diagnostics on the active dataset, not proof of future production robustness.
+- Reviewed-label import trusts the reviewer column. Bad human labels will become training data, so keep the scored CSV as an audit trail.
 - Reports are richest when the dataset is loaded in the same session as the model; model-only reports cannot reconstruct class counts.
 - Validation metrics need enough examples from both classes. The app requires at least two samples per class for train/validation splitting.
 - Conformal-style uncertainty is strongest when the dataset is large enough for the dedicated calibration split. On tiny datasets, it falls back to validation-reused diagnostics.
 
 ## Multi-Model Controls
 
-- **Backend** selector on the training panel chooses `auto`, `numpy`, or `keras`. `auto` uses Keras when TensorFlow is installed, otherwise NumPy.
+- **Backend** selector on the training panel chooses `auto`, `numpy`, `mps`, or `keras`. `auto` uses Keras when TensorFlow is installed, otherwise NumPy.
 - **Run Multi-Backend** trains one model per available backend with the same hyperparameters, stores each run in the registry, and activates the best validation F1.
 - **Fusion** on the registry panel controls how ensembles combine member predictions: `mean`, `median`, `vote`, `weighted` (by slot F1), or `stacking` (linear meta-learner on validation probabilities).
 - **Panel Predict** runs every stored slot on the prediction vector and logs a communication trace (per-model votes plus panel consensus and disagreement).
@@ -198,7 +211,10 @@ TensorFlow-specific tests skip when TensorFlow is not installed.
 - Random Fourier features are based on Rahimi and Recht's random kitchen sinks work for approximating kernel methods.
 - Conformal prediction design is informed by Vovk, Gammerman, and Shafer's [Algorithmic Learning in a Random World](https://link.springer.com/book/10.1007/978-3-031-06649-8), Angelopoulos and Bates' [gentle introduction](https://arxiv.org/abs/2107.07511), and Romano, Sesia, and Candes' classification-set work, [Classification with Valid and Adaptive Coverage](https://papers.nips.cc/paper/2020/hash/244edd7e85dc81602b7615cd705545f5-Abstract.html).
 - Batch review priority follows classic uncertainty-sampling intuition from Burr Settles' [Active Learning Literature Survey](https://burrsettles.com/pub/settles.activelearning.pdf): examples closest to the model's decision boundary are often the most informative to inspect or label next.
+- Reviewed-label import closes the pool-based active-learning loop: score an unlabeled pool, label the most useful rows, merge them into the training set, and retrain. This mirrors human-in-the-loop active-learning workflows summarized in recent HITL surveys such as [Human-in-the-loop machine learning: a state of the art](https://link.springer.com/article/10.1007/s10462-022-10246-w).
 - Batch drift flags are a lightweight standardized-distance diagnostic inspired by distance-based OOD detection work such as Lee et al.'s [simple unified framework for detecting out-of-distribution samples](https://proceedings.neurips.cc/paper/2018/file/abdeb6f575ac5c6676b747bca8d09cc2-Paper.pdf). Italtensor uses per-row z-score summaries rather than a full covariance model to stay dependency-free.
+- Counterfactual recourse follows the black-box counterfactual explanation line from Wachter, Mittelstadt, and Russell's [counterfactual explanations without opening the black box](https://arxiv.org/abs/1711.00399) and the diverse-counterfactual framing in Mothilal, Sharma, and Tan's [DiCE work](https://arxiv.org/abs/1905.07697). Italtensor intentionally keeps v1 dependency-free and reports one nearby flip rather than a constrained causal recourse plan.
+- The stress lab follows the common-corruption evaluation idea from Hendrycks and Dietterich's [robustness benchmark](https://arxiv.org/abs/1903.12261) and the shortcut-learning concern described by Geirhos et al. in [Shortcut Learning in Deep Neural Networks](https://arxiv.org/abs/2004.07780), adapted to dependency-free numeric tabular vectors.
 - Multi-model stacking follows David Wolpert's stacked generalization idea: base models produce validation probabilities, and a linear meta-learner combines them ([stacked generalization](https://www.ml.cmu.edu/research/dap-papers/dap-wolpert-stacked-generalization.pdf)).
 - Panel vote fusion and disagreement scores echo ensemble diversity diagnostics used in mixture-of-experts and committee-based classifiers; high disagreement flags inputs worth human review alongside conformal abstention.
 - Brier/log-loss style probability evaluation and threshold tuning are standard classification-evaluation tools; Italtensor exposes both threshold-tuned metrics and fixed-threshold baselines so validation gains are visible instead of hidden.

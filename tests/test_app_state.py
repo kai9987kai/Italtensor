@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from unittest.mock import patch
 from italtensor.app import (
     AppState,
@@ -11,8 +12,10 @@ from italtensor.app import (
     _build_ensemble,
     _compare_models,
     _run_weight_analysis,
+    _handle_worker_done,
+    _import_reviewed_labels,
 )
-from italtensor.data import validate_dataset
+from italtensor.data import DataValidationError, validate_dataset
 from italtensor.modeling import ModelConfig
 from italtensor.preprocessing import FeatureStandardizer
 from italtensor.registry import ModelSlot
@@ -60,6 +63,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         feature_importances=[{"feature_index": 0, "importance": 0.5}],
         trial_history=[{"metrics": {"f1": 1.0}}],
         uncertainty_metadata={"conformal_quantile": 0.3},
+        latest_stress_report={"summary": {"worst_f1": 0.5}},
     )
 
     _invalidate_model_artifacts(state)
@@ -75,6 +79,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
     assert state.feature_importances == []
     assert state.trial_history == []
     assert state.uncertainty_metadata == {}
+    assert state.latest_stress_report is None
 
 
 def test_replace_dataset_invalidates_old_model_state():
@@ -111,6 +116,84 @@ def test_format_uncertainty_includes_source_and_coverage():
     assert "source=dedicated_calibration" in summary
     assert "conformal_target_coverage=0.9000" in summary
     assert "conformal_coverage=0.8500" in summary
+
+
+def test_handle_worker_done_stores_stress_report_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
+    model = state.model
+    report = {
+        "base": {"f1": 0.9},
+        "summary": {
+            "worst_f1": 0.7,
+            "stress_f1_ratio": 0.7777,
+            "max_label_flip_rate": 0.25,
+            "worst_case": "feature_dropout@0.25",
+        },
+        "perturbations": [
+            {
+                "kind": "feature_dropout",
+                "level": 0.25,
+                "f1": 0.7,
+                "label_flip_rate": 0.25,
+                "mean_probability_shift": 0.12,
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("stress_test", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_stress_report == report
+    assert state.busy is False
+    assert "Stress suite" in window["-LOG-"].value
+
+
+def test_import_reviewed_labels_appends_rows_and_invalidates_model(tmp_path):
+    path = tmp_path / "reviewed.csv"
+    path.write_text(
+        "\n".join(
+            [
+                "x1,x2,italtensor_probability,italtensor_label,italtensor_review_label",
+                "0.2,0.3,0.4,0,1",
+                "0.4,0.5,0.6,1,",
+                "0.6,0.7,0.8,1,0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    window = FakeWindow()
+    state = AppState(
+        features=[[0.0, 0.0], [1.0, 1.0]],
+        labels=[0, 1],
+        input_dim=2,
+        model=object(),
+        latest_config=ModelConfig(),
+        latest_metrics={"f1": 0.8},
+    )
+
+    _import_reviewed_labels(window, state, {"-BATCH_OUTPUT_PATH-": str(path)})
+
+    assert len(state.labels) == 4
+    assert state.labels[-2:] == [1, 0]
+    np.testing.assert_allclose(state.features[-2:], [[0.2, 0.3], [0.6, 0.7]])
+    assert state.model is None
+    assert state.latest_metrics == {}
+    assert "Imported 2 reviewed label" in window["-LOG-"].value
+
+
+def test_import_reviewed_labels_with_no_reviewed_rows_does_not_mutate(tmp_path):
+    path = tmp_path / "reviewed.csv"
+    path.write_text("x1,italtensor_probability,italtensor_review_label\n0.2,0.4,\n", encoding="utf-8")
+    window = FakeWindow()
+    state = AppState(features=[[0.0]], labels=[0], input_dim=1)
+
+    with pytest.raises(DataValidationError):
+        _import_reviewed_labels(window, state, {"-BATCH_OUTPUT_PATH-": str(path)})
+
+    assert state.features == [[0.0]]
+    assert state.labels == [0]
 
 
 def test_apply_preset_metadata_updates_sparse_training_defaults():
