@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Sequence
 import numpy as np
 
 from .experiments import _classification_metrics_at_threshold
@@ -140,6 +140,83 @@ def bootstrap_confidence_intervals(
             float(np.percentile(balanced_accuracy_scores, upper_pct)),
         ),
     }
+
+
+def format_reliability_summary(
+    labels: np.ndarray,
+    probabilities: np.ndarray,
+    *,
+    n_bins: int = 10,
+) -> str:
+    """Text reliability diagram from probability diagnostics (calibration bins)."""
+    from .experiments import probability_diagnostics
+
+    y_true = np.asarray(labels, dtype=np.int32).reshape(-1)
+    y_prob = np.asarray(probabilities, dtype=np.float32).reshape(-1)
+    if y_true.shape[0] != y_prob.shape[0]:
+        raise ValueError("Labels and probabilities must be the same length.")
+    diagnostics = probability_diagnostics(y_true, y_prob, n_bins=n_bins)
+    bins = diagnostics.get("calibration_bins", [])
+    if not bins:
+        return "Reliability diagram: not enough samples for calibration bins."
+    lines = [
+        "Reliability diagram (confidence vs. accuracy):",
+        f"  ECE={float(diagnostics.get('expected_calibration_error', 0)):.4f}, "
+        f"Brier={float(diagnostics.get('brier_score', 0)):.4f}",
+    ]
+    for item in bins:
+        lines.append(
+            f"  [{float(item['left']):.2f},{float(item['right']):.2f}): "
+            f"n={int(item['count'])}, conf={float(item['confidence']):.3f}, "
+            f"acc={float(item['accuracy']):.3f}, |err|={float(item['absolute_error']):.3f}"
+        )
+    return "\n".join(lines)
+
+
+def registry_similarity_matrix(slots: Sequence[Any]) -> dict[str, Any]:
+    """Pairwise cosine similarity for registry slots with compatible weight vectors."""
+    names: list[str] = []
+    matrix: list[list[float | None]] = []
+    for slot in slots:
+        name = getattr(slot, "name", None) or f"slot_{len(names)}"
+        names.append(str(name))
+    for i, slot_a in enumerate(slots):
+        row: list[float | None] = []
+        model_a = getattr(slot_a, "model", None)
+        for j, slot_b in enumerate(slots):
+            if i == j:
+                row.append(1.0)
+                continue
+            model_b = getattr(slot_b, "model", None)
+            if model_a is None or model_b is None:
+                row.append(None)
+                continue
+            try:
+                row.append(model_similarity(model_a, model_b))
+            except (TypeError, ValueError):
+                row.append(None)
+        matrix.append(row)
+    return {"names": names, "similarity": matrix}
+
+
+def format_similarity_matrix(report: dict[str, Any]) -> str:
+    names = report.get("names", [])
+    matrix = report.get("similarity", [])
+    if not names:
+        return "Slot similarity: no models in registry."
+    width = max(10, max(len(name) for name in names) + 2)
+    lines = ["Slot similarity (cosine):"]
+    header = " " * width + "".join(f"{name[:8]:>{10}}" for name in names)
+    lines.append(header)
+    for name, row in zip(names, matrix, strict=True):
+        cells = []
+        for value in row:
+            if value is None:
+                cells.append(f"{'n/a':>10}")
+            else:
+                cells.append(f"{float(value):>10.3f}")
+        lines.append(f"{name[: width - 1]:<{width}}" + "".join(cells))
+    return "\n".join(lines)
 
 
 def compute_weight_histogram(model: Any, bins: int = 10) -> dict[str, list[float]]:

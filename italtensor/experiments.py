@@ -754,6 +754,9 @@ def train_single_model(
     features: np.ndarray,
     labels: np.ndarray,
     config: ModelConfig,
+    *,
+    use_smote: bool = False,
+    smote_k: int = 3,
 ) -> ExperimentResult:
     """Core single model training pipeline with post-hoc probability calibration."""
     # Validate and package input
@@ -770,6 +773,15 @@ def train_single_model(
         x_train, y_train, x_val, y_val = split_train_validation(dataset, seed=config.random_seed)
         x_cal, y_cal = x_val, y_val
         conformal_source = "validation_reuse"
+        
+    # Apply SMOTE to the training split to avoid leakage into validation/calibration sets
+    if use_smote:
+        from .augmentation import apply_smote
+        try:
+            x_train, y_train = apply_smote(x_train, y_train, k_neighbors=smote_k, seed=config.random_seed)
+        except Exception:
+            # Fallback gracefully if SMOTE fails due to insufficient minority samples in train split
+            pass
     
     # Fit standardizer on train features only
     if getattr(config, "feature_selection_k", None) is not None:
@@ -969,6 +981,9 @@ def train_single_model_cv(
     labels: np.ndarray,
     config: ModelConfig,
     n_splits: int = 5,
+    *,
+    use_smote: bool = False,
+    smote_k: int = 3,
 ) -> ExperimentResult:
     """Train single model with K-Fold cross-validation, updating result metrics with CV stats."""
     dataset = validate_dataset(features.tolist(), labels.tolist(), min_samples=4, require_two_classes=True)
@@ -982,6 +997,15 @@ def train_single_model_cv(
         x_train, y_train = x[train_idx], y[train_idx]
         x_val, y_val = x[val_idx], y[val_idx]
         
+        # Apply SMOTE to training fold to avoid validation leakage
+        if use_smote:
+            from .augmentation import apply_smote
+            try:
+                x_train, y_train = apply_smote(x_train, y_train, k_neighbors=smote_k, seed=config.random_seed)
+            except Exception:
+                # Graceful fallback if SMOTE fails due to insufficient samples
+                pass
+                
         if getattr(config, "feature_selection_k", None) is not None:
             preprocessor = FeatureStandardizer.fit_with_selection(x_train, y_train, k=config.feature_selection_k)
         else:
@@ -1033,7 +1057,7 @@ def train_single_model_cv(
         cv_metrics[f"cv_mean_{key}"] = float(np.mean(values))
         cv_metrics[f"cv_std_{key}"] = float(np.std(values))
         
-    result = train_single_model(features, labels, config)
+    result = train_single_model(features, labels, config, use_smote=use_smote, smote_k=smote_k)
     result.metrics.update(cv_metrics)
     result.metrics["cv_folds"] = n_splits
     
@@ -1265,14 +1289,14 @@ def train_distilled_model(
         metrics["validation_loss"] = float(-np.mean(y_val_hard * np.log(probs_clipped) + (1.0 - y_val_hard) * np.log(1.0 - probs_clipped)))
 
     return ExperimentResult(
-        model=student_model,
-        preprocessor=preprocessor,
-        metrics=metrics,
-        threshold=threshold,
         config=config,
+        metrics=metrics,
+        history=history,
+        model=student_model,
+        threshold=threshold,
+        preprocessor=preprocessor,
         feature_importances=[],
-        trial_history=[],
-        uncertainty_metadata=uncertainty,
+        uncertainty=uncertainty,
     )
 
 
@@ -1324,16 +1348,16 @@ def merge_models(
                 raise ValueError(f"Model at index {i} is missing a preprocessor, whereas reference model has one.")
                 
         merged_mean = np.zeros_like(ref_prep.mean)
-        merged_var = np.zeros_like(ref_prep.var)
+        merged_scale = np.zeros_like(ref_prep.scale)
         
         for coef, (m, prep) in zip(w_coefs, models_list):
             merged_mean += coef * prep.mean
-            merged_var += coef * prep.var
+            merged_scale += coef * prep.scale
             
         merged_prep = FeatureStandardizer(
             mean=merged_mean,
-            var=merged_var,
-            active_features=ref_prep.active_features,
+            scale=merged_scale,
+            selected_indices=ref_prep.selected_indices,
         )
         
     merged_classifier = NumpyBinaryClassifier(

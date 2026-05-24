@@ -14,6 +14,8 @@ from italtensor.app import (
     _run_weight_analysis,
     _handle_worker_done,
     _import_reviewed_labels,
+    _run_shap_analysis,
+    _run_decision_boundary,
 )
 from italtensor.data import DataValidationError, validate_dataset
 from italtensor.modeling import ModelConfig
@@ -444,3 +446,54 @@ def test_run_weight_analysis():
     _run_weight_analysis(window, state, {})
     assert "Weight Analysis" in window["-LOG-"].value
     assert "Sparsity" in window["-LOG-"].value
+
+
+def test_run_shap_analysis():
+    window = FakeWindow()
+    state = AppState()
+    from italtensor.modeling import NumpyBinaryClassifier
+    from italtensor.preprocessing import FeatureStandardizer
+
+    # 1. Test fallback when model is None
+    _run_shap_analysis(window, state, {})
+    assert "Train or load a model first" in window["-LOG-"].value
+
+    # 2. Test when prediction vector is missing
+    state.model = NumpyBinaryClassifier(weights=np.array([1.0, 0.0]), bias=0.5, raw_input_dim=2)
+    window["-LOG-"].value = ""
+    _run_shap_analysis(window, state, {})
+    assert "Please enter a prediction vector JSON" in window["-LOG-"].value
+
+    # 3. Test successful SHAP run
+    window["-LOG-"].value = ""
+    state.preprocessor = FeatureStandardizer(mean=np.array([0.0, 0.0]), scale=np.array([1.0, 1.0]), selected_indices=[0, 1])
+    values = {"-PREDICTION_VECTOR-": "[1.0, -1.0]"}
+    _run_shap_analysis(window, state, values)
+    assert "SHAP Local Feature Attributions" in window["-LOG-"].value
+    assert "x1" in window["-LOG-"].value
+
+
+def test_run_decision_boundary():
+    window = FakeWindow()
+    state = AppState()
+    from italtensor.modeling import NumpyBinaryClassifier
+    from italtensor.preprocessing import FeatureStandardizer
+
+    # 1. Test fallback when model is None
+    _run_decision_boundary(window, state, {})
+    assert "Train or load a model first" in window["-LOG-"].value
+
+    # 2. Test when dataset is missing
+    state.model = NumpyBinaryClassifier(weights=np.array([1.0, 0.0]), bias=0.5, raw_input_dim=2)
+    window["-LOG-"].value = ""
+    _run_decision_boundary(window, state, {})
+    assert "No dataset loaded" in window["-LOG-"].value
+
+    # 3. Test successful decision boundary run
+    window["-LOG-"].value = ""
+    state.features = [[1.0, 2.0], [2.0, 1.0], [1.5, 1.5], [3.0, 3.0]]
+    state.labels = [0, 1, 0, 1]
+    state.preprocessor = FeatureStandardizer(mean=np.array([0.0, 0.0]), scale=np.array([1.0, 1.0]), selected_indices=[0, 1])
+    
+    _run_decision_boundary(window, state, {})
+    assert "Decision Boundary Visualization" in window["-LOG-"].value

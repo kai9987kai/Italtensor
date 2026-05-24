@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
@@ -43,10 +43,6 @@ from .learning_curves import learning_curve_points
 from .slices import format_slice_summary, run_slice_diagnostics
 from .stress import format_stress_summary, run_stress_suite
 from .thresholds import format_threshold_summary, run_threshold_diagnostics
-from .cartography import format_cartography_summary, run_dataset_cartography
-from .mps_diagnostics import format_mps_sweep_summary, run_mps_bond_sweep
-from .trials_io import export_trial_history_csv
-from . import __version__
 
 
 @dataclass
@@ -67,8 +63,6 @@ class AppState:
     latest_threshold_report: dict[str, Any] | None = None
     latest_slice_report: dict[str, Any] | None = None
     latest_stress_report: dict[str, Any] | None = None
-    latest_cartography_report: dict[str, Any] | None = None
-    latest_mps_sweep_report: dict[str, Any] | None = None
     busy: bool = False
     status_message: str = "Ready"
     model_slots: list[ModelSlot] = field(default_factory=list)
@@ -102,7 +96,7 @@ def run_app() -> None:
     sg.set_options(font=('Segoe UI', 10))
     
     state = AppState()
-    window = sg.Window(f"Italtensor Workbench v{__version__}", _layout(sg), finalize=True, resizable=True)
+    window = sg.Window("Italtensor Premium Workbench", _layout(sg), finalize=True)
     _refresh_state(window, state)
 
     while True:
@@ -141,20 +135,6 @@ def run_app() -> None:
                 _start_threshold_diagnostics(window, state)
             elif event == "-SAMPLE_REVIEW-":
                 _start_sample_review(window, state)
-            elif event == "-CARTOGRAPHY-":
-                _start_cartography(window, state)
-            elif event == "-RELIABILITY-":
-                _run_reliability_diagram(window, state)
-            elif event == "-MPS_BOND_SWEEP-":
-                _start_mps_bond_sweep(window, state, values)
-            elif event == "-SHAP_ANALYSIS-":
-                _run_shap_analysis(window, state, values)
-            elif event == "-DECISION_BOUNDARY-":
-                _run_decision_boundary(window, state, values)
-            elif event == "-EXPORT_TRIALS-":
-                _export_trials(window, state, values)
-            elif event == "-SLOT_SIMILARITY-":
-                _run_slot_similarity(window, state)
             elif event == "-TRAIN_ONCE-":
                 _start_train_once(window, state, values)
             elif event == "-AUTO_EXPERIMENTS-":
@@ -217,7 +197,6 @@ def run_app() -> None:
 
 def _layout(sg):
     data_column = [
-        [sg.Text("Data", font=("Segoe UI", 11, "bold"))],
         [sg.Text("Training sample JSON")],
         [sg.Input(key="-TRAINING_SAMPLE-", expand_x=True)],
         [sg.Button("Add sample", key="-ADD_SAMPLE-"), sg.Button("Clear data", key="-CLEAR_DATA-")],
@@ -254,7 +233,6 @@ def _layout(sg):
     ]
 
     training_column = [
-        [sg.Text("Train & Tune", font=("Segoe UI", 11, "bold"))],
         [
             sg.Text("Samples:"),
             sg.Text("0", key="-SAMPLE_COUNT-", size=(6, 1)),
@@ -262,8 +240,16 @@ def _layout(sg):
             sg.Text("-", key="-INPUT_DIM-", size=(6, 1)),
         ],
         [sg.Text("Dataset:"), sg.Text("No data", key="-DATASET_SUMMARY-", expand_x=True)],
-        [sg.Text("Model:"), sg.Text("not trained", key="-METRICS_SUMMARY-", expand_x=True)],
         [sg.Text("Audit:"), sg.Text("-", key="-AUDIT_SUMMARY-", expand_x=True)],
+        [
+            sg.Button("Audit dataset", key="-AUDIT_DATASET-"),
+            sg.Button("Learning curve", key="-LEARNING_CURVE-"),
+            sg.Button("Ablation diagnostics", key="-ABLATION_DIAGNOSTICS-"),
+            sg.Button("Stress test", key="-STRESS_TEST-"),
+            sg.Button("Slice diagnostics", key="-SLICE_DIAGNOSTICS-"),
+            sg.Button("Threshold tradeoff", key="-THRESHOLD_DIAGNOSTICS-"),
+            sg.Button("Sample review", key="-SAMPLE_REVIEW-"),
+        ],
         [
             sg.Text("Epochs"),
             sg.Input("50", key="-EPOCHS-", size=(6, 1)),
@@ -299,23 +285,11 @@ def _layout(sg):
             sg.Input("5", key="-KFOLD_SPLITS-", size=(4, 1)),
         ],
         [
-            sg.Checkbox("Enable SMOTE", default=False, key="-USE_SMOTE-", tooltip="Oversample minority class on training split to handle imbalance"),
-            sg.Text("SMOTE Neighbors (k)"),
-            sg.Input("3", key="-SMOTE_K-", size=(4, 1)),
-        ],
-        [
             sg.Button("Train once", key="-TRAIN_ONCE-"),
             sg.Button("Run auto experiments", key="-AUTO_EXPERIMENTS-"),
             sg.Button("Weight Analysis", key="-WEIGHT_ANALYSIS-"),
             sg.Text("MPS chi"),
             sg.Input("8", key="-MPS_BOND-", size=(4, 1)),
-            sg.Text("phys"),
-            sg.Input("4", key="-MPS_PHYS-", size=(4, 1)),
-        ],
-        [sg.Text("Trial CSV")],
-        [
-            sg.Input(key="-TRIAL_CSV_PATH-", expand_x=True),
-            sg.FileSaveAs(file_types=(("CSV files", "*.csv"), ("All files", "*.*"))),
         ],
         [sg.Text("Model path")],
         [
@@ -357,7 +331,7 @@ def _layout(sg):
     ]
 
     slots_column = [
-        [sg.Text("Registry & Panel", font=("Segoe UI", 11, "bold"))],
+        [sg.Text("Model Registry / Multi-Model")],
         [
             sg.Text("Fusion"),
             sg.Combo(
@@ -384,9 +358,6 @@ def _layout(sg):
         ],
         [
             sg.Button("Compare Models", key="-COMPARE_MODELS-", expand_x=True),
-            sg.Button("Slot similarity", key="-SLOT_SIMILARITY-", expand_x=True),
-        ],
-        [
             sg.Button("Distill Model", key="-DISTILL_MODEL-", expand_x=True),
         ],
         [
@@ -402,61 +373,15 @@ def _layout(sg):
         ],
     ]
 
-    explainability_column = [
-        [sg.Text("Explainability & Diagnostics", font=("Segoe UI", 11, "bold"))],
-        [sg.Text("Interactive Local Interpretability & Visualizations")],
-        [
-            sg.Button("SHAP Local Analysis", key="-SHAP_ANALYSIS-", tooltip="Analyze local feature contributions of prediction vector"),
-            sg.Button("Visualize Decision Boundary", key="-DECISION_BOUNDARY-", tooltip="Draw PCA-projected 2D decision boundary map of active model"),
-        ],
-        [sg.HorizontalSeparator()],
-        [sg.Text("Automated Model & Dataset Diagnostics")],
-        [
-            sg.Button("Audit dataset", key="-AUDIT_DATASET-", expand_x=True),
-            sg.Button("Learning curve", key="-LEARNING_CURVE-", expand_x=True),
-        ],
-        [
-            sg.Button("Ablation diagnostics", key="-ABLATION_DIAGNOSTICS-", expand_x=True),
-            sg.Button("Stress test", key="-STRESS_TEST-", expand_x=True),
-        ],
-        [
-            sg.Button("Slice diagnostics", key="-SLICE_DIAGNOSTICS-", expand_x=True),
-            sg.Button("Threshold tradeoff", key="-THRESHOLD_DIAGNOSTICS-", expand_x=True),
-        ],
-        [
-            sg.Button("Sample review", key="-SAMPLE_REVIEW-", expand_x=True),
-            sg.Button("Dataset cartography", key="-CARTOGRAPHY-", expand_x=True),
-        ],
-        [
-            sg.Button("Reliability diagram", key="-RELIABILITY-", expand_x=True),
-            sg.Button("MPS bond sweep", key="-MPS_BOND_SWEEP-", expand_x=True),
-        ],
-        [
-            sg.Button("Export trials CSV", key="-EXPORT_TRIALS-", expand_x=True),
-        ],
-    ]
-
-    tab_data = sg.Tab("Workspace & Data", data_column, key="-TAB_DATA-")
-    tab_training = sg.Tab("Training & Tuning", training_column, key="-TAB_TRAINING-")
-    tab_slots = sg.Tab("Model Slots Registry", slots_column, key="-TAB_SLOTS-")
-    tab_explainability = sg.Tab("Explainability & Diagnostics", explainability_column, key="-TAB_EXPLAINABILITY-")
-
-    tab_group = sg.TabGroup([[tab_data, tab_training, tab_slots, tab_explainability]], expand_x=True, expand_y=True)
-
     return [
-        [tab_group],
         [
-            sg.Multiline(
-                size=(110, 18),
-                key="-LOG-",
-                autoscroll=True,
-                disabled=True,
-                expand_x=True,
-                expand_y=True,
-                background_color="#14151A",
-                text_color="#E4E6EB",
-            )
+            sg.Column(data_column, expand_x=True, vertical_alignment="top"),
+            sg.VSeparator(),
+            sg.Column(training_column, expand_x=True, vertical_alignment="top"),
+            sg.VSeparator(),
+            sg.Column(slots_column, expand_x=True, vertical_alignment="top"),
         ],
+        [sg.Multiline(size=(110, 18), key="-LOG-", autoscroll=True, disabled=True, expand_x=True, expand_y=True)],
         [sg.Button("Exit")],
     ]
 
@@ -661,13 +586,6 @@ def _config_from_values(values: dict[str, Any]) -> ModelConfig:
         raise ValueError("MPS bond dimension must be an integer.") from exc
     if mps_bond_dim < 2:
         raise ValueError("MPS bond dimension must be at least 2.")
-    mps_phys_raw = values.get("-MPS_PHYS-", "4").strip()
-    try:
-        mps_physical_dim = int(mps_phys_raw) if mps_phys_raw else 4
-    except ValueError as exc:
-        raise ValueError("MPS physical dimension must be an integer.") from exc
-    if mps_physical_dim < 2:
-        raise ValueError("MPS physical dimension must be at least 2.")
     return ModelConfig(
         hidden_layers=(32,),
         learning_rate=0.001,
@@ -680,7 +598,6 @@ def _config_from_values(values: dict[str, Any]) -> ModelConfig:
         gradient_clip=gradient_clip,
         backend=values.get("-BACKEND-", "auto"),
         mps_bond_dim=mps_bond_dim,
-        mps_physical_dim=mps_physical_dim,
     )
 
 
@@ -689,22 +606,15 @@ def _start_train_once(window, state: AppState, values: dict[str, Any]) -> None:
     dataset = validate_dataset(state.features, state.labels, min_samples=4, require_two_classes=True)
     config = _config_from_values(values)
 
-    use_smote = values.get("-USE_SMOTE-", False)
-    smote_k = _positive_int(values.get("-SMOTE_K-", "3"), "SMOTE k")
-
     use_cv = values.get("-USE_CV-", False)
     if use_cv:
         n_splits = _positive_int(values.get("-KFOLD_SPLITS-", "5"), "CV folds")
         def task() -> tuple[str, ExperimentResult]:
-            return "single", train_single_model_cv(
-                dataset.features, dataset.labels, config, n_splits=n_splits, use_smote=use_smote, smote_k=smote_k
-            )
+            return "single", train_single_model_cv(dataset.features, dataset.labels, config, n_splits=n_splits)
         _start_worker(window, state, f"Training with {n_splits}-Fold CV...", task)
     else:
         def task() -> tuple[str, ExperimentResult]:
-            return "single", train_single_model(
-                dataset.features, dataset.labels, config, use_smote=use_smote, smote_k=smote_k
-            )
+            return "single", train_single_model(dataset.features, dataset.labels, config)
         _start_worker(window, state, "Training one model...", task)
 
 
@@ -996,27 +906,6 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                     f"recall={float(item['recall']):.4f}, "
                     f"cost={float(item['cost']):.4f}",
                 )
-
-    elif kind == "cartography":
-        state.latest_cartography_report = result
-        _log(window, format_cartography_summary(result))
-        for region_name in ("overconfident_wrong", "ambiguous", "hard_to_learn", "easy_to_learn"):
-            for item in result.get("regions", {}).get(region_name, [])[:2]:
-                _log(
-                    window,
-                    f"  {region_name} row={int(item['row_index'])}: "
-                    f"label={int(item['label'])}, conf={float(item['confidence']):.3f}, "
-                    f"var={float(item['variability']):.3f}",
-                )
-    elif kind == "mps_sweep":
-        state.latest_mps_sweep_report = result
-        _log(window, format_mps_sweep_summary(result))
-        for row in result.get("results", []):
-            _log(
-                window,
-                f"  chi={int(row['bond_dim'])}: F1={float(row['f1']):.4f}, "
-                f"Brier={float(row['brier_score']):.4f}, ECE={float(row['ece']):.4f}",
-            )
     elif kind == "sample_review":
         state.latest_sample_review_report = result
         _log(window, format_sample_review_summary(result))
@@ -1169,7 +1058,6 @@ def _refresh_state(window, state: AppState) -> None:
     window["-SAMPLE_COUNT-"].update(str(len(state.labels)))
     window["-INPUT_DIM-"].update(str(state.input_dim) if state.input_dim is not None else "-")
     window["-DATASET_SUMMARY-"].update(_dataset_summary(state))
-    window["-METRICS_SUMMARY-"].update(_metrics_summary(state))
     window["-STATUS-"].update(state.status_message if state.busy else "Ready")
     _update_slots_listbox(window, state)
 
@@ -1212,13 +1100,6 @@ def _set_busy(window, busy: bool) -> None:
         "-SLICE_DIAGNOSTICS-",
         "-THRESHOLD_DIAGNOSTICS-",
         "-SAMPLE_REVIEW-",
-        "-CARTOGRAPHY-",
-        "-RELIABILITY-",
-        "-MPS_BOND_SWEEP-",
-        "-EXPORT_TRIALS-",
-        "-SLOT_SIMILARITY-",
-        "-SHAP_ANALYSIS-",
-        "-DECISION_BOUNDARY-",
     ):
         if key in window.AllKeysDict:
             window[key].update(disabled=busy)
@@ -1298,22 +1179,6 @@ def _dataset_summary(state: AppState) -> str:
     ones = state.labels.count(1)
     trainable = "trainable" if zeros >= 2 and ones >= 2 else "needs 2 samples per class"
     return f"class 0={zeros}, class 1={ones}, {trainable}"
-
-
-def _metrics_summary(state: AppState) -> str:
-    if state.model is None or not state.latest_metrics:
-        return "not trained"
-    metrics = state.latest_metrics
-    backend = getattr(state.latest_config, "backend", "?") if state.latest_config else "?"
-    parts = [
-        f"F1={float(metrics.get('f1', 0)):.3f}",
-        f"acc={float(metrics.get('accuracy', 0)):.3f}",
-    ]
-    if "ece" in metrics:
-        parts.append(f"ECE={float(metrics['ece']):.3f}")
-    if "brier_score" in metrics:
-        parts.append(f"Brier={float(metrics['brier_score']):.3f}")
-    return f"{backend}: " + ", ".join(parts)
 
 
 def _format_metrics(metrics: dict[str, float | int]) -> str:
@@ -1714,69 +1579,6 @@ def _compare_models(window, state: AppState, values: dict[str, Any]) -> None:
     _log(window, "========================")
 
 
-
-def _start_cartography(window, state: AppState) -> None:
-    _ensure_not_busy(state)
-    if state.model is None:
-        raise ValueError("Train or load a model before running dataset cartography.")
-    dataset = validate_dataset(state.features, state.labels, min_samples=1, require_two_classes=False)
-
-    def task() -> tuple[str, dict[str, Any]]:
-        report = run_dataset_cartography(
-            state.model,
-            dataset.features,
-            dataset.labels,
-            preprocessor=state.preprocessor,
-            threshold=state.latest_threshold,
-        )
-        return "cartography", report
-
-    _start_worker(window, state, "Running dataset cartography...", task)
-
-
-def _run_reliability_diagram(window, state: AppState) -> None:
-    if state.model is None:
-        raise ValueError("Train or load a model before running a reliability diagram.")
-    from .analysis import format_reliability_summary
-    from .modeling import predict_probability
-
-    dataset = validate_dataset(state.features, state.labels, min_samples=4, require_two_classes=False)
-    prepared = state.preprocessor.transform(dataset.features) if state.preprocessor else dataset.features
-    probabilities = predict_probability(state.model, prepared).reshape(-1)
-    _log(window, format_reliability_summary(dataset.labels, probabilities))
-
-
-def _start_mps_bond_sweep(window, state: AppState, values: dict[str, Any]) -> None:
-    _ensure_not_busy(state)
-    dataset = validate_dataset(state.features, state.labels, min_samples=8, require_two_classes=True)
-    config = _config_from_values(values)
-    config = ModelConfig.from_dict({**config.to_dict(), "backend": "mps"})
-
-    def task() -> tuple[str, dict[str, Any]]:
-        report = run_mps_bond_sweep(dataset.features, dataset.labels, config)
-        return "mps_sweep", report
-
-    _start_worker(window, state, "Running MPS bond-dimension sweep...", task)
-
-
-def _export_trials(window, state: AppState, values: dict[str, Any]) -> None:
-    if not state.trial_history:
-        raise ValueError("No trial history to export. Train once or run auto experiments first.")
-    path = export_trial_history_csv(_required_path(values["-TRIAL_CSV_PATH-"], "trial CSV path"), state.trial_history)
-    window["-TRIAL_CSV_PATH-"].update(str(path))
-    _log(window, f"Exported {len(state.trial_history)} trial(s) to {path}.")
-
-
-def _run_slot_similarity(window, state: AppState) -> None:
-    if len(state.model_slots) < 2:
-        raise ValueError("Store at least two models in the registry for similarity analysis.")
-    from .analysis import format_similarity_matrix, registry_similarity_matrix
-
-    report = registry_similarity_matrix(state.model_slots)
-    for line in format_similarity_matrix(report).splitlines():
-        _log(window, line)
-
-
 def _run_weight_analysis(window, state: AppState, values: dict[str, Any]) -> None:
     if state.model is None:
         _log(window, "No active model to analyze.")
@@ -1797,45 +1599,6 @@ def _run_weight_analysis(window, state: AppState, values: dict[str, Any]) -> Non
         _log(window, "==========================")
     except Exception as exc:
         _log(window, f"Weight analysis error: {exc}")
-
-
-def _run_shap_analysis(window, state: AppState, values: dict[str, Any]) -> None:
-    if state.model is None:
-        _log(window, "No active model to analyze. Train or load a model first.")
-        return
-    raw = values.get("-PREDICTION_VECTOR-", "").strip()
-    if not raw:
-        _log(window, "Please enter a prediction vector JSON first.")
-        return
-    try:
-        from .data import parse_prediction_vector
-        import numpy as np
-        sample_list = parse_prediction_vector(raw, state.input_dim)
-        sample = np.array(sample_list, dtype=np.float32)
-        from .explainability import compute_shap_attributions, render_shap_bar_chart
-        attributions = compute_shap_attributions(state.model, sample, state.preprocessor)
-        chart = render_shap_bar_chart(attributions)
-        _log(window, "\n" + chart)
-    except Exception as exc:
-        _log(window, f"SHAP analysis error: {exc}")
-
-
-def _run_decision_boundary(window, state: AppState, values: dict[str, Any]) -> None:
-    if state.model is None:
-        _log(window, "No active model. Train or load a model first.")
-        return
-    if not state.features:
-        _log(window, "No dataset loaded.")
-        return
-    try:
-        import numpy as np
-        x = np.array(state.features, dtype=np.float32)
-        y = np.array(state.labels, dtype=np.int32)
-        from .explainability import generate_decision_boundary_map
-        grid_map = generate_decision_boundary_map(state.model, x, y, state.preprocessor)
-        _log(window, "\n" + grid_map)
-    except Exception as exc:
-        _log(window, f"Decision boundary visualization error: {exc}")
 
 
 def _distill_model(window, state: AppState, values: dict[str, Any]) -> None:
