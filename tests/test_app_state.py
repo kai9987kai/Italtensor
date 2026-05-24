@@ -63,6 +63,10 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         feature_importances=[{"feature_index": 0, "importance": 0.5}],
         trial_history=[{"metrics": {"f1": 1.0}}],
         uncertainty_metadata={"conformal_quantile": 0.3},
+        latest_ablation_report={"summary": {"top_feature": "x1"}},
+        latest_sample_review_report={"summary": {"label_issue_count": 1}},
+        latest_threshold_report={"summary": {"best_f1": 1.0}},
+        latest_slice_report={"summary": {"worst_f1_delta": -0.5}},
         latest_stress_report={"summary": {"worst_f1": 0.5}},
     )
 
@@ -79,6 +83,10 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
     assert state.feature_importances == []
     assert state.trial_history == []
     assert state.uncertainty_metadata == {}
+    assert state.latest_ablation_report is None
+    assert state.latest_sample_review_report is None
+    assert state.latest_threshold_report is None
+    assert state.latest_slice_report is None
     assert state.latest_stress_report is None
 
 
@@ -148,6 +156,131 @@ def test_handle_worker_done_stores_stress_report_without_mutating_model():
     assert state.latest_stress_report == report
     assert state.busy is False
     assert "Stress suite" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_ablation_report_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
+    model = state.model
+    report = {
+        "base": {"f1": 0.9},
+        "summary": {
+            "top_feature": "x1",
+            "max_f1_drop": 0.4,
+            "max_label_flip_rate": 0.25,
+            "label_proxy_count": 1,
+        },
+        "features": [
+            {
+                "feature_index": 0,
+                "f1_drop": 0.4,
+                "permutation_f1_drop": 0.3,
+                "label_flip_rate": 0.25,
+                "permutation_label_flip_rate": 0.1,
+                "label_correlation": 0.9,
+                "risk_flags": ["label_proxy"],
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("ablation_diagnostics", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_ablation_report == report
+    assert state.busy is False
+    assert "Ablation diagnostics" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_slice_report_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
+    model = state.model
+    report = {
+        "base": {"f1": 0.9},
+        "summary": {
+            "slice_count": 1,
+            "worst_slice": "x2[0, 1]",
+            "worst_f1_delta": -0.4,
+            "worst_accuracy_delta": -0.25,
+        },
+        "slices": [
+            {
+                "feature_index": 1,
+                "left": 0.0,
+                "right": 1.0,
+                "count": 4,
+                "f1": 0.5,
+                "accuracy": 0.5,
+                "f1_delta": -0.4,
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("slice_diagnostics", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_slice_report == report
+    assert state.busy is False
+    assert "Slice diagnostics" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_threshold_report_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
+    model = state.model
+    report = {
+        "current_threshold": 0.4,
+        "summary": {
+            "best_f1_threshold": 0.3,
+            "min_cost_threshold": 0.2,
+            "best_f1": 0.95,
+            "min_cost": 0.1,
+            "current_cost": 0.2,
+        },
+        "best_f1": {"threshold": 0.3, "f1": 0.95, "precision": 0.9, "recall": 1.0, "cost": 0.15},
+        "best_balanced_accuracy": {"threshold": 0.35, "f1": 0.9, "precision": 0.9, "recall": 0.9, "cost": 0.2},
+        "min_cost": {"threshold": 0.2, "f1": 0.85, "precision": 0.8, "recall": 1.0, "cost": 0.1},
+    }
+
+    _handle_worker_done(window, state, ("threshold_diagnostics", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_threshold_report == report
+    assert state.latest_threshold == 0.4
+    assert state.busy is False
+    assert "Threshold sweep" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_sample_review_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
+    model = state.model
+    report = {
+        "summary": {
+            "label_issue_count": 1,
+            "disagreement_count": 2,
+            "ambiguous_count": 1,
+            "mean_loss": 0.3,
+            "max_loss": 1.2,
+        },
+        "label_issues": [
+            {"row_index": 2, "label": 0, "predicted_label": 1, "probability": 0.95, "loss": 2.9}
+        ],
+        "hard_examples": [],
+        "ambiguous_examples": [],
+    }
+
+    _handle_worker_done(window, state, ("sample_review", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_sample_review_report == report
+    assert state.latest_threshold == 0.4
+    assert state.busy is False
+    assert "Sample review" in window["-LOG-"].value
 
 
 def test_import_reviewed_labels_appends_rows_and_invalidates_model(tmp_path):

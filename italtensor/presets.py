@@ -217,6 +217,64 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
             {"name": "Shortcut conflict", "features": [0.8, 0.0, -1.2], "expected_label": None},
         ),
     ),
+    PresetInfo(
+        key="subgroup_blind_spot",
+        name="Subgroup blind spot",
+        description="A minority subgroup follows a different rule, useful for slice diagnostics and interaction models.",
+        default_samples=180,
+        input_dim=3,
+        recommended_feature_map="quadratic",
+        feature_names=("primary_signal", "subgroup_marker", "context_noise"),
+        training_defaults={"epochs": 90, "batch_size": 16, "trials": 16, "feature_map": "quadratic"},
+        prediction_examples=(
+            {"name": "Majority negative", "features": [-0.8, 0.0, 0.0], "expected_label": 0},
+            {"name": "Majority positive", "features": [0.8, 0.0, 0.0], "expected_label": 1},
+            {"name": "Minority flipped rule", "features": [0.8, 1.0, 0.0], "expected_label": 0},
+        ),
+    ),
+    PresetInfo(
+        key="cost_sensitive_screening",
+        name="Cost-sensitive screening",
+        description="Rare positives with overlapping scores for threshold tradeoff and false-negative-cost experiments.",
+        default_samples=180,
+        input_dim=3,
+        recommended_feature_map="linear",
+        feature_names=("risk_score", "secondary_signal", "background_noise"),
+        training_defaults={"epochs": 80, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Likely negative", "features": [-0.6, -0.2, 0.0], "expected_label": 0},
+            {"name": "Borderline review", "features": [0.25, 0.1, 0.0], "expected_label": None},
+            {"name": "Likely positive", "features": [1.0, 0.7, 0.0], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
+        key="label_audit_traps",
+        name="Label audit traps",
+        description="Mostly clean separable classes with a small set of flipped labels for sample-review drills.",
+        default_samples=160,
+        recommended_feature_map="linear",
+        training_defaults={"epochs": 70, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Clean negative", "features": [-1.3, -1.0], "expected_label": 0},
+            {"name": "Clean positive", "features": [1.3, 1.0], "expected_label": 1},
+            {"name": "Suspicious positive-shaped negative", "features": [1.2, 0.9], "expected_label": None},
+        ),
+    ),
+    PresetInfo(
+        key="proxy_leakage_lab",
+        name="Proxy leakage lab",
+        description="A label-correlated proxy feature that makes ablation and reliance diagnostics visible.",
+        default_samples=180,
+        input_dim=4,
+        recommended_feature_map="linear",
+        feature_names=("real_signal", "weak_signal", "proxy_code", "background_noise"),
+        training_defaults={"epochs": 70, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Signal negative", "features": [-0.8, -0.2, -1.3, 0.0], "expected_label": 0},
+            {"name": "Signal positive", "features": [0.8, 0.2, 1.3, 0.0], "expected_label": 1},
+            {"name": "Proxy conflict", "features": [0.8, 0.2, -1.3, 0.0], "expected_label": None},
+        ),
+    ),
 )
 
 
@@ -269,6 +327,14 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _active_learning_margin(total, rng)
     elif preset.key == "spurious_shortcut":
         features, labels = _spurious_shortcut(total, rng)
+    elif preset.key == "subgroup_blind_spot":
+        features, labels = _subgroup_blind_spot(total, rng)
+    elif preset.key == "cost_sensitive_screening":
+        features, labels = _cost_sensitive_screening(total, rng)
+    elif preset.key == "label_audit_traps":
+        features, labels = _label_audit_traps(total, rng)
+    elif preset.key == "proxy_leakage_lab":
+        features, labels = _proxy_leakage_lab(total, rng)
     else:
         raise ValueError(f"Unsupported preset: {preset.key}")
     return validate_dataset(features.tolist(), labels.astype(int).tolist(), min_samples=preset.min_samples, require_two_classes=True)
@@ -501,6 +567,60 @@ def _spurious_shortcut(total: int, rng: np.random.Generator) -> tuple[np.ndarray
     conflict_indices = rng.choice(total, size=conflict_count, replace=False)
     stable_signal[conflict_indices] *= -1.0
     features = np.column_stack([stable_signal, context_noise, shortcut_signal]).astype(np.float32)
+    return _shuffle(features, labels, rng)
+
+
+def _subgroup_blind_spot(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    subgroup = rng.random(total) < 0.22
+    primary_signal = rng.normal(0.0, 1.0, size=total)
+    context_noise = rng.normal(0.0, 1.0, size=total)
+    majority_score = primary_signal + rng.normal(0.0, 0.25, size=total)
+    minority_score = -primary_signal + 0.25 * context_noise + rng.normal(0.0, 0.25, size=total)
+    score = np.where(subgroup, minority_score, majority_score)
+    labels = (score > 0.0).astype(np.int32)
+    subgroup_marker = subgroup.astype(np.float32) + rng.normal(0.0, 0.04, size=total)
+    features = np.column_stack([primary_signal, subgroup_marker, context_noise]).astype(np.float32)
+    return _shuffle(features, labels, rng)
+
+
+def _cost_sensitive_screening(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    positive_count = max(3, round(total * 0.12))
+    negative_count = total - positive_count
+    if negative_count < 2:
+        negative_count = 2
+        positive_count = total - negative_count
+    negatives = rng.normal(loc=(-0.25, -0.15, 0.0), scale=(0.55, 0.45, 1.0), size=(negative_count, 3))
+    positives = rng.normal(loc=(0.65, 0.45, 0.0), scale=(0.45, 0.4, 1.0), size=(positive_count, 3))
+    features = np.vstack([negatives, positives]).astype(np.float32)
+    labels = np.asarray([0] * negative_count + [1] * positive_count, dtype=np.int32)
+    return _shuffle(features, labels, rng)
+
+
+def _label_audit_traps(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    features, labels = _linear_blobs(total, rng)
+    flip_count = max(2, int(round(total * 0.08)))
+    negative_indices = np.where(labels == 0)[0]
+    positive_indices = np.where(labels == 1)[0]
+    chosen_negatives = rng.choice(negative_indices, size=flip_count // 2, replace=False)
+    chosen_positives = rng.choice(positive_indices, size=flip_count - chosen_negatives.shape[0], replace=False)
+    labels = labels.copy()
+    labels[chosen_negatives] = 1
+    labels[chosen_positives] = 0
+    return features.astype(np.float32), labels.astype(np.int32)
+
+
+def _proxy_leakage_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    real_signal = rng.normal(0.0, 1.0, size=total)
+    weak_signal = rng.normal(0.0, 1.0, size=total)
+    latent = 0.9 * real_signal + 0.35 * weak_signal + rng.normal(0.0, 0.35, size=total)
+    labels = (latent > np.median(latent)).astype(np.int32)
+    signed = np.where(labels == 1, 1.0, -1.0)
+    proxy_code = signed * 1.35 + rng.normal(0.0, 0.08, size=total)
+    conflict_count = max(2, total // 12)
+    conflict_indices = rng.choice(total, size=conflict_count, replace=False)
+    proxy_code[conflict_indices] *= -1.0
+    background_noise = rng.normal(0.0, 1.0, size=total)
+    features = np.column_stack([real_signal, weak_signal, proxy_code, background_noise]).astype(np.float32)
     return _shuffle(features, labels, rng)
 
 

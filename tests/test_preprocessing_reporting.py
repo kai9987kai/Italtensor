@@ -64,6 +64,73 @@ def test_report_export_json_and_markdown(tmp_path):
             "conformal_evaluation_count": 8,
             "conformal_singleton_rate": 0.75,
         },
+        ablation_report={
+            "base": {"f1": 0.75},
+            "summary": {
+                "top_feature": "x1",
+                "max_f1_drop": 0.25,
+                "max_label_flip_rate": 0.2,
+                "high_reliance_count": 1,
+                "label_proxy_count": 1,
+            },
+            "features": [
+                {
+                    "feature_index": 0,
+                    "f1_drop": 0.25,
+                    "permutation_f1_drop": 0.2,
+                    "label_flip_rate": 0.2,
+                    "permutation_label_flip_rate": 0.1,
+                    "label_correlation": 0.9,
+                    "risk_flags": ["label_proxy"],
+                }
+            ],
+        },
+        sample_review_report={
+            "summary": {
+                "label_issue_count": 1,
+                "disagreement_count": 2,
+                "ambiguous_count": 1,
+                "mean_loss": 0.3,
+                "max_loss": 1.2,
+            },
+            "label_issues": [
+                {"row_index": 2, "label": 0, "predicted_label": 1, "probability": 0.95, "loss": 2.9}
+            ],
+            "hard_examples": [],
+            "ambiguous_examples": [],
+        },
+        threshold_report={
+            "current_threshold": 0.4,
+            "summary": {
+                "best_f1_threshold": 0.3,
+                "best_balanced_accuracy_threshold": 0.35,
+                "min_cost_threshold": 0.25,
+                "current_cost": 0.5,
+                "min_cost": 0.25,
+            },
+            "best_f1": {"threshold": 0.3, "f1": 0.8, "precision": 0.75, "recall": 0.85, "cost": 0.3},
+            "best_balanced_accuracy": {"threshold": 0.35, "f1": 0.75, "precision": 0.7, "recall": 0.8, "cost": 0.4},
+            "min_cost": {"threshold": 0.25, "f1": 0.7, "precision": 0.65, "recall": 0.9, "cost": 0.25},
+        },
+        slice_report={
+            "base": {"f1": 0.75},
+            "summary": {
+                "slice_count": 1,
+                "worst_slice": "x1[0, 1]",
+                "worst_f1_delta": -0.25,
+                "worst_accuracy_delta": -0.25,
+            },
+            "slices": [
+                {
+                    "feature_index": 0,
+                    "left": 0.0,
+                    "right": 1.0,
+                    "count": 2,
+                    "f1": 0.5,
+                    "f1_delta": -0.25,
+                }
+            ],
+        },
         stress_report={
             "base": {"f1": 0.75},
             "summary": {
@@ -97,6 +164,10 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["uncertainty"]["conformal_source"] == "dedicated_calibration"
     assert saved_json["uncertainty"]["conformal_quantile"] == 0.35
     assert saved_json["uncertainty"]["conformal_calibration_count"] == 8
+    assert saved_json["feature_ablation_diagnostics"]["summary"]["top_feature"] == "x1"
+    assert saved_json["sample_review"]["summary"]["label_issue_count"] == 1
+    assert saved_json["threshold_diagnostics"]["summary"]["best_f1_threshold"] == 0.3
+    assert saved_json["slice_diagnostics"]["summary"]["worst_slice"] == "x1[0, 1]"
     assert saved_json["stress_lab"]["summary"]["worst_f1"] == 0.5
     assert saved_json["trial_history"][0]["config"]["feature_map"] == "rff"
     assert "Feature 0" in saved_markdown
@@ -104,6 +175,14 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "Trial 1" in saved_markdown
     assert "## Uncertainty" in saved_markdown
     assert "conformal_source" in saved_markdown
+    assert "## Ablation Diagnostics" in saved_markdown
+    assert "Label-proxy flags" in saved_markdown
+    assert "## Sample Review" in saved_markdown
+    assert "label_issue row 2" in saved_markdown
+    assert "## Threshold Tradeoffs" in saved_markdown
+    assert "Best F1 threshold" in saved_markdown
+    assert "## Slice Diagnostics" in saved_markdown
+    assert "x1[0.0000, 1.0000]" in saved_markdown
     assert "## Robustness Stress Lab" in saved_markdown
     assert "feature_dropout" in saved_markdown
 

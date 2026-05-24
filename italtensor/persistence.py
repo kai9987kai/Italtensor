@@ -36,6 +36,11 @@ def save_model_bundle(
     feature_importances: list[dict[str, float | int]] | None = None,
     trial_history: list[dict[str, Any]] | None = None,
     uncertainty_metadata: dict[str, Any] | None = None,
+    ablation_report: dict[str, Any] | None = None,
+    sample_review_report: dict[str, Any] | None = None,
+    threshold_report: dict[str, Any] | None = None,
+    slice_report: dict[str, Any] | None = None,
+    stress_report: dict[str, Any] | None = None,
 ) -> tuple[Path, Path]:
     model_path = Path(path)
     is_ensemble = isinstance(model, EnsemblePredictor)
@@ -86,6 +91,11 @@ def save_model_bundle(
         "best_config": config.to_dict(),
         "validation_metrics": metrics or {},
         "uncertainty": uncertainty_metadata or {},
+        "feature_ablation_diagnostics": ablation_report or None,
+        "sample_review": sample_review_report or None,
+        "threshold_diagnostics": threshold_report or None,
+        "slice_diagnostics": slice_report or None,
+        "stress_lab": stress_report or None,
         "threshold": float(threshold),
         "preprocessing": resolved_preprocessor.to_dict(),
         "feature_importances": feature_importances or [],

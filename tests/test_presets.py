@@ -87,6 +87,10 @@ def test_experimental_builtin_presets_are_available():
         "Deployment drift probe",
         "Active learning margin",
         "Spurious shortcut",
+        "Subgroup blind spot",
+        "Cost-sensitive screening",
+        "Label audit traps",
+        "Proxy leakage lab",
     }.issubset(names)
 
 
@@ -136,6 +140,40 @@ def test_spurious_shortcut_preset_has_conflict_example():
     assert metadata["input_dim"] == 3
     assert metadata["feature_names"] == ["stable_signal", "context_noise", "shortcut_signal"]
     assert any(example["name"] == "Shortcut conflict" for example in metadata["prediction_examples"])
+
+
+def test_subgroup_blind_spot_preset_recommends_interactions():
+    metadata = preset_metadata("Subgroup blind spot")
+
+    assert metadata["input_dim"] == 3
+    assert metadata["recommended_feature_map"] == "quadratic"
+    assert metadata["feature_names"] == ["primary_signal", "subgroup_marker", "context_noise"]
+    assert any(example["name"] == "Minority flipped rule" for example in metadata["prediction_examples"])
+
+
+def test_cost_sensitive_screening_preset_has_borderline_example():
+    metadata = preset_metadata("Cost-sensitive screening")
+
+    assert metadata["input_dim"] == 3
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == ["risk_score", "secondary_signal", "background_noise"]
+    assert any(example["name"] == "Borderline review" for example in metadata["prediction_examples"])
+
+
+def test_label_audit_traps_preset_has_suspicious_example():
+    metadata = preset_metadata("Label audit traps")
+
+    assert metadata["recommended_feature_map"] == "linear"
+    assert any(example["name"] == "Suspicious positive-shaped negative" for example in metadata["prediction_examples"])
+
+
+def test_proxy_leakage_lab_preset_supports_ablation_diagnostics():
+    metadata = preset_metadata("Proxy leakage lab")
+
+    assert metadata["input_dim"] == 4
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == ["real_signal", "weak_signal", "proxy_code", "background_noise"]
+    assert any(example["name"] == "Proxy conflict" for example in metadata["prediction_examples"])
 
 
 def test_save_as_preset_uses_existing_dataset_json_shape(tmp_path):

@@ -107,7 +107,17 @@ def format_slice_summary(report: dict[str, Any]) -> str:
 
 def _compact_metrics(labels: np.ndarray, probabilities: np.ndarray, threshold: float) -> dict[str, float | int]:
     metrics = evaluate_predictions(labels, probabilities, threshold)
-    keys = ("f1", "accuracy", "balanced_accuracy", "precision", "recall")
+    keys = (
+        "f1",
+        "accuracy",
+        "balanced_accuracy",
+        "precision",
+        "recall",
+        "true_positive",
+        "true_negative",
+        "false_positive",
+        "false_negative",
+    )
     return {key: metrics[key] for key in keys}
 
 

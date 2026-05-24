@@ -25,6 +25,10 @@ def build_experiment_report(
     feature_importances: list[dict[str, float | int]],
     trial_history: list[dict[str, Any]] | None = None,
     uncertainty_metadata: dict[str, Any] | None = None,
+    ablation_report: dict[str, Any] | None = None,
+    sample_review_report: dict[str, Any] | None = None,
+    threshold_report: dict[str, Any] | None = None,
+    slice_report: dict[str, Any] | None = None,
     stress_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     label_array = np.asarray(labels, dtype=np.int32)
@@ -53,6 +57,10 @@ def build_experiment_report(
         "preprocessing": preprocessor.to_dict() if preprocessor is not None else None,
         "metrics": metrics,
         "uncertainty": uncertainty_metadata or None,
+        "feature_ablation_diagnostics": ablation_report or None,
+        "sample_review": sample_review_report or None,
+        "threshold_diagnostics": threshold_report or None,
+        "slice_diagnostics": slice_report or None,
         "stress_lab": stress_report or None,
         "feature_importances": feature_importances,
         "trial_history": trial_history or [],
@@ -75,6 +83,10 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     importances = report.get("feature_importances", [])
     trial_history = report.get("trial_history", [])
     uncertainty = report.get("uncertainty") or {}
+    ablation_diagnostics = report.get("feature_ablation_diagnostics") or {}
+    sample_review = report.get("sample_review") or {}
+    threshold_diagnostics = report.get("threshold_diagnostics") or {}
+    slice_diagnostics = report.get("slice_diagnostics") or {}
     stress_lab = report.get("stress_lab") or {}
     audit = dataset.get("audit") or {}
 
@@ -163,6 +175,106 @@ def format_markdown_report(report: dict[str, Any]) -> str:
             lines.append(
                 f"- Feature {item.get('feature_index')}: "
                 f"importance={_format_value(item.get('importance', 0.0))}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Ablation Diagnostics"])
+    if ablation_diagnostics:
+        summary = ablation_diagnostics.get("summary", {})
+        base = ablation_diagnostics.get("base", {})
+        lines.extend(
+            [
+                f"- Base F1: {_format_value(base.get('f1', '-'))}",
+                f"- Top feature: {summary.get('top_feature', '-')}",
+                f"- Max F1 drop: {_format_value(summary.get('max_f1_drop', '-'))}",
+                f"- Max label flip rate: {_format_value(summary.get('max_label_flip_rate', '-'))}",
+                f"- High-reliance features: {summary.get('high_reliance_count', '-')}",
+                f"- Label-proxy flags: {summary.get('label_proxy_count', '-')}",
+            ]
+        )
+        for item in ablation_diagnostics.get("features", [])[:8]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            lines.append(
+                f"- Feature {item.get('feature_index')}: "
+                f"drop={_format_value(item.get('f1_drop', '-'))}, "
+                f"perm_drop={_format_value(item.get('permutation_f1_drop', '-'))}, "
+                f"flip={_format_value(max(float(item.get('label_flip_rate', 0.0)), float(item.get('permutation_label_flip_rate', 0.0))))}, "
+                f"corr={_format_value(item.get('label_correlation', '-'))}, "
+                f"flags={flags}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Sample Review"])
+    if sample_review:
+        summary = sample_review.get("summary", {})
+        lines.extend(
+            [
+                f"- Label issues: {summary.get('label_issue_count', '-')}",
+                f"- Disagreements: {summary.get('disagreement_count', '-')}",
+                f"- Ambiguous rows: {summary.get('ambiguous_count', '-')}",
+                f"- Mean loss: {_format_value(summary.get('mean_loss', '-'))}",
+                f"- Max loss: {_format_value(summary.get('max_loss', '-'))}",
+            ]
+        )
+        for label, key in (("label_issue", "label_issues"), ("hard", "hard_examples"), ("ambiguous", "ambiguous_examples")):
+            for item in sample_review.get(key, [])[:5]:
+                lines.append(
+                    f"- {label} row {item.get('row_index')}: "
+                    f"label={item.get('label')}, pred={item.get('predicted_label')}, "
+                    f"p={_format_value(item.get('probability', '-'))}, "
+                    f"loss={_format_value(item.get('loss', '-'))}"
+                )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Threshold Tradeoffs"])
+    if threshold_diagnostics:
+        summary = threshold_diagnostics.get("summary", {})
+        lines.extend(
+            [
+                f"- Current threshold: {_format_value(threshold_diagnostics.get('current_threshold', '-'))}",
+                f"- Best F1 threshold: {_format_value(summary.get('best_f1_threshold', '-'))}",
+                f"- Best balanced-accuracy threshold: {_format_value(summary.get('best_balanced_accuracy_threshold', '-'))}",
+                f"- Minimum-cost threshold: {_format_value(summary.get('min_cost_threshold', '-'))}",
+                f"- Current cost: {_format_value(summary.get('current_cost', '-'))}",
+                f"- Minimum cost: {_format_value(summary.get('min_cost', '-'))}",
+            ]
+        )
+        for label in ("best_f1", "best_balanced_accuracy", "min_cost", "high_recall", "high_precision"):
+            item = threshold_diagnostics.get(label)
+            if isinstance(item, dict):
+                lines.append(
+                    f"- {label}: t={_format_value(item.get('threshold', '-'))}, "
+                    f"F1={_format_value(item.get('f1', '-'))}, "
+                    f"precision={_format_value(item.get('precision', '-'))}, "
+                    f"recall={_format_value(item.get('recall', '-'))}, "
+                    f"cost={_format_value(item.get('cost', '-'))}"
+                )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Slice Diagnostics"])
+    if slice_diagnostics:
+        summary = slice_diagnostics.get("summary", {})
+        base = slice_diagnostics.get("base", {})
+        lines.extend(
+            [
+                f"- Base F1: {_format_value(base.get('f1', '-'))}",
+                f"- Slice count: {summary.get('slice_count', '-')}",
+                f"- Worst slice: {summary.get('worst_slice', '-')}",
+                f"- Worst F1 delta: {_format_value(summary.get('worst_f1_delta', '-'))}",
+                f"- Worst accuracy delta: {_format_value(summary.get('worst_accuracy_delta', '-'))}",
+            ]
+        )
+        for item in slice_diagnostics.get("slices", [])[:8]:
+            lines.append(
+                f"- x{int(item.get('feature_index', 0)) + 1}"
+                f"[{_format_value(item.get('left', '-'))}, {_format_value(item.get('right', '-'))}]: "
+                f"n={item.get('count', '-')}, "
+                f"F1={_format_value(item.get('f1', '-'))}, "
+                f"delta={_format_value(item.get('f1_delta', '-'))}"
             )
     else:
         lines.append("- None")
