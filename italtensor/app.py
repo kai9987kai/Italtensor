@@ -12,6 +12,7 @@ from .data import (
     validate_dataset,
 )
 from .counterfactual import find_counterfactual, format_counterfactual_result
+from .decision_curve import format_decision_curve_summary, run_decision_curve_diagnostics
 from .experiments import (
     ExperimentResult,
     conformal_label_set,
@@ -38,6 +39,7 @@ from .reporting import build_experiment_report, export_experiment_report
 from .registry import ModelSlot
 from .sample_review import format_sample_review_summary, run_sample_review
 from .scoring import load_reviewed_prediction_csv, score_prediction_csv
+from .selective_risk import format_selective_risk_summary, run_selective_risk_diagnostics
 from .audit import audit_dataset, format_audit_summary
 from .learning_curves import learning_curve_points
 from .slices import format_slice_summary, run_slice_diagnostics
@@ -63,6 +65,8 @@ class AppState:
     trial_history: list[dict[str, Any]] = field(default_factory=list)
     uncertainty_metadata: dict[str, Any] = field(default_factory=dict)
     latest_ablation_report: dict[str, Any] | None = None
+    latest_decision_curve_report: dict[str, Any] | None = None
+    latest_selective_risk_report: dict[str, Any] | None = None
     latest_sample_review_report: dict[str, Any] | None = None
     latest_threshold_report: dict[str, Any] | None = None
     latest_slice_report: dict[str, Any] | None = None
@@ -133,6 +137,10 @@ def run_app() -> None:
                 _start_learning_curve(window, state, values)
             elif event == "-ABLATION_DIAGNOSTICS-":
                 _start_ablation_diagnostics(window, state)
+            elif event == "-DECISION_CURVE-":
+                _start_decision_curve(window, state)
+            elif event == "-SELECTIVE_RISK-":
+                _start_selective_risk(window, state)
             elif event == "-STRESS_TEST-":
                 _start_stress_test(window, state)
             elif event == "-SLICE_DIAGNOSTICS-":
@@ -424,6 +432,10 @@ def _layout(sg):
             sg.Button("Threshold tradeoff", key="-THRESHOLD_DIAGNOSTICS-", expand_x=True),
         ],
         [
+            sg.Button("Decision curve", key="-DECISION_CURVE-", expand_x=True),
+            sg.Button("Selective risk", key="-SELECTIVE_RISK-", expand_x=True),
+        ],
+        [
             sg.Button("Sample review", key="-SAMPLE_REVIEW-", expand_x=True),
             sg.Button("Dataset cartography", key="-CARTOGRAPHY-", expand_x=True),
         ],
@@ -566,6 +578,44 @@ def _start_ablation_diagnostics(window, state: AppState) -> None:
         return "ablation_diagnostics", report
 
     _start_worker(window, state, "Running feature ablation diagnostics...", task)
+
+
+def _start_decision_curve(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    if state.model is None:
+        raise ValueError("Train or load a model before running decision curve diagnostics.")
+    dataset = validate_dataset(state.features, state.labels, min_samples=1, require_two_classes=False)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_decision_curve_diagnostics(
+            state.model,
+            dataset.features,
+            dataset.labels,
+            preprocessor=state.preprocessor,
+            current_threshold=state.latest_threshold,
+        )
+        return "decision_curve", report
+
+    _start_worker(window, state, "Running decision curve diagnostics...", task)
+
+
+def _start_selective_risk(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    if state.model is None:
+        raise ValueError("Train or load a model before running selective risk diagnostics.")
+    dataset = validate_dataset(state.features, state.labels, min_samples=1, require_two_classes=False)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_selective_risk_diagnostics(
+            state.model,
+            dataset.features,
+            dataset.labels,
+            preprocessor=state.preprocessor,
+            threshold=state.latest_threshold,
+        )
+        return "selective_risk", report
+
+    _start_worker(window, state, "Running selective risk diagnostics...", task)
 
 
 def _start_stress_test(window, state: AppState) -> None:
@@ -742,6 +792,8 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         trial_history=state.trial_history,
         uncertainty_metadata=state.uncertainty_metadata,
         ablation_report=state.latest_ablation_report,
+        decision_curve_report=state.latest_decision_curve_report,
+        selective_risk_report=state.latest_selective_risk_report,
         sample_review_report=state.latest_sample_review_report,
         threshold_report=state.latest_threshold_report,
         slice_report=state.latest_slice_report,
@@ -783,11 +835,15 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     uncertainty = metadata.get("uncertainty")
     state.uncertainty_metadata = uncertainty if isinstance(uncertainty, dict) else {}
     ablation_report = metadata.get("feature_ablation_diagnostics")
+    decision_curve_report = metadata.get("decision_curve_diagnostics")
+    selective_risk_report = metadata.get("selective_prediction_diagnostics")
     sample_review_report = metadata.get("sample_review")
     threshold_report = metadata.get("threshold_diagnostics")
     slice_report = metadata.get("slice_diagnostics")
     stress_report = metadata.get("stress_lab")
     state.latest_ablation_report = ablation_report if isinstance(ablation_report, dict) else None
+    state.latest_decision_curve_report = decision_curve_report if isinstance(decision_curve_report, dict) else None
+    state.latest_selective_risk_report = selective_risk_report if isinstance(selective_risk_report, dict) else None
     state.latest_sample_review_report = sample_review_report if isinstance(sample_review_report, dict) else None
     state.latest_threshold_report = threshold_report if isinstance(threshold_report, dict) else None
     state.latest_slice_report = slice_report if isinstance(slice_report, dict) else None
@@ -811,6 +867,8 @@ def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
         trial_history=state.trial_history,
         uncertainty_metadata=state.uncertainty_metadata,
         ablation_report=state.latest_ablation_report,
+        decision_curve_report=state.latest_decision_curve_report,
+        selective_risk_report=state.latest_selective_risk_report,
         sample_review_report=state.latest_sample_review_report,
         threshold_report=state.latest_threshold_report,
         slice_report=state.latest_slice_report,
@@ -899,6 +957,8 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.trial_history = [_summarize_trial(training_result)]
         state.uncertainty_metadata = training_result.uncertainty
         state.latest_ablation_report = None
+        state.latest_decision_curve_report = None
+        state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
         state.latest_threshold_report = None
         state.latest_slice_report = None
@@ -919,6 +979,8 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.trial_history = [_summarize_trial(item) for item in result]
         state.uncertainty_metadata = best.uncertainty
         state.latest_ablation_report = None
+        state.latest_decision_curve_report = None
+        state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
         state.latest_threshold_report = None
         state.latest_slice_report = None
@@ -952,6 +1014,30 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                 f"flip={max(float(item['label_flip_rate']), float(item['permutation_label_flip_rate'])):.4f}, "
                 f"corr={float(item['label_correlation']):.4f}, "
                 f"flags={flags}",
+            )
+    elif kind == "decision_curve":
+        state.latest_decision_curve_report = result
+        _log(window, format_decision_curve_summary(result))
+        for item in result.get("points", [])[:6]:
+            _log(
+                window,
+                f"  t={float(item['threshold']):.4f}: "
+                f"model_nb={float(item['net_benefit_model']):.4f}, "
+                f"all_nb={float(item['net_benefit_treat_all']):.4f}, "
+                f"gain={float(item['delta_vs_best_default']):.4f}, "
+                f"default={item['best_default_strategy']}",
+            )
+    elif kind == "selective_risk":
+        state.latest_selective_risk_report = result
+        _log(window, format_selective_risk_summary(result))
+        for item in result.get("ranked_cutoffs", [])[:6]:
+            _log(
+                window,
+                f"  cutoff={float(item['confidence_cutoff']):.4f}: "
+                f"coverage={float(item['coverage']):.4f}, "
+                f"risk={float(item['error_rate']):.4f}, "
+                f"acc={float(item['accuracy']):.4f}, "
+                f"F1={float(item['f1']):.4f}",
             )
     elif kind == "stress_test":
         state.latest_stress_report = result
@@ -1043,6 +1129,8 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.trial_history = [_summarize_trial(item) for item in result]
         state.uncertainty_metadata = best.uncertainty
         state.latest_ablation_report = None
+        state.latest_decision_curve_report = None
+        state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
         state.latest_threshold_report = None
         state.latest_slice_report = None
@@ -1072,6 +1160,8 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.trial_history = [_summarize_trial(training_result)]
         state.uncertainty_metadata = training_result.uncertainty
         state.latest_ablation_report = None
+        state.latest_decision_curve_report = None
+        state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
         state.latest_threshold_report = None
         state.latest_slice_report = None
@@ -1159,6 +1249,8 @@ def _invalidate_model_artifacts(state: AppState) -> None:
     state.trial_history = []
     state.uncertainty_metadata = {}
     state.latest_ablation_report = None
+    state.latest_decision_curve_report = None
+    state.latest_selective_risk_report = None
     state.latest_sample_review_report = None
     state.latest_threshold_report = None
     state.latest_slice_report = None
@@ -1211,6 +1303,8 @@ def _set_busy(window, busy: bool) -> None:
         "-STRESS_TEST-",
         "-SLICE_DIAGNOSTICS-",
         "-THRESHOLD_DIAGNOSTICS-",
+        "-DECISION_CURVE-",
+        "-SELECTIVE_RISK-",
         "-SAMPLE_REVIEW-",
         "-CARTOGRAPHY-",
         "-RELIABILITY-",
@@ -1503,6 +1597,8 @@ def _activate_model_slot(window, state: AppState, values: dict[str, Any]) -> Non
     state.preprocessor = slot.preprocessor
     state.latest_threshold = slot.threshold
     state.latest_ablation_report = None
+    state.latest_decision_curve_report = None
+    state.latest_selective_risk_report = None
     state.latest_sample_review_report = None
     state.latest_threshold_report = None
     state.latest_slice_report = None
@@ -1591,6 +1687,8 @@ def _load_registry(window, state: AppState, values: dict[str, Any]) -> None:
         state.preprocessor = active.preprocessor
         state.latest_threshold = active.threshold
         state.latest_ablation_report = None
+        state.latest_decision_curve_report = None
+        state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
         state.latest_threshold_report = None
         state.latest_slice_report = None
@@ -1614,6 +1712,8 @@ def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
     state.model = ensemble
     state.preprocessor = None
     state.latest_ablation_report = None
+    state.latest_decision_curve_report = None
+    state.latest_selective_risk_report = None
     state.latest_sample_review_report = None
     state.latest_threshold_report = None
     state.latest_slice_report = None
@@ -1675,6 +1775,8 @@ def _build_stacked_ensemble(window, state: AppState, values: dict[str, Any]) -> 
     state.preprocessor = None
     state.latest_config = ModelConfig(backend="auto", feature_map=values.get("-FEATURE_MAP-", "linear"))
     state.latest_ablation_report = None
+    state.latest_decision_curve_report = None
+    state.latest_selective_risk_report = None
     state.latest_sample_review_report = None
     state.latest_threshold_report = None
     state.latest_slice_report = None
@@ -1909,6 +2011,8 @@ def _merge_slots(window, state: AppState, values: dict[str, Any]) -> None:
         state.model = merged_model
         state.preprocessor = merged_prep
         state.latest_ablation_report = None
+        state.latest_decision_curve_report = None
+        state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
         state.latest_threshold_report = None
         state.latest_slice_report = None

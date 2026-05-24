@@ -66,6 +66,8 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         trial_history=[{"metrics": {"f1": 1.0}}],
         uncertainty_metadata={"conformal_quantile": 0.3},
         latest_ablation_report={"summary": {"top_feature": "x1"}},
+        latest_decision_curve_report={"summary": {"best_threshold": 0.4}},
+        latest_selective_risk_report={"summary": {"recommended_cutoff": 0.2}},
         latest_sample_review_report={"summary": {"label_issue_count": 1}},
         latest_threshold_report={"summary": {"best_f1": 1.0}},
         latest_slice_report={"summary": {"worst_f1_delta": -0.5}},
@@ -86,6 +88,8 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
     assert state.trial_history == []
     assert state.uncertainty_metadata == {}
     assert state.latest_ablation_report is None
+    assert state.latest_decision_curve_report is None
+    assert state.latest_selective_risk_report is None
     assert state.latest_sample_review_report is None
     assert state.latest_threshold_report is None
     assert state.latest_slice_report is None
@@ -192,6 +196,69 @@ def test_handle_worker_done_stores_ablation_report_without_mutating_model():
     assert state.latest_ablation_report == report
     assert state.busy is False
     assert "Ablation diagnostics" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_decision_curve_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
+    model = state.model
+    report = {
+        "summary": {
+            "best_threshold": 0.4,
+            "best_net_benefit": 0.25,
+            "max_delta_vs_best_default": 0.1,
+            "useful_threshold_ranges": [[0.2, 0.6]],
+        },
+        "points": [
+            {
+                "threshold": 0.4,
+                "net_benefit_model": 0.25,
+                "net_benefit_treat_all": 0.1,
+                "delta_vs_best_default": 0.15,
+                "best_default_strategy": "treat_all",
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("decision_curve", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_decision_curve_report == report
+    assert state.busy is False
+    assert "Decision curve" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_selective_risk_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
+    model = state.model
+    report = {
+        "summary": {
+            "full_coverage_risk": 0.2,
+            "min_selective_risk": 0.0,
+            "best_selective_accuracy": 1.0,
+            "best_selective_coverage": 0.5,
+            "area_under_risk_coverage": 0.1,
+        },
+        "ranked_cutoffs": [
+            {
+                "confidence_cutoff": 0.2,
+                "coverage": 0.5,
+                "error_rate": 0.0,
+                "accuracy": 1.0,
+                "f1": 1.0,
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("selective_risk", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_selective_risk_report == report
+    assert state.busy is False
+    assert "Selective risk" in window["-LOG-"].value
 
 
 def test_handle_worker_done_stores_slice_report_without_mutating_model():

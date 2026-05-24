@@ -124,6 +124,8 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
         trial_history=[{"metrics": {"f1": 0.8}}],
         uncertainty_metadata={"conformal_quantile": 0.33, "conformal_coverage": 0.9},
         ablation_report={"summary": {"top_feature": "x1"}},
+        decision_curve_report={"summary": {"best_threshold": 0.4}},
+        selective_risk_report={"summary": {"recommended_cutoff": 0.2}},
         sample_review_report={"summary": {"label_issue_count": 1}},
         threshold_report={"summary": {"best_f1_threshold": 0.3}},
         slice_report={"summary": {"worst_slice": "x1[0, 1]"}},
@@ -143,6 +145,8 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
     assert metadata["trial_history"][0]["metrics"]["f1"] == 0.8
     assert metadata["uncertainty"]["conformal_quantile"] == 0.33
     assert metadata["feature_ablation_diagnostics"]["summary"]["top_feature"] == "x1"
+    assert metadata["decision_curve_diagnostics"]["summary"]["best_threshold"] == 0.4
+    assert metadata["selective_prediction_diagnostics"]["summary"]["recommended_cutoff"] == 0.2
     assert metadata["sample_review"]["summary"]["label_issue_count"] == 1
     assert metadata["threshold_diagnostics"]["summary"]["best_f1_threshold"] == 0.3
     assert metadata["slice_diagnostics"]["summary"]["worst_slice"] == "x1[0, 1]"

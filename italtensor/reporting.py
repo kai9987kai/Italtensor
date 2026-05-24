@@ -26,6 +26,8 @@ def build_experiment_report(
     trial_history: list[dict[str, Any]] | None = None,
     uncertainty_metadata: dict[str, Any] | None = None,
     ablation_report: dict[str, Any] | None = None,
+    decision_curve_report: dict[str, Any] | None = None,
+    selective_risk_report: dict[str, Any] | None = None,
     sample_review_report: dict[str, Any] | None = None,
     threshold_report: dict[str, Any] | None = None,
     slice_report: dict[str, Any] | None = None,
@@ -58,6 +60,8 @@ def build_experiment_report(
         "metrics": metrics,
         "uncertainty": uncertainty_metadata or None,
         "feature_ablation_diagnostics": ablation_report or None,
+        "decision_curve_diagnostics": decision_curve_report or None,
+        "selective_prediction_diagnostics": selective_risk_report or None,
         "sample_review": sample_review_report or None,
         "threshold_diagnostics": threshold_report or None,
         "slice_diagnostics": slice_report or None,
@@ -84,6 +88,8 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     trial_history = report.get("trial_history", [])
     uncertainty = report.get("uncertainty") or {}
     ablation_diagnostics = report.get("feature_ablation_diagnostics") or {}
+    decision_curve = report.get("decision_curve_diagnostics") or {}
+    selective_risk = report.get("selective_prediction_diagnostics") or {}
     sample_review = report.get("sample_review") or {}
     threshold_diagnostics = report.get("threshold_diagnostics") or {}
     slice_diagnostics = report.get("slice_diagnostics") or {}
@@ -252,6 +258,64 @@ def format_markdown_report(report: dict[str, Any]) -> str:
                     f"recall={_format_value(item.get('recall', '-'))}, "
                     f"cost={_format_value(item.get('cost', '-'))}"
                 )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Decision Curve / Utility"])
+    if decision_curve:
+        summary = decision_curve.get("summary", {})
+        current = decision_curve.get("current", {})
+        ranges = summary.get("useful_threshold_ranges") or []
+        range_text = ", ".join(f"{float(left):.4f}-{float(right):.4f}" for left, right in ranges) if ranges else "none"
+        lines.extend(
+            [
+                f"- Prevalence: {_format_value(decision_curve.get('prevalence', '-'))}",
+                f"- Best threshold: {_format_value(summary.get('best_threshold', '-'))}",
+                f"- Best net benefit: {_format_value(summary.get('best_net_benefit', '-'))}",
+                f"- Max gain vs best default: {_format_value(summary.get('max_delta_vs_best_default', '-'))}",
+                f"- Useful threshold ranges: {range_text}",
+                f"- Current threshold: {_format_value(current.get('threshold', '-'))}",
+                f"- Current net benefit: {_format_value(current.get('net_benefit_model', '-'))}",
+                f"- Current gain vs best default: {_format_value(current.get('delta_vs_best_default', '-'))}",
+                f"- Warning: {summary.get('warning') or 'none'}",
+            ]
+        )
+        for item in decision_curve.get("points", [])[:8]:
+            lines.append(
+                f"- t={_format_value(item.get('threshold', '-'))}: "
+                f"model={_format_value(item.get('net_benefit_model', '-'))}, "
+                f"all={_format_value(item.get('net_benefit_treat_all', '-'))}, "
+                f"none={_format_value(item.get('net_benefit_treat_none', '-'))}, "
+                f"gain={_format_value(item.get('delta_vs_best_default', '-'))}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Selective Prediction / Risk-Coverage"])
+    if selective_risk:
+        summary = selective_risk.get("summary", {})
+        base = selective_risk.get("base", {})
+        lines.extend(
+            [
+                f"- Base risk: {_format_value(base.get('error_rate', '-'))}",
+                f"- Minimum selective risk: {_format_value(summary.get('min_selective_risk', '-'))}",
+                f"- Recommended cutoff: {_format_value(summary.get('recommended_cutoff', '-'))}",
+                f"- Best selective accuracy: {_format_value(summary.get('best_selective_accuracy', '-'))}",
+                f"- Best selective coverage: {_format_value(summary.get('best_selective_coverage', '-'))}",
+                f"- Error reduction: {_format_value(summary.get('max_error_reduction', '-'))}",
+                f"- Coverage at 10 pct risk: {_format_value(summary.get('coverage_at_10pct_risk', '-'))}",
+                f"- AURC: {_format_value(summary.get('area_under_risk_coverage', '-'))}",
+                f"- Warning: {summary.get('warning') or 'none'}",
+            ]
+        )
+        for item in selective_risk.get("ranked_cutoffs", [])[:8]:
+            lines.append(
+                f"- cutoff={_format_value(item.get('confidence_cutoff', '-'))}: "
+                f"coverage={_format_value(item.get('coverage', '-'))}, "
+                f"risk={_format_value(item.get('error_rate', '-'))}, "
+                f"accuracy={_format_value(item.get('accuracy', '-'))}, "
+                f"F1={_format_value(item.get('f1', '-'))}"
+            )
     else:
         lines.append("- None")
 

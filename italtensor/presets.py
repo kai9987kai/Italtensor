@@ -248,6 +248,36 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="decision_utility_tradeoff",
+        name="Decision utility tradeoff",
+        description="Rare positives with a broad gray zone for decision-curve net-benefit experiments.",
+        default_samples=220,
+        input_dim=4,
+        recommended_feature_map="linear",
+        feature_names=("risk_score", "triage_signal", "noise_marker", "gray_zone"),
+        training_defaults={"epochs": 80, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Avoid action", "features": [-0.8, -0.4, 0.0, -0.5], "expected_label": 0},
+            {"name": "Decision gray zone", "features": [0.25, 0.15, 0.0, 0.25], "expected_label": None},
+            {"name": "Act despite cost", "features": [1.1, 0.8, 0.0, 0.6], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
+        key="selective_abstention_triage",
+        name="Selective abstention triage",
+        description="Easy extremes plus ambiguous boundary rows for risk-coverage and abstention experiments.",
+        default_samples=200,
+        input_dim=3,
+        recommended_feature_map="linear",
+        feature_names=("triage_score", "support_signal", "ambiguity_marker"),
+        training_defaults={"epochs": 70, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Confident negative", "features": [-1.1, -0.6, -0.8], "expected_label": 0},
+            {"name": "Abstention candidate", "features": [0.02, 0.0, 1.0], "expected_label": None},
+            {"name": "Confident positive", "features": [1.1, 0.6, -0.8], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
         key="label_audit_traps",
         name="Label audit traps",
         description="Mostly clean separable classes with a small set of flipped labels for sample-review drills.",
@@ -331,6 +361,10 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _subgroup_blind_spot(total, rng)
     elif preset.key == "cost_sensitive_screening":
         features, labels = _cost_sensitive_screening(total, rng)
+    elif preset.key == "decision_utility_tradeoff":
+        features, labels = _decision_utility_tradeoff(total, rng)
+    elif preset.key == "selective_abstention_triage":
+        features, labels = _selective_abstention_triage(total, rng)
     elif preset.key == "label_audit_traps":
         features, labels = _label_audit_traps(total, rng)
     elif preset.key == "proxy_leakage_lab":
@@ -593,6 +627,47 @@ def _cost_sensitive_screening(total: int, rng: np.random.Generator) -> tuple[np.
     positives = rng.normal(loc=(0.65, 0.45, 0.0), scale=(0.45, 0.4, 1.0), size=(positive_count, 3))
     features = np.vstack([negatives, positives]).astype(np.float32)
     labels = np.asarray([0] * negative_count + [1] * positive_count, dtype=np.int32)
+    return _shuffle(features, labels, rng)
+
+
+def _decision_utility_tradeoff(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    positive_count = max(4, round(total * 0.18))
+    negative_count = total - positive_count
+    if negative_count < 2:
+        negative_count = 2
+        positive_count = total - negative_count
+    negatives = rng.normal(loc=(-0.25, -0.15, 0.0, -0.15), scale=(0.5, 0.45, 1.0, 0.55), size=(negative_count, 4))
+    positives = rng.normal(loc=(0.65, 0.45, 0.0, 0.35), scale=(0.45, 0.4, 1.0, 0.5), size=(positive_count, 4))
+    hard_negative_count = max(2, negative_count // 8)
+    hard_positive_count = max(2, positive_count // 4)
+    negatives[:hard_negative_count, :2] = rng.normal(loc=(0.35, 0.25), scale=(0.25, 0.25), size=(hard_negative_count, 2))
+    positives[:hard_positive_count, :2] = rng.normal(loc=(0.15, 0.1), scale=(0.25, 0.25), size=(hard_positive_count, 2))
+    features = np.vstack([negatives, positives]).astype(np.float32)
+    labels = np.asarray([0] * negative_count + [1] * positive_count, dtype=np.int32)
+    return _shuffle(features, labels, rng)
+
+
+def _selective_abstention_triage(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    labels = _balanced_labels(total)
+    negative_count = int(np.sum(labels == 0))
+    positive_count = int(np.sum(labels == 1))
+    ambiguous_count = max(6, total // 4)
+    ambiguous_negative = ambiguous_count // 2
+    ambiguous_positive = ambiguous_count - ambiguous_negative
+    core_negative = max(2, negative_count - ambiguous_negative)
+    core_positive = max(2, positive_count - ambiguous_positive)
+    negative_boundary = negative_count - core_negative
+    positive_boundary = positive_count - core_positive
+
+    negatives = rng.normal(loc=(-1.1, -0.6, -0.8), scale=(0.28, 0.25, 0.25), size=(core_negative, 3))
+    positives = rng.normal(loc=(1.1, 0.6, -0.8), scale=(0.28, 0.25, 0.25), size=(core_positive, 3))
+    boundary_negatives = rng.normal(loc=(-0.08, -0.03, 1.0), scale=(0.18, 0.25, 0.25), size=(negative_boundary, 3))
+    boundary_positives = rng.normal(loc=(0.08, 0.03, 1.0), scale=(0.18, 0.25, 0.25), size=(positive_boundary, 3))
+    features = np.vstack([negatives, boundary_negatives, positives, boundary_positives]).astype(np.float32)
+    labels = np.asarray(
+        [0] * (core_negative + negative_boundary) + [1] * (core_positive + positive_boundary),
+        dtype=np.int32,
+    )
     return _shuffle(features, labels, rng)
 
 

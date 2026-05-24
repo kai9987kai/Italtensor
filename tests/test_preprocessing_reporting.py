@@ -112,6 +112,48 @@ def test_report_export_json_and_markdown(tmp_path):
             "best_balanced_accuracy": {"threshold": 0.35, "f1": 0.75, "precision": 0.7, "recall": 0.8, "cost": 0.4},
             "min_cost": {"threshold": 0.25, "f1": 0.7, "precision": 0.65, "recall": 0.9, "cost": 0.25},
         },
+        decision_curve_report={
+            "prevalence": 0.5,
+            "summary": {
+                "best_threshold": 0.4,
+                "best_net_benefit": 0.25,
+                "max_delta_vs_best_default": 0.2,
+                "useful_threshold_ranges": [[0.2, 0.6]],
+                "warning": None,
+            },
+            "current": {"threshold": 0.4, "net_benefit_model": 0.25, "delta_vs_best_default": 0.2},
+            "points": [
+                {
+                    "threshold": 0.4,
+                    "net_benefit_model": 0.25,
+                    "net_benefit_treat_all": 0.1,
+                    "net_benefit_treat_none": 0.0,
+                    "delta_vs_best_default": 0.15,
+                }
+            ],
+        },
+        selective_risk_report={
+            "base": {"error_rate": 0.5},
+            "summary": {
+                "min_selective_risk": 0.0,
+                "recommended_cutoff": 0.2,
+                "best_selective_accuracy": 1.0,
+                "best_selective_coverage": 0.5,
+                "max_error_reduction": 0.5,
+                "coverage_at_10pct_risk": 0.5,
+                "area_under_risk_coverage": 0.1,
+                "warning": None,
+            },
+            "ranked_cutoffs": [
+                {
+                    "confidence_cutoff": 0.2,
+                    "coverage": 0.5,
+                    "error_rate": 0.0,
+                    "accuracy": 1.0,
+                    "f1": 1.0,
+                }
+            ],
+        },
         slice_report={
             "base": {"f1": 0.75},
             "summary": {
@@ -167,6 +209,8 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["feature_ablation_diagnostics"]["summary"]["top_feature"] == "x1"
     assert saved_json["sample_review"]["summary"]["label_issue_count"] == 1
     assert saved_json["threshold_diagnostics"]["summary"]["best_f1_threshold"] == 0.3
+    assert saved_json["decision_curve_diagnostics"]["summary"]["best_threshold"] == 0.4
+    assert saved_json["selective_prediction_diagnostics"]["summary"]["recommended_cutoff"] == 0.2
     assert saved_json["slice_diagnostics"]["summary"]["worst_slice"] == "x1[0, 1]"
     assert saved_json["stress_lab"]["summary"]["worst_f1"] == 0.5
     assert saved_json["trial_history"][0]["config"]["feature_map"] == "rff"
@@ -181,6 +225,10 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "label_issue row 2" in saved_markdown
     assert "## Threshold Tradeoffs" in saved_markdown
     assert "Best F1 threshold" in saved_markdown
+    assert "## Decision Curve / Utility" in saved_markdown
+    assert "Useful threshold ranges" in saved_markdown
+    assert "## Selective Prediction / Risk-Coverage" in saved_markdown
+    assert "Recommended cutoff" in saved_markdown
     assert "## Slice Diagnostics" in saved_markdown
     assert "x1[0.0000, 1.0000]" in saved_markdown
     assert "## Robustness Stress Lab" in saved_markdown

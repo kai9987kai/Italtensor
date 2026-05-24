@@ -89,6 +89,8 @@ def test_experimental_builtin_presets_are_available():
         "Spurious shortcut",
         "Subgroup blind spot",
         "Cost-sensitive screening",
+        "Decision utility tradeoff",
+        "Selective abstention triage",
         "Label audit traps",
         "Proxy leakage lab",
     }.issubset(names)
@@ -158,6 +160,24 @@ def test_cost_sensitive_screening_preset_has_borderline_example():
     assert metadata["recommended_feature_map"] == "linear"
     assert metadata["feature_names"] == ["risk_score", "secondary_signal", "background_noise"]
     assert any(example["name"] == "Borderline review" for example in metadata["prediction_examples"])
+
+
+def test_decision_utility_tradeoff_preset_has_gray_zone_example():
+    metadata = preset_metadata("Decision utility tradeoff")
+
+    assert metadata["input_dim"] == 4
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == ["risk_score", "triage_signal", "noise_marker", "gray_zone"]
+    assert any(example["name"] == "Decision gray zone" for example in metadata["prediction_examples"])
+
+
+def test_selective_abstention_triage_preset_has_abstention_candidate():
+    metadata = preset_metadata("Selective abstention triage")
+
+    assert metadata["input_dim"] == 3
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == ["triage_score", "support_signal", "ambiguity_marker"]
+    assert any(example["name"] == "Abstention candidate" for example in metadata["prediction_examples"])
 
 
 def test_label_audit_traps_preset_has_suspicious_example():

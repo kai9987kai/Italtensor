@@ -24,6 +24,8 @@ The full `requirements.txt` install includes TensorFlow. The app code still has 
   - Spurious shortcut
   - Subgroup blind spot
   - Cost-sensitive screening
+  - Decision utility tradeoff
+  - Selective abstention triage
   - Label audit traps
   - Proxy leakage lab
 - Save and import reusable dataset presets.
@@ -35,6 +37,8 @@ The full `requirements.txt` install includes TensorFlow. The app code still has 
 - Feature ablation diagnostics for model reliance, proxy-feature risk, and feature-selection sanity checks.
 - Slice diagnostics for finding raw feature ranges where the active model underperforms.
 - Threshold tradeoff sweeps for operating-point, precision/recall, and cost-sensitive decisions.
+- Decision-curve utility diagnostics for comparing the active model against treat-all and treat-none baselines.
+- Selective prediction risk-coverage sweeps for choosing when to abstain on low-confidence rows.
 - Robustness stress lab for Gaussian noise, feature dropout, and single-feature shifts.
 - Dataset audit for imbalance, duplicates, label conflicts, constant features, and correlated features.
 - No-TensorFlow fallback trainer with linear, quadratic, and random Fourier feature maps.
@@ -169,7 +173,7 @@ Feature maps are used by the NumPy fallback backend. If TensorFlow is installed 
 
 Auto experiments search model settings and feature maps, then rank runs by validation F1, accuracy, and validation loss.
 
-Experiment reports include dataset availability, class counts when a dataset is loaded, the selected threshold, fixed-`0.5` baseline metrics, calibration diagnostics, conformal-style uncertainty diagnostics, feature importance, feature ablation diagnostics, and trial history for auto experiments.
+Experiment reports include dataset availability, class counts when a dataset is loaded, the selected threshold, fixed-`0.5` baseline metrics, calibration diagnostics, conformal-style uncertainty diagnostics, feature importance, feature ablation diagnostics, decision-curve utility diagnostics, selective prediction risk-coverage diagnostics, and trial history for auto experiments.
 
 The uncertainty output is intended as an experimental local diagnostic. When each class has enough samples, Italtensor uses a separate calibration split to estimate a split-conformal-style quantile, then evaluates coverage on the validation split. Prediction displays a label set such as `{0}`, `{1}`, `{0,1}`, or `abstain`. Tiny datasets fall back to validation-reused uncertainty and mark that source in model metadata and reports.
 
@@ -186,6 +190,10 @@ Feature ablation diagnostics run the active model on the loaded dataset, then ne
 Slice diagnostics run the active model on the loaded dataset, split raw numeric features into quantile bins, and rank the ranges where F1 and accuracy fall most below the overall dataset score. This is meant for quick subgroup debugging: a model can look strong on average while failing in a narrow feature range or minority marker. Slice diagnostics are stored in reports after you run them.
 
 Threshold tradeoff sweeps run the active model once, evaluate many probability cutoffs, and report best-F1, best-balanced-accuracy, minimum-cost, high-recall, and high-precision operating points. The default cost model treats false negatives as more expensive than false positives, which makes the `Cost-sensitive screening` preset useful for threshold experiments. These diagnostics are not applied automatically to the active model threshold; they are stored in reports and sidecars for explicit decision-making.
+
+Decision-curve diagnostics compare the model's net benefit against acting on every row and acting on no rows across a threshold grid. This is useful when a false positive has a concrete action cost: the best F1 threshold may not be the best operating point. The `Decision utility tradeoff` preset creates rare positives and a broad gray zone to make the useful threshold range visible.
+
+Selective prediction diagnostics sweep confidence cutoffs and report how much coverage is retained when low-confidence rows are abstained. The ranked cutoffs show covered accuracy, F1, error rate, abstention rate, and risk-coverage area. The `Selective abstention triage` preset is designed so ambiguous boundary rows are natural abstention candidates.
 
 The robustness stress lab runs against the current dataset and active model. It perturbs raw features with Gaussian noise, replaces random cells with dataset means to simulate missingness, and shifts individual features by one raw standard deviation. The output reports worst-case F1, label-flip rate, probability movement, and the most damaging perturbation. Stress results stay separate from validation metrics and are included in exported reports after you run the stress test.
 
@@ -211,6 +219,8 @@ TensorFlow-specific tests skip when TensorFlow is not installed.
 - Reviewed-label import trusts the reviewer column. Bad human labels will become training data, so keep the scored CSV as an audit trail.
 - Slice diagnostics use simple one-feature quantile bins in v1. They are interpretable and fast, but they will not discover every multi-feature or semantic error slice.
 - Threshold tradeoffs run on the active loaded dataset. Use held-out or reviewed data when you want deployment-grade operating-point evidence.
+- Decision-curve results depend on the chosen threshold grid and only encode one simple harm ratio at a time through threshold odds. One-class datasets are allowed for debugging but marked low evidence.
+- Selective prediction can hide weak subgroup performance if abstention falls unevenly across groups. Pair it with slice diagnostics when coverage fairness matters.
 - Sample review can surface genuine label mistakes, ambiguous cases, or model blind spots. Treat flagged rows as a review queue, not ground truth.
 - Reports are richest when the dataset is loaded in the same session as the model; model-only reports cannot reconstruct class counts.
 - Validation metrics need enough examples from both classes. The app requires at least two samples per class for train/validation splitting.
@@ -237,6 +247,8 @@ TensorFlow-specific tests skip when TensorFlow is not installed.
 - Batch drift flags are a lightweight standardized-distance diagnostic inspired by distance-based OOD detection work such as Lee et al.'s [simple unified framework for detecting out-of-distribution samples](https://proceedings.neurips.cc/paper/2018/file/abdeb6f575ac5c6676b747bca8d09cc2-Paper.pdf). Italtensor uses per-row z-score summaries rather than a full covariance model to stay dependency-free.
 - Slice diagnostics are inspired by Slice Finder's focus on interpretable subsets where model performance is poor ([Google Research summary](https://research.google/pubs/slice-finder-automated-data-slicing-for-model-validation/), [arXiv](https://arxiv.org/abs/1807.06068)) and newer slice-discovery work such as [Error Slice Discovery via Manifold Compactness](https://ojs.aaai.org/index.php/AAAI/article/view/40016). Italtensor keeps the first version lightweight by using raw-feature quantile bins rather than automated semantic slicing.
 - Threshold tradeoff diagnostics follow standard decision-threshold tuning practice described in scikit-learn's [tuning the decision threshold](https://scikit-learn.org/stable/modules/classification_threshold.html) guidance and classic cost-sensitive classification framing, where probability estimates and deployment costs are separate decisions.
+- Decision-curve diagnostics follow Vickers and Elkin's net-benefit framing for evaluating whether a prediction model adds value over default strategies, with practical reporting guidance from decision-curve analysis reviews ([technical note](https://pmc.ncbi.nlm.nih.gov/articles/PMC6123195/), [reporting guidance](https://pmc.ncbi.nlm.nih.gov/articles/PMC6261531/), [net-benefit intervals](https://link.springer.com/article/10.1186/s41512-023-00148-y)).
+- Selective prediction follows the risk-coverage framing from El-Yaniv and Wiener's foundations of selective classification and Geifman and El-Yaniv's post-hoc selective classification work ([JMLR](https://jmlr.csail.mit.edu/papers/v11/el-yaniv10a.html), [NeurIPS 2017](https://papers.neurips.cc/paper/7073-selective-classification-for-deep-neural-networks), [SelectiveNet](https://proceedings.mlr.press/v97/geifman19a.html)). Italtensor implements a lightweight confidence-threshold sweep rather than training a separate rejector.
 - Counterfactual recourse follows the black-box counterfactual explanation line from Wachter, Mittelstadt, and Russell's [counterfactual explanations without opening the black box](https://arxiv.org/abs/1711.00399) and the diverse-counterfactual framing in Mothilal, Sharma, and Tan's [DiCE work](https://arxiv.org/abs/1905.07697). Italtensor intentionally keeps v1 dependency-free and reports one nearby flip rather than a constrained causal recourse plan.
 - The stress lab follows the common-corruption evaluation idea from Hendrycks and Dietterich's [robustness benchmark](https://arxiv.org/abs/1903.12261) and the shortcut-learning concern described by Geirhos et al. in [Shortcut Learning in Deep Neural Networks](https://arxiv.org/abs/2004.07780), adapted to dependency-free numeric tabular vectors.
 - Multi-model stacking follows David Wolpert's stacked generalization idea: base models produce validation probabilities, and a linear meta-learner combines them ([stacked generalization](https://www.ml.cmu.edu/research/dap-papers/dap-wolpert-stacked-generalization.pdf)).
