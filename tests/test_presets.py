@@ -91,6 +91,7 @@ def test_experimental_builtin_presets_are_available():
         "Cost-sensitive screening",
         "Decision utility tradeoff",
         "Selective abstention triage",
+        "Conformal coverage lab",
         "Label audit traps",
         "Proxy leakage lab",
     }.issubset(names)
@@ -178,6 +179,15 @@ def test_selective_abstention_triage_preset_has_abstention_candidate():
     assert metadata["recommended_feature_map"] == "linear"
     assert metadata["feature_names"] == ["triage_score", "support_signal", "ambiguity_marker"]
     assert any(example["name"] == "Abstention candidate" for example in metadata["prediction_examples"])
+
+
+def test_conformal_coverage_lab_preset_has_both_label_candidate():
+    metadata = preset_metadata("Conformal coverage lab")
+
+    assert metadata["input_dim"] == 3
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == ["score_signal", "calibration_noise", "overlap_band"]
+    assert any(example["name"] == "Both-label set candidate" for example in metadata["prediction_examples"])
 
 
 def test_label_audit_traps_preset_has_suspicious_example():

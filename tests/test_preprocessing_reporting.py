@@ -132,6 +132,32 @@ def test_report_export_json_and_markdown(tmp_path):
                 }
             ],
         },
+        conformal_set_report={
+            "split": {
+                "source": "posthoc_stratified_split",
+                "calibration_count": 4,
+                "evaluation_count": 4,
+            },
+            "summary": {
+                "recommended_alpha": 0.1,
+                "recommended_target_coverage": 0.9,
+                "recommended_empirical_coverage": 1.0,
+                "recommended_mean_set_size": 1.25,
+                "recommended_singleton_rate": 0.75,
+                "recommended_ambiguous_rate": 0.25,
+                "warning": None,
+            },
+            "points": [
+                {
+                    "alpha": 0.1,
+                    "target_coverage": 0.9,
+                    "empirical_coverage": 1.0,
+                    "coverage_gap": 0.1,
+                    "mean_set_size": 1.25,
+                    "singleton_accuracy": 1.0,
+                }
+            ],
+        },
         selective_risk_report={
             "base": {"error_rate": 0.5},
             "summary": {
@@ -210,6 +236,7 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["sample_review"]["summary"]["label_issue_count"] == 1
     assert saved_json["threshold_diagnostics"]["summary"]["best_f1_threshold"] == 0.3
     assert saved_json["decision_curve_diagnostics"]["summary"]["best_threshold"] == 0.4
+    assert saved_json["posthoc_conformal_diagnostics"]["summary"]["recommended_alpha"] == 0.1
     assert saved_json["selective_prediction_diagnostics"]["summary"]["recommended_cutoff"] == 0.2
     assert saved_json["slice_diagnostics"]["summary"]["worst_slice"] == "x1[0, 1]"
     assert saved_json["stress_lab"]["summary"]["worst_f1"] == 0.5
@@ -227,6 +254,8 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "Best F1 threshold" in saved_markdown
     assert "## Decision Curve / Utility" in saved_markdown
     assert "Useful threshold ranges" in saved_markdown
+    assert "## Post-Hoc Conformal Diagnostics" in saved_markdown
+    assert "Recommended alpha" in saved_markdown
     assert "## Selective Prediction / Risk-Coverage" in saved_markdown
     assert "Recommended cutoff" in saved_markdown
     assert "## Slice Diagnostics" in saved_markdown

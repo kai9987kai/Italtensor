@@ -12,6 +12,7 @@ from .data import (
     validate_dataset,
 )
 from .counterfactual import find_counterfactual, format_counterfactual_result
+from .conformal_sets import format_conformal_set_summary, run_conformal_set_diagnostics
 from .decision_curve import format_decision_curve_summary, run_decision_curve_diagnostics
 from .experiments import (
     ExperimentResult,
@@ -66,6 +67,7 @@ class AppState:
     uncertainty_metadata: dict[str, Any] = field(default_factory=dict)
     latest_ablation_report: dict[str, Any] | None = None
     latest_decision_curve_report: dict[str, Any] | None = None
+    latest_conformal_set_report: dict[str, Any] | None = None
     latest_selective_risk_report: dict[str, Any] | None = None
     latest_sample_review_report: dict[str, Any] | None = None
     latest_threshold_report: dict[str, Any] | None = None
@@ -139,6 +141,8 @@ def run_app() -> None:
                 _start_ablation_diagnostics(window, state)
             elif event == "-DECISION_CURVE-":
                 _start_decision_curve(window, state)
+            elif event == "-CONFORMAL_SETS-":
+                _start_conformal_sets(window, state)
             elif event == "-SELECTIVE_RISK-":
                 _start_selective_risk(window, state)
             elif event == "-STRESS_TEST-":
@@ -433,6 +437,7 @@ def _layout(sg):
         ],
         [
             sg.Button("Decision curve", key="-DECISION_CURVE-", expand_x=True),
+            sg.Button("Conformal sets", key="-CONFORMAL_SETS-", expand_x=True),
             sg.Button("Selective risk", key="-SELECTIVE_RISK-", expand_x=True),
         ],
         [
@@ -597,6 +602,24 @@ def _start_decision_curve(window, state: AppState) -> None:
         return "decision_curve", report
 
     _start_worker(window, state, "Running decision curve diagnostics...", task)
+
+
+def _start_conformal_sets(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    if state.model is None:
+        raise ValueError("Train or load a model before running conformal set diagnostics.")
+    dataset = validate_dataset(state.features, state.labels, min_samples=2, require_two_classes=False)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_conformal_set_diagnostics(
+            state.model,
+            dataset.features,
+            dataset.labels,
+            preprocessor=state.preprocessor,
+        )
+        return "conformal_sets", report
+
+    _start_worker(window, state, "Running conformal set diagnostics...", task)
 
 
 def _start_selective_risk(window, state: AppState) -> None:
@@ -793,6 +816,7 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         uncertainty_metadata=state.uncertainty_metadata,
         ablation_report=state.latest_ablation_report,
         decision_curve_report=state.latest_decision_curve_report,
+        conformal_set_report=state.latest_conformal_set_report,
         selective_risk_report=state.latest_selective_risk_report,
         sample_review_report=state.latest_sample_review_report,
         threshold_report=state.latest_threshold_report,
@@ -836,6 +860,7 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     state.uncertainty_metadata = uncertainty if isinstance(uncertainty, dict) else {}
     ablation_report = metadata.get("feature_ablation_diagnostics")
     decision_curve_report = metadata.get("decision_curve_diagnostics")
+    conformal_set_report = metadata.get("posthoc_conformal_diagnostics") or metadata.get("conformal_set_diagnostics")
     selective_risk_report = metadata.get("selective_prediction_diagnostics")
     sample_review_report = metadata.get("sample_review")
     threshold_report = metadata.get("threshold_diagnostics")
@@ -843,6 +868,7 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     stress_report = metadata.get("stress_lab")
     state.latest_ablation_report = ablation_report if isinstance(ablation_report, dict) else None
     state.latest_decision_curve_report = decision_curve_report if isinstance(decision_curve_report, dict) else None
+    state.latest_conformal_set_report = conformal_set_report if isinstance(conformal_set_report, dict) else None
     state.latest_selective_risk_report = selective_risk_report if isinstance(selective_risk_report, dict) else None
     state.latest_sample_review_report = sample_review_report if isinstance(sample_review_report, dict) else None
     state.latest_threshold_report = threshold_report if isinstance(threshold_report, dict) else None
@@ -868,6 +894,7 @@ def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
         uncertainty_metadata=state.uncertainty_metadata,
         ablation_report=state.latest_ablation_report,
         decision_curve_report=state.latest_decision_curve_report,
+        conformal_set_report=state.latest_conformal_set_report,
         selective_risk_report=state.latest_selective_risk_report,
         sample_review_report=state.latest_sample_review_report,
         threshold_report=state.latest_threshold_report,
@@ -958,6 +985,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.uncertainty_metadata = training_result.uncertainty
         state.latest_ablation_report = None
         state.latest_decision_curve_report = None
+        state.latest_conformal_set_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
         state.latest_threshold_report = None
@@ -980,6 +1008,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.uncertainty_metadata = best.uncertainty
         state.latest_ablation_report = None
         state.latest_decision_curve_report = None
+        state.latest_conformal_set_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
         state.latest_threshold_report = None
@@ -1026,6 +1055,20 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                 f"all_nb={float(item['net_benefit_treat_all']):.4f}, "
                 f"gain={float(item['delta_vs_best_default']):.4f}, "
                 f"default={item['best_default_strategy']}",
+            )
+    elif kind == "conformal_sets":
+        state.latest_conformal_set_report = result
+        _log(window, format_conformal_set_summary(result))
+        for item in result.get("points", [])[:6]:
+            singleton_accuracy = item.get("singleton_accuracy")
+            singleton_text = "-" if singleton_accuracy is None else f"{float(singleton_accuracy):.4f}"
+            _log(
+                window,
+                f"  alpha={float(item['alpha']):.4f}: "
+                f"target={float(item['target_coverage']):.4f}, "
+                f"coverage={float(item['empirical_coverage']):.4f}, "
+                f"mean_size={float(item['mean_set_size']):.4f}, "
+                f"singleton_acc={singleton_text}",
             )
     elif kind == "selective_risk":
         state.latest_selective_risk_report = result
@@ -1130,6 +1173,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.uncertainty_metadata = best.uncertainty
         state.latest_ablation_report = None
         state.latest_decision_curve_report = None
+        state.latest_conformal_set_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
         state.latest_threshold_report = None
@@ -1161,6 +1205,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.uncertainty_metadata = training_result.uncertainty
         state.latest_ablation_report = None
         state.latest_decision_curve_report = None
+        state.latest_conformal_set_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
         state.latest_threshold_report = None
@@ -1250,6 +1295,7 @@ def _invalidate_model_artifacts(state: AppState) -> None:
     state.uncertainty_metadata = {}
     state.latest_ablation_report = None
     state.latest_decision_curve_report = None
+    state.latest_conformal_set_report = None
     state.latest_selective_risk_report = None
     state.latest_sample_review_report = None
     state.latest_threshold_report = None
@@ -1304,6 +1350,7 @@ def _set_busy(window, busy: bool) -> None:
         "-SLICE_DIAGNOSTICS-",
         "-THRESHOLD_DIAGNOSTICS-",
         "-DECISION_CURVE-",
+        "-CONFORMAL_SETS-",
         "-SELECTIVE_RISK-",
         "-SAMPLE_REVIEW-",
         "-CARTOGRAPHY-",
@@ -1598,6 +1645,7 @@ def _activate_model_slot(window, state: AppState, values: dict[str, Any]) -> Non
     state.latest_threshold = slot.threshold
     state.latest_ablation_report = None
     state.latest_decision_curve_report = None
+    state.latest_conformal_set_report = None
     state.latest_selective_risk_report = None
     state.latest_sample_review_report = None
     state.latest_threshold_report = None
@@ -1688,6 +1736,7 @@ def _load_registry(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_threshold = active.threshold
         state.latest_ablation_report = None
         state.latest_decision_curve_report = None
+        state.latest_conformal_set_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
         state.latest_threshold_report = None
@@ -1713,6 +1762,7 @@ def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
     state.preprocessor = None
     state.latest_ablation_report = None
     state.latest_decision_curve_report = None
+    state.latest_conformal_set_report = None
     state.latest_selective_risk_report = None
     state.latest_sample_review_report = None
     state.latest_threshold_report = None
@@ -1776,6 +1826,7 @@ def _build_stacked_ensemble(window, state: AppState, values: dict[str, Any]) -> 
     state.latest_config = ModelConfig(backend="auto", feature_map=values.get("-FEATURE_MAP-", "linear"))
     state.latest_ablation_report = None
     state.latest_decision_curve_report = None
+    state.latest_conformal_set_report = None
     state.latest_selective_risk_report = None
     state.latest_sample_review_report = None
     state.latest_threshold_report = None
@@ -2012,6 +2063,7 @@ def _merge_slots(window, state: AppState, values: dict[str, Any]) -> None:
         state.preprocessor = merged_prep
         state.latest_ablation_report = None
         state.latest_decision_curve_report = None
+        state.latest_conformal_set_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
         state.latest_threshold_report = None

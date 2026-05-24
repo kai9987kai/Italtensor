@@ -27,6 +27,7 @@ def build_experiment_report(
     uncertainty_metadata: dict[str, Any] | None = None,
     ablation_report: dict[str, Any] | None = None,
     decision_curve_report: dict[str, Any] | None = None,
+    conformal_set_report: dict[str, Any] | None = None,
     selective_risk_report: dict[str, Any] | None = None,
     sample_review_report: dict[str, Any] | None = None,
     threshold_report: dict[str, Any] | None = None,
@@ -61,6 +62,7 @@ def build_experiment_report(
         "uncertainty": uncertainty_metadata or None,
         "feature_ablation_diagnostics": ablation_report or None,
         "decision_curve_diagnostics": decision_curve_report or None,
+        "posthoc_conformal_diagnostics": conformal_set_report or None,
         "selective_prediction_diagnostics": selective_risk_report or None,
         "sample_review": sample_review_report or None,
         "threshold_diagnostics": threshold_report or None,
@@ -87,6 +89,7 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     importances = report.get("feature_importances", [])
     trial_history = report.get("trial_history", [])
     uncertainty = report.get("uncertainty") or {}
+    conformal_sets = report.get("posthoc_conformal_diagnostics") or {}
     ablation_diagnostics = report.get("feature_ablation_diagnostics") or {}
     decision_curve = report.get("decision_curve_diagnostics") or {}
     selective_risk = report.get("selective_prediction_diagnostics") or {}
@@ -172,6 +175,37 @@ def format_markdown_report(report: dict[str, Any]) -> str:
         ]:
             if key in uncertainty:
                 lines.append(f"- {key}: {_format_value(uncertainty[key])}")
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Post-Hoc Conformal Diagnostics"])
+    if conformal_sets:
+        summary = conformal_sets.get("summary", {})
+        split = conformal_sets.get("split", {})
+        lines.extend(
+            [
+                f"- Split source: {split.get('source', '-')}",
+                f"- Calibration rows: {split.get('calibration_count', '-')}",
+                f"- Evaluation rows: {split.get('evaluation_count', '-')}",
+                f"- Recommended alpha: {_format_value(summary.get('recommended_alpha', '-'))}",
+                f"- Target coverage: {_format_value(summary.get('recommended_target_coverage', '-'))}",
+                f"- Empirical coverage: {_format_value(summary.get('recommended_empirical_coverage', '-'))}",
+                f"- Mean set size: {_format_value(summary.get('recommended_mean_set_size', '-'))}",
+                f"- Singleton rate: {_format_value(summary.get('recommended_singleton_rate', '-'))}",
+                f"- Ambiguous rate: {_format_value(summary.get('recommended_ambiguous_rate', '-'))}",
+                f"- Warning: {summary.get('warning') or 'none'}",
+            ]
+        )
+        for item in conformal_sets.get("points", [])[:8]:
+            singleton_accuracy = item.get("singleton_accuracy")
+            lines.append(
+                f"- alpha={_format_value(item.get('alpha', '-'))}: "
+                f"target={_format_value(item.get('target_coverage', '-'))}, "
+                f"coverage={_format_value(item.get('empirical_coverage', '-'))}, "
+                f"gap={_format_value(item.get('coverage_gap', '-'))}, "
+                f"mean_size={_format_value(item.get('mean_set_size', '-'))}, "
+                f"singleton_acc={_format_value(singleton_accuracy) if singleton_accuracy is not None else '-'}"
+            )
     else:
         lines.append("- None")
 

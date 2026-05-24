@@ -26,6 +26,7 @@ The full `requirements.txt` install includes TensorFlow. The app code still has 
   - Cost-sensitive screening
   - Decision utility tradeoff
   - Selective abstention triage
+  - Conformal coverage lab
   - Label audit traps
   - Proxy leakage lab
 - Save and import reusable dataset presets.
@@ -38,6 +39,7 @@ The full `requirements.txt` install includes TensorFlow. The app code still has 
 - Slice diagnostics for finding raw feature ranges where the active model underperforms.
 - Threshold tradeoff sweeps for operating-point, precision/recall, and cost-sensitive decisions.
 - Decision-curve utility diagnostics for comparing the active model against treat-all and treat-none baselines.
+- Post-hoc conformal prediction-set diagnostics for coverage, singleton, ambiguous, and empty-set behavior.
 - Selective prediction risk-coverage sweeps for choosing when to abstain on low-confidence rows.
 - Robustness stress lab for Gaussian noise, feature dropout, and single-feature shifts.
 - Dataset audit for imbalance, duplicates, label conflicts, constant features, and correlated features.
@@ -173,7 +175,7 @@ Feature maps are used by the NumPy fallback backend. If TensorFlow is installed 
 
 Auto experiments search model settings and feature maps, then rank runs by validation F1, accuracy, and validation loss.
 
-Experiment reports include dataset availability, class counts when a dataset is loaded, the selected threshold, fixed-`0.5` baseline metrics, calibration diagnostics, conformal-style uncertainty diagnostics, feature importance, feature ablation diagnostics, decision-curve utility diagnostics, selective prediction risk-coverage diagnostics, and trial history for auto experiments.
+Experiment reports include dataset availability, class counts when a dataset is loaded, the selected threshold, fixed-`0.5` baseline metrics, calibration diagnostics, conformal-style uncertainty diagnostics, post-hoc conformal prediction-set diagnostics, feature importance, feature ablation diagnostics, decision-curve utility diagnostics, selective prediction risk-coverage diagnostics, and trial history for auto experiments.
 
 The uncertainty output is intended as an experimental local diagnostic. When each class has enough samples, Italtensor uses a separate calibration split to estimate a split-conformal-style quantile, then evaluates coverage on the validation split. Prediction displays a label set such as `{0}`, `{1}`, `{0,1}`, or `abstain`. Tiny datasets fall back to validation-reused uncertainty and mark that source in model metadata and reports.
 
@@ -192,6 +194,8 @@ Slice diagnostics run the active model on the loaded dataset, split raw numeric 
 Threshold tradeoff sweeps run the active model once, evaluate many probability cutoffs, and report best-F1, best-balanced-accuracy, minimum-cost, high-recall, and high-precision operating points. The default cost model treats false negatives as more expensive than false positives, which makes the `Cost-sensitive screening` preset useful for threshold experiments. These diagnostics are not applied automatically to the active model threshold; they are stored in reports and sidecars for explicit decision-making.
 
 Decision-curve diagnostics compare the model's net benefit against acting on every row and acting on no rows across a threshold grid. This is useful when a false positive has a concrete action cost: the best F1 threshold may not be the best operating point. The `Decision utility tradeoff` preset creates rare positives and a broad gray zone to make the useful threshold range visible.
+
+Post-hoc conformal diagnostics split the loaded dataset into calibration and evaluation rows, sweep alpha values, and report empirical coverage, coverage gap, mean prediction-set size, singleton rate, ambiguous `{0,1}` rate, empty-set rate, and class-specific coverage when observable. This complements the training-time uncertainty summary by making coverage/efficiency tradeoffs visible after a model is active. The `Conformal coverage lab` preset is built to show confident singleton regions and an overlapping shoulder where both-label sets are expected.
 
 Selective prediction diagnostics sweep confidence cutoffs and report how much coverage is retained when low-confidence rows are abstained. The ranked cutoffs show covered accuracy, F1, error rate, abstention rate, and risk-coverage area. The `Selective abstention triage` preset is designed so ambiguous boundary rows are natural abstention candidates.
 
@@ -220,6 +224,7 @@ TensorFlow-specific tests skip when TensorFlow is not installed.
 - Slice diagnostics use simple one-feature quantile bins in v1. They are interpretable and fast, but they will not discover every multi-feature or semantic error slice.
 - Threshold tradeoffs run on the active loaded dataset. Use held-out or reviewed data when you want deployment-grade operating-point evidence.
 - Decision-curve results depend on the chosen threshold grid and only encode one simple harm ratio at a time through threshold odds. One-class datasets are allowed for debugging but marked low evidence.
+- Post-hoc conformal diagnostics are strongest on held-out or newly reviewed data. If you run them on the same rows used to train the model, treat coverage as a local sanity check rather than a finite-sample guarantee.
 - Selective prediction can hide weak subgroup performance if abstention falls unevenly across groups. Pair it with slice diagnostics when coverage fairness matters.
 - Sample review can surface genuine label mistakes, ambiguous cases, or model blind spots. Treat flagged rows as a review queue, not ground truth.
 - Reports are richest when the dataset is loaded in the same session as the model; model-only reports cannot reconstruct class counts.
@@ -240,6 +245,7 @@ TensorFlow-specific tests skip when TensorFlow is not installed.
 - Polynomial feature expansion follows the same idea exposed by scikit-learn `PolynomialFeatures`.
 - Random Fourier features are based on Rahimi and Recht's random kitchen sinks work for approximating kernel methods.
 - Conformal prediction design is informed by Vovk, Gammerman, and Shafer's [Algorithmic Learning in a Random World](https://link.springer.com/book/10.1007/978-3-031-06649-8), Angelopoulos and Bates' [gentle introduction](https://arxiv.org/abs/2107.07511), and Romano, Sesia, and Candes' classification-set work, [Classification with Valid and Adaptive Coverage](https://papers.nips.cc/paper/2020/hash/244edd7e85dc81602b7615cd705545f5-Abstract.html).
+- The post-hoc conformal diagnostic follows split-conformal classification practice: calibrate nonconformity scores on one split, evaluate prediction-set coverage and efficiency on another, and report target coverage separately from observed coverage. This mirrors recent practical tutorials and robust-conformal framing while keeping Italtensor dependency-free.
 - Batch review priority follows classic uncertainty-sampling intuition from Burr Settles' [Active Learning Literature Survey](https://burrsettles.com/pub/settles.activelearning.pdf): examples closest to the model's decision boundary are often the most informative to inspect or label next.
 - Reviewed-label import closes the pool-based active-learning loop: score an unlabeled pool, label the most useful rows, merge them into the training set, and retrain. This mirrors human-in-the-loop active-learning workflows summarized in recent HITL surveys such as [Human-in-the-loop machine learning: a state of the art](https://link.springer.com/article/10.1007/s10462-022-10246-w).
 - Sample review is inspired by confident-learning style label-audit workflows such as Northcutt, Jiang, and Chuang's [Confident Learning](https://arxiv.org/abs/1911.00068) and dataset cartography ideas that use model behavior to find hard or ambiguous examples ([Dataset Cartography](https://arxiv.org/abs/2009.10795)). Italtensor uses a lightweight probability/loss heuristic rather than a full Cleanlab implementation.

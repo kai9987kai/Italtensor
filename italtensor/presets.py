@@ -278,6 +278,21 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="conformal_coverage_lab",
+        name="Conformal coverage lab",
+        description="Confident cores plus overlapping shoulders for split-conformal coverage and prediction-set experiments.",
+        default_samples=220,
+        input_dim=3,
+        recommended_feature_map="linear",
+        feature_names=("score_signal", "calibration_noise", "overlap_band"),
+        training_defaults={"epochs": 80, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Singleton negative", "features": [-1.25, -0.35, -0.8], "expected_label": 0},
+            {"name": "Both-label set candidate", "features": [0.0, 0.1, 1.0], "expected_label": None},
+            {"name": "Singleton positive", "features": [1.25, 0.35, -0.8], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
         key="label_audit_traps",
         name="Label audit traps",
         description="Mostly clean separable classes with a small set of flipped labels for sample-review drills.",
@@ -365,6 +380,8 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _decision_utility_tradeoff(total, rng)
     elif preset.key == "selective_abstention_triage":
         features, labels = _selective_abstention_triage(total, rng)
+    elif preset.key == "conformal_coverage_lab":
+        features, labels = _conformal_coverage_lab(total, rng)
     elif preset.key == "label_audit_traps":
         features, labels = _label_audit_traps(total, rng)
     elif preset.key == "proxy_leakage_lab":
@@ -669,6 +686,28 @@ def _selective_abstention_triage(total: int, rng: np.random.Generator) -> tuple[
         dtype=np.int32,
     )
     return _shuffle(features, labels, rng)
+
+
+def _conformal_coverage_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    labels = _balanced_labels(total)
+    negative_count = int(np.sum(labels == 0))
+    positive_count = int(np.sum(labels == 1))
+    shoulder_count = max(8, total // 3)
+    shoulder_negative = min(negative_count - 2, shoulder_count // 2)
+    shoulder_positive = min(positive_count - 2, shoulder_count - shoulder_negative)
+    core_negative = negative_count - shoulder_negative
+    core_positive = positive_count - shoulder_positive
+
+    negative_core = rng.normal(loc=(-1.25, -0.35, -0.8), scale=(0.24, 0.45, 0.25), size=(core_negative, 3))
+    positive_core = rng.normal(loc=(1.25, 0.35, -0.8), scale=(0.24, 0.45, 0.25), size=(core_positive, 3))
+    negative_shoulder = rng.normal(loc=(-0.18, 0.05, 1.0), scale=(0.28, 0.55, 0.18), size=(shoulder_negative, 3))
+    positive_shoulder = rng.normal(loc=(0.18, -0.05, 1.0), scale=(0.28, 0.55, 0.18), size=(shoulder_positive, 3))
+    features = np.vstack([negative_core, negative_shoulder, positive_core, positive_shoulder]).astype(np.float32)
+    output_labels = np.asarray(
+        [0] * (core_negative + shoulder_negative) + [1] * (core_positive + shoulder_positive),
+        dtype=np.int32,
+    )
+    return _shuffle(features, output_labels, rng)
 
 
 def _label_audit_traps(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
