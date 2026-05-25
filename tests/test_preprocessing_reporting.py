@@ -190,6 +190,78 @@ def test_report_export_json_and_markdown(tmp_path):
                 },
             ],
         },
+        permutation_null_report={
+            "permutation_count": 80,
+            "seed": 42,
+            "summary": {
+                "observed_f1": 0.9,
+                "null_mean_f1": 0.45,
+                "f1_gap": 0.45,
+                "f1_z_score": 3.1,
+                "f1_p_value": 0.01,
+                "accuracy_p_value": 0.02,
+                "verdict": "strong_signal",
+                "warning": None,
+            },
+            "observed": {"f1": 0.9, "accuracy": 0.85, "balanced_accuracy": 0.84},
+            "p_values": {"f1": 0.01, "accuracy": 0.02, "balanced_accuracy": 0.03},
+            "null_distribution": {
+                "f1": {"mean": 0.45, "p95": 0.7},
+                "accuracy": {"mean": 0.5, "p95": 0.75},
+                "balanced_accuracy": {"mean": 0.5, "p95": 0.74},
+            },
+        },
+        population_drift_report={
+            "split_source": "row_order_first_reference_then_current",
+            "reference_count": 2,
+            "current_count": 2,
+            "summary": {
+                "top_feature": 1,
+                "max_psi": 0.4,
+                "max_ks_statistic": 0.5,
+                "max_mean_shift_std": 1.2,
+                "max_outside_reference_rate": 0.25,
+                "drifted_feature_count": 1,
+                "warning": None,
+            },
+            "label_shift": {"prevalence_shift": 0.25},
+            "features": [
+                {
+                    "feature_index": 1,
+                    "psi": 0.4,
+                    "ks_statistic": 0.5,
+                    "mean_shift_std": 1.2,
+                    "outside_reference_rate": 0.25,
+                    "risk_flags": ["major_psi_shift"],
+                }
+            ],
+        },
+        adversarial_validation_report={
+            "split_source": "row_order_domain_classifier",
+            "reference_count": 2,
+            "current_count": 2,
+            "validation_samples": 2,
+            "summary": {
+                "domain_auc": 0.88,
+                "domain_accuracy": 0.8,
+                "detectability": 0.88,
+                "top_feature": 1,
+                "important_feature_count": 1,
+                "verdict": "strong_multivariate_shift",
+                "warning": None,
+            },
+            "domain_metrics": {"roc_auc": 0.88, "accuracy": 0.8},
+            "label_shift": {"prevalence_shift": 0.25},
+            "features": [
+                {
+                    "feature_index": 1,
+                    "auc_drop": 0.2,
+                    "accuracy_drop": 0.15,
+                    "mean_probability_shift": 0.12,
+                    "risk_flags": ["domain_auc_driver"],
+                }
+            ],
+        },
         selective_risk_report={
             "base": {"error_rate": 0.5},
             "summary": {
@@ -315,6 +387,38 @@ def test_report_export_json_and_markdown(tmp_path):
                 }
             ],
         },
+        cartography_report={
+            "sample_count": 4,
+            "threshold": 0.4,
+            "median_confidence": 0.75,
+            "median_variability": 0.05,
+            "region_counts": {
+                "easy_to_learn": 2,
+                "ambiguous": 1,
+                "hard_to_learn": 1,
+                "overconfident_wrong": 0,
+            },
+            "regions": {
+                "ambiguous": [
+                    {
+                        "row_index": 1,
+                        "label": 0,
+                        "predicted_label": 1,
+                        "confidence": 0.45,
+                        "variability": 0.2,
+                    }
+                ]
+            },
+        },
+        mps_sweep_report={
+            "input_dim": 2,
+            "physical_dim": 4,
+            "validation_samples": 2,
+            "bond_dims_tested": [4, 8],
+            "recommended_bond_dim": 8,
+            "recommended_f1": 0.8,
+            "results": [{"bond_dim": 8, "f1": 0.8, "accuracy": 0.75, "brier_score": 0.2, "ece": 0.1}],
+        },
     )
 
     json_path = export_experiment_report(tmp_path / "report.json", report)
@@ -337,12 +441,17 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["decision_curve_diagnostics"]["summary"]["best_threshold"] == 0.4
     assert saved_json["posthoc_conformal_diagnostics"]["summary"]["recommended_alpha"] == 0.1
     assert saved_json["posthoc_calibration_repair_diagnostics"]["summary"]["recommended_method"] == "platt"
+    assert saved_json["posthoc_permutation_null_diagnostics"]["summary"]["verdict"] == "strong_signal"
+    assert saved_json["population_drift_diagnostics"]["summary"]["top_feature"] == 1
+    assert saved_json["adversarial_validation_diagnostics"]["summary"]["verdict"] == "strong_multivariate_shift"
     assert saved_json["selective_prediction_diagnostics"]["summary"]["recommended_cutoff"] == 0.2
     assert saved_json["model_response_diagnostics"]["summary"]["top_feature"] == 0
     assert saved_json["pairwise_interaction_diagnostics"]["summary"]["top_pair"] == [0, 1]
     assert saved_json["slice_diagnostics"]["summary"]["worst_slice"] == "x1[0, 1]"
     assert saved_json["subgroup_disparity_diagnostics"]["summary"]["max_disparity"] == 0.6
     assert saved_json["stress_lab"]["summary"]["worst_f1"] == 0.5
+    assert saved_json["dataset_cartography"]["region_counts"]["ambiguous"] == 1
+    assert saved_json["mps_bond_sweep"]["recommended_bond_dim"] == 8
     assert saved_json["trial_history"][0]["config"]["feature_map"] == "rff"
     assert "Feature 0" in saved_markdown
     assert "## Dataset Audit" in saved_markdown
@@ -361,6 +470,12 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "Recommended alpha" in saved_markdown
     assert "## Post-Hoc Calibration Repair" in saved_markdown
     assert "Recommended method" in saved_markdown
+    assert "## Post-Hoc Permutation-Null Diagnostic" in saved_markdown
+    assert "F1 p-value" in saved_markdown
+    assert "## Population Drift Diagnostics" in saved_markdown
+    assert "Max PSI" in saved_markdown
+    assert "## Adversarial Validation" in saved_markdown
+    assert "Domain AUC" in saved_markdown
     assert "## Selective Prediction / Risk-Coverage" in saved_markdown
     assert "Recommended cutoff" in saved_markdown
     assert "## Model Response / Partial Dependence" in saved_markdown
@@ -373,6 +488,10 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "Max FNR gap" in saved_markdown
     assert "## Robustness Stress Lab" in saved_markdown
     assert "feature_dropout" in saved_markdown
+    assert "## Dataset Cartography" in saved_markdown
+    assert "Ambiguous rows" in saved_markdown
+    assert "## MPS Bond Sweep" in saved_markdown
+    assert "Recommended chi" in saved_markdown
 
 
 def test_report_marks_dataset_unavailable_for_model_only_export():

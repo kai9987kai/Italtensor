@@ -48,6 +48,11 @@ def save_model_bundle(
     slice_report: dict[str, Any] | None = None,
     subgroup_disparity_report: dict[str, Any] | None = None,
     stress_report: dict[str, Any] | None = None,
+    permutation_null_report: dict[str, Any] | None = None,
+    population_drift_report: dict[str, Any] | None = None,
+    adversarial_validation_report: dict[str, Any] | None = None,
+    cartography_report: dict[str, Any] | None = None,
+    mps_sweep_report: dict[str, Any] | None = None,
 ) -> tuple[Path, Path]:
     model_path = Path(path)
     is_ensemble = isinstance(model, EnsemblePredictor)
@@ -110,6 +115,11 @@ def save_model_bundle(
         "slice_diagnostics": slice_report or None,
         "subgroup_disparity_diagnostics": subgroup_disparity_report or None,
         "stress_lab": stress_report or None,
+        "posthoc_permutation_null_diagnostics": permutation_null_report or None,
+        "population_drift_diagnostics": population_drift_report or None,
+        "adversarial_validation_diagnostics": adversarial_validation_report or None,
+        "dataset_cartography": cartography_report or None,
+        "mps_bond_sweep": mps_sweep_report or None,
         "threshold": float(threshold),
         "preprocessing": resolved_preprocessor.to_dict(),
         "feature_importances": feature_importances or [],

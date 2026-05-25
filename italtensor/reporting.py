@@ -37,6 +37,11 @@ def build_experiment_report(
     slice_report: dict[str, Any] | None = None,
     subgroup_disparity_report: dict[str, Any] | None = None,
     stress_report: dict[str, Any] | None = None,
+    permutation_null_report: dict[str, Any] | None = None,
+    population_drift_report: dict[str, Any] | None = None,
+    adversarial_validation_report: dict[str, Any] | None = None,
+    cartography_report: dict[str, Any] | None = None,
+    mps_sweep_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     label_array = np.asarray(labels, dtype=np.int32)
     dataset_available = bool(sample_count and label_array.size)
@@ -76,6 +81,11 @@ def build_experiment_report(
         "slice_diagnostics": slice_report or None,
         "subgroup_disparity_diagnostics": subgroup_disparity_report or None,
         "stress_lab": stress_report or None,
+        "posthoc_permutation_null_diagnostics": permutation_null_report or None,
+        "population_drift_diagnostics": population_drift_report or None,
+        "adversarial_validation_diagnostics": adversarial_validation_report or None,
+        "dataset_cartography": cartography_report or None,
+        "mps_bond_sweep": mps_sweep_report or None,
         "feature_importances": feature_importances,
         "trial_history": trial_history or [],
     }
@@ -109,6 +119,11 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     slice_diagnostics = report.get("slice_diagnostics") or {}
     subgroup_disparity = report.get("subgroup_disparity_diagnostics") or {}
     stress_lab = report.get("stress_lab") or {}
+    permutation_null = report.get("posthoc_permutation_null_diagnostics") or {}
+    population_drift = report.get("population_drift_diagnostics") or {}
+    adversarial_validation = report.get("adversarial_validation_diagnostics") or {}
+    cartography = report.get("dataset_cartography") or {}
+    mps_sweep = report.get("mps_bond_sweep") or {}
     audit = dataset.get("audit") or {}
 
     lines = [
@@ -370,6 +385,39 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     else:
         lines.append("- None")
 
+    lines.extend(["", "## Post-Hoc Permutation-Null Diagnostic"])
+    if permutation_null:
+        summary = permutation_null.get("summary", {})
+        observed = permutation_null.get("observed", {})
+        p_values = permutation_null.get("p_values", {})
+        distribution = permutation_null.get("null_distribution", {})
+        lines.extend(
+            [
+                f"- Permutations: {permutation_null.get('permutation_count', '-')}",
+                f"- Seed: {permutation_null.get('seed', '-')}",
+                f"- Verdict: {summary.get('verdict', '-')}",
+                f"- Observed F1: {_format_value(summary.get('observed_f1', observed.get('f1', '-')))}",
+                f"- Null mean F1: {_format_value(summary.get('null_mean_f1', '-'))}",
+                f"- F1 gap: {_format_value(summary.get('f1_gap', '-'))}",
+                f"- F1 z-score: {_format_value(summary.get('f1_z_score', '-'))}",
+                f"- F1 p-value: {_format_value(summary.get('f1_p_value', p_values.get('f1', '-')))}",
+                f"- Accuracy p-value: {_format_value(summary.get('accuracy_p_value', p_values.get('accuracy', '-')))}",
+                f"- Warning: {summary.get('warning') or 'none'}",
+            ]
+        )
+        for metric in ("f1", "accuracy", "balanced_accuracy"):
+            item = distribution.get(metric, {})
+            if isinstance(item, dict):
+                lines.append(
+                    f"- {metric}: "
+                    f"observed={_format_value(observed.get(metric, '-'))}, "
+                    f"mean={_format_value(item.get('mean', '-'))}, "
+                    f"p95={_format_value(item.get('p95', '-'))}, "
+                    f"p={_format_value(p_values.get(metric, '-'))}"
+                )
+    else:
+        lines.append("- None")
+
     lines.extend(["", "## Threshold Tradeoffs"])
     if threshold_diagnostics:
         summary = threshold_diagnostics.get("summary", {})
@@ -529,6 +577,132 @@ def format_markdown_report(report: dict[str, Any]) -> str:
                 f"- {label}@{_format_value(item.get('level', '-'))}: "
                 f"F1={_format_value(item.get('f1', '-'))}, "
                 f"flip={_format_value(item.get('label_flip_rate', '-'))}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Population Drift Diagnostics"])
+    if population_drift:
+        summary = population_drift.get("summary", {})
+        label_shift = population_drift.get("label_shift", {})
+        top_feature = summary.get("top_feature")
+        top_text = (
+            f"x{int(top_feature) + 1}"
+            if isinstance(top_feature, int)
+            else "-"
+        )
+        lines.extend(
+            [
+                f"- Split source: {population_drift.get('split_source', '-')}",
+                f"- Reference rows: {population_drift.get('reference_count', '-')}",
+                f"- Current rows: {population_drift.get('current_count', '-')}",
+                f"- Top feature: {top_text}",
+                f"- Max PSI: {_format_value(summary.get('max_psi', '-'))}",
+                f"- Max KS statistic: {_format_value(summary.get('max_ks_statistic', '-'))}",
+                f"- Max mean shift: {_format_value(summary.get('max_mean_shift_std', '-'))}",
+                f"- Max outside-reference rate: {_format_value(summary.get('max_outside_reference_rate', '-'))}",
+                f"- Drifted features: {summary.get('drifted_feature_count', '-')}",
+                f"- Label prevalence shift: {_format_value(label_shift.get('prevalence_shift', '-'))}",
+                f"- Warning: {summary.get('warning') or 'none'}",
+            ]
+        )
+        for item in population_drift.get("features", [])[:8]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            lines.append(
+                f"- x{int(item.get('feature_index', 0)) + 1}: "
+                f"PSI={_format_value(item.get('psi', '-'))}, "
+                f"KS={_format_value(item.get('ks_statistic', '-'))}, "
+                f"mean_shift={_format_value(item.get('mean_shift_std', '-'))}, "
+                f"outside={_format_value(item.get('outside_reference_rate', '-'))}, "
+                f"flags={flags}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Adversarial Validation Diagnostics"])
+    if adversarial_validation:
+        summary = adversarial_validation.get("summary", {})
+        metrics = adversarial_validation.get("domain_metrics", {})
+        label_shift = adversarial_validation.get("label_shift", {})
+        top_feature = summary.get("top_feature")
+        top_text = (
+            f"x{int(top_feature) + 1}"
+            if isinstance(top_feature, int)
+            else "-"
+        )
+        lines.extend(
+            [
+                f"- Split source: {adversarial_validation.get('split_source', '-')}",
+                f"- Reference rows: {adversarial_validation.get('reference_count', '-')}",
+                f"- Current rows: {adversarial_validation.get('current_count', '-')}",
+                f"- Validation rows: {adversarial_validation.get('validation_samples', '-')}",
+                f"- Domain AUC: {_format_value(summary.get('domain_auc', metrics.get('roc_auc', '-')))}",
+                f"- Domain accuracy: {_format_value(summary.get('domain_accuracy', metrics.get('accuracy', '-')))}",
+                f"- Detectability: {_format_value(summary.get('detectability', '-'))}",
+                f"- Verdict: {summary.get('verdict', '-')}",
+                f"- Top feature: {top_text}",
+                f"- Important features: {summary.get('important_feature_count', '-')}",
+                f"- Label prevalence shift: {_format_value(label_shift.get('prevalence_shift', '-'))}",
+                f"- Warning: {summary.get('warning') or 'none'}",
+            ]
+        )
+        for item in adversarial_validation.get("features", [])[:8]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            lines.append(
+                f"- x{int(item.get('feature_index', 0)) + 1}: "
+                f"auc_drop={_format_value(item.get('auc_drop', '-'))}, "
+                f"accuracy_drop={_format_value(item.get('accuracy_drop', '-'))}, "
+                f"prob_shift={_format_value(item.get('mean_probability_shift', '-'))}, "
+                f"flags={flags}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Dataset Cartography"])
+    if cartography:
+        counts = cartography.get("region_counts", {})
+        lines.extend(
+            [
+                f"- Samples: {cartography.get('sample_count', '-')}",
+                f"- Threshold: {_format_value(cartography.get('threshold', '-'))}",
+                f"- Median confidence: {_format_value(cartography.get('median_confidence', '-'))}",
+                f"- Median variability: {_format_value(cartography.get('median_variability', '-'))}",
+                f"- Easy rows: {counts.get('easy_to_learn', '-')}",
+                f"- Ambiguous rows: {counts.get('ambiguous', '-')}",
+                f"- Hard rows: {counts.get('hard_to_learn', '-')}",
+                f"- Overconfident wrong rows: {counts.get('overconfident_wrong', '-')}",
+            ]
+        )
+        for region_name in ("overconfident_wrong", "ambiguous", "hard_to_learn", "easy_to_learn"):
+            for item in cartography.get("regions", {}).get(region_name, [])[:3]:
+                lines.append(
+                    f"- {region_name} row {item.get('row_index')}: "
+                    f"label={item.get('label')}, pred={item.get('predicted_label')}, "
+                    f"conf={_format_value(item.get('confidence', '-'))}, "
+                    f"var={_format_value(item.get('variability', '-'))}"
+                )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## MPS Bond Sweep"])
+    if mps_sweep:
+        lines.extend(
+            [
+                f"- Input dimension: {mps_sweep.get('input_dim', '-')}",
+                f"- Physical dimension: {mps_sweep.get('physical_dim', '-')}",
+                f"- Validation samples: {mps_sweep.get('validation_samples', '-')}",
+                f"- Tested chi: {mps_sweep.get('bond_dims_tested', [])}",
+                f"- Recommended chi: {mps_sweep.get('recommended_bond_dim', '-')}",
+                f"- Recommended F1: {_format_value(mps_sweep.get('recommended_f1', '-'))}",
+            ]
+        )
+        for item in mps_sweep.get("results", [])[:8]:
+            lines.append(
+                f"- chi={item.get('bond_dim', '-')}: "
+                f"F1={_format_value(item.get('f1', '-'))}, "
+                f"accuracy={_format_value(item.get('accuracy', '-'))}, "
+                f"Brier={_format_value(item.get('brier_score', '-'))}, "
+                f"ECE={_format_value(item.get('ece', '-'))}"
             )
     else:
         lines.append("- None")

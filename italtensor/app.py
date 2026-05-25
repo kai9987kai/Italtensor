@@ -28,6 +28,12 @@ from .model_communication import FUSION_CHOICES, ModelPanel, PanelMember, fit_st
 from .model_response import format_model_response_summary, run_model_response_diagnostics
 from .model_runner import ModelRunQueue, available_backends, run_model_queue, select_best_from_runs
 from .pairwise_interactions import format_pairwise_interaction_summary, run_pairwise_interaction_diagnostics
+from .permutation_null import format_permutation_null_summary, run_permutation_null_diagnostics
+from .population_drift import format_population_drift_summary, run_population_drift_diagnostics
+from .adversarial_validation import (
+    format_adversarial_validation_summary,
+    run_adversarial_validation_diagnostics,
+)
 from .ablation import format_ablation_summary, run_ablation_diagnostics
 from .persistence import (
     load_dataset,
@@ -81,6 +87,9 @@ class AppState:
     latest_slice_report: dict[str, Any] | None = None
     latest_subgroup_disparity_report: dict[str, Any] | None = None
     latest_stress_report: dict[str, Any] | None = None
+    latest_permutation_null_report: dict[str, Any] | None = None
+    latest_population_drift_report: dict[str, Any] | None = None
+    latest_adversarial_validation_report: dict[str, Any] | None = None
     latest_cartography_report: dict[str, Any] | None = None
     latest_mps_sweep_report: dict[str, Any] | None = None
     busy: bool = False
@@ -143,6 +152,10 @@ def run_app() -> None:
                 _clear_data(window, state)
             elif event == "-AUDIT_DATASET-":
                 _audit_dataset(window, state)
+            elif event == "-POPULATION_DRIFT-":
+                _start_population_drift(window, state)
+            elif event == "-ADVERSARIAL_VALIDATION-":
+                _start_adversarial_validation(window, state)
             elif event == "-LEARNING_CURVE-":
                 _start_learning_curve(window, state, values)
             elif event == "-ABLATION_DIAGNOSTICS-":
@@ -169,6 +182,8 @@ def run_app() -> None:
                 _start_threshold_diagnostics(window, state)
             elif event == "-SAMPLE_REVIEW-":
                 _start_sample_review(window, state)
+            elif event == "-PERMUTATION_NULL-":
+                _start_permutation_null(window, state)
             elif event == "-CARTOGRAPHY-":
                 _start_cartography(window, state)
             elif event == "-RELIABILITY-":
@@ -441,6 +456,8 @@ def _layout(sg):
         [sg.Text("Automated Model & Dataset Diagnostics")],
         [
             sg.Button("Audit dataset", key="-AUDIT_DATASET-", expand_x=True),
+            sg.Button("Population drift", key="-POPULATION_DRIFT-", expand_x=True),
+            sg.Button("Adversarial validation", key="-ADVERSARIAL_VALIDATION-", expand_x=True),
             sg.Button("Learning curve", key="-LEARNING_CURVE-", expand_x=True),
         ],
         [
@@ -462,6 +479,7 @@ def _layout(sg):
         ],
         [
             sg.Button("Sample review", key="-SAMPLE_REVIEW-", expand_x=True),
+            sg.Button("Permutation null", key="-PERMUTATION_NULL-", expand_x=True),
             sg.Button("Dataset cartography", key="-CARTOGRAPHY-", expand_x=True),
         ],
         [
@@ -810,6 +828,47 @@ def _start_sample_review(window, state: AppState) -> None:
     _start_worker(window, state, "Running sample review...", task)
 
 
+def _start_population_drift(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    dataset = validate_dataset(state.features, state.labels, min_samples=6, require_two_classes=False)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_population_drift_diagnostics(dataset.features, dataset.labels)
+        return "population_drift", report
+
+    _start_worker(window, state, "Running population drift diagnostics...", task)
+
+
+def _start_adversarial_validation(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    dataset = validate_dataset(state.features, state.labels, min_samples=12, require_two_classes=False)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_adversarial_validation_diagnostics(dataset.features, dataset.labels)
+        return "adversarial_validation", report
+
+    _start_worker(window, state, "Running adversarial validation...", task)
+
+
+def _start_permutation_null(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    if state.model is None:
+        raise ValueError("Train or load a model before running permutation-null diagnostics.")
+    dataset = validate_dataset(state.features, state.labels, min_samples=4, require_two_classes=True)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_permutation_null_diagnostics(
+            state.model,
+            dataset.features,
+            dataset.labels,
+            preprocessor=state.preprocessor,
+            threshold=state.latest_threshold,
+        )
+        return "permutation_null", report
+
+    _start_worker(window, state, "Running permutation-null diagnostics...", task)
+
+
 def _config_from_values(values: dict[str, Any]) -> ModelConfig:
     l1_raw = values.get("-L1_PENALTY-", "0.0").strip()
     l1_penalty = float(l1_raw) if l1_raw else 0.0
@@ -919,6 +978,11 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         slice_report=state.latest_slice_report,
         subgroup_disparity_report=state.latest_subgroup_disparity_report,
         stress_report=state.latest_stress_report,
+        permutation_null_report=state.latest_permutation_null_report,
+        population_drift_report=state.latest_population_drift_report,
+        adversarial_validation_report=state.latest_adversarial_validation_report,
+        cartography_report=state.latest_cartography_report,
+        mps_sweep_report=state.latest_mps_sweep_report,
     )
     window["-MODEL_PATH-"].update(str(model_path))
     _log(window, f"Saved model to {model_path} and metadata to {metadata_path}.")
@@ -967,6 +1031,11 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     slice_report = metadata.get("slice_diagnostics")
     subgroup_disparity_report = metadata.get("subgroup_disparity_diagnostics")
     stress_report = metadata.get("stress_lab")
+    permutation_null_report = metadata.get("posthoc_permutation_null_diagnostics")
+    population_drift_report = metadata.get("population_drift_diagnostics")
+    adversarial_validation_report = metadata.get("adversarial_validation_diagnostics")
+    cartography_report = metadata.get("dataset_cartography")
+    mps_sweep_report = metadata.get("mps_bond_sweep")
     state.latest_ablation_report = ablation_report if isinstance(ablation_report, dict) else None
     state.latest_decision_curve_report = decision_curve_report if isinstance(decision_curve_report, dict) else None
     state.latest_conformal_set_report = conformal_set_report if isinstance(conformal_set_report, dict) else None
@@ -985,6 +1054,17 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
         subgroup_disparity_report if isinstance(subgroup_disparity_report, dict) else None
     )
     state.latest_stress_report = stress_report if isinstance(stress_report, dict) else None
+    state.latest_permutation_null_report = (
+        permutation_null_report if isinstance(permutation_null_report, dict) else None
+    )
+    state.latest_population_drift_report = (
+        population_drift_report if isinstance(population_drift_report, dict) else None
+    )
+    state.latest_adversarial_validation_report = (
+        adversarial_validation_report if isinstance(adversarial_validation_report, dict) else None
+    )
+    state.latest_cartography_report = cartography_report if isinstance(cartography_report, dict) else None
+    state.latest_mps_sweep_report = mps_sweep_report if isinstance(mps_sweep_report, dict) else None
     _log(window, f"Loaded model expecting {state.input_dim} features.")
 
 
@@ -1015,6 +1095,11 @@ def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
         slice_report=state.latest_slice_report,
         subgroup_disparity_report=state.latest_subgroup_disparity_report,
         stress_report=state.latest_stress_report,
+        permutation_null_report=state.latest_permutation_null_report,
+        population_drift_report=state.latest_population_drift_report,
+        adversarial_validation_report=state.latest_adversarial_validation_report,
+        cartography_report=state.latest_cartography_report,
+        mps_sweep_report=state.latest_mps_sweep_report,
     )
     path = export_experiment_report(_required_path(values["-REPORT_PATH-"], "report path"), report)
     _log(window, f"Exported report to {path}.")
@@ -1110,6 +1195,11 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_slice_report = None
         state.latest_subgroup_disparity_report = None
         state.latest_stress_report = None
+        state.latest_permutation_null_report = None
+        state.latest_population_drift_report = None
+        state.latest_adversarial_validation_report = None
+        state.latest_cartography_report = None
+        state.latest_mps_sweep_report = None
         _log(window, f"Training complete: {_format_metrics(training_result.metrics)}")
         _log(window, _format_calibration(training_result.metrics))
         _log(window, _format_uncertainty(training_result.uncertainty))
@@ -1137,6 +1227,11 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_slice_report = None
         state.latest_subgroup_disparity_report = None
         state.latest_stress_report = None
+        state.latest_permutation_null_report = None
+        state.latest_population_drift_report = None
+        state.latest_adversarial_validation_report = None
+        state.latest_cartography_report = None
+        state.latest_mps_sweep_report = None
         _log(window, f"Best config: {_format_config(best.config)}")
         _log(window, f"Best metrics: {_format_metrics(best.metrics)}")
         _log(window, _format_calibration(best.metrics))
@@ -1335,6 +1430,47 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                     f"label={int(item['label'])}, pred={int(item['predicted_label'])}, "
                     f"p={float(item['probability']):.4f}, loss={float(item['loss']):.4f}",
                 )
+    elif kind == "permutation_null":
+        state.latest_permutation_null_report = result
+        _log(window, format_permutation_null_summary(result))
+        observed = result.get("observed", {})
+        p_values = result.get("p_values", {})
+        for metric in ("f1", "accuracy", "balanced_accuracy"):
+            distribution = result.get("null_distribution", {}).get(metric, {})
+            _log(
+                window,
+                f"  {metric}: observed={float(observed.get(metric, 0.0)):.4f}, "
+                f"null_mean={float(distribution.get('mean', 0.0)):.4f}, "
+                f"p={float(p_values.get(metric, 1.0)):.4f}, "
+                f"p95={float(distribution.get('p95', 0.0)):.4f}",
+            )
+    elif kind == "population_drift":
+        state.latest_population_drift_report = result
+        _log(window, format_population_drift_summary(result))
+        for item in result.get("features", [])[:6]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            _log(
+                window,
+                f"  x{int(item['feature_index']) + 1}: "
+                f"PSI={float(item['psi']):.4f}, "
+                f"KS={float(item['ks_statistic']):.4f}, "
+                f"mean_shift={float(item['mean_shift_std']):.4f}, "
+                f"outside={float(item['outside_reference_rate']):.4f}, "
+                f"flags={flags}",
+            )
+    elif kind == "adversarial_validation":
+        state.latest_adversarial_validation_report = result
+        _log(window, format_adversarial_validation_summary(result))
+        for item in result.get("features", [])[:6]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            _log(
+                window,
+                f"  x{int(item['feature_index']) + 1}: "
+                f"auc_drop={float(item['auc_drop']):.4f}, "
+                f"acc_drop={float(item['accuracy_drop']):.4f}, "
+                f"prob_shift={float(item['mean_probability_shift']):.4f}, "
+                f"flags={flags}",
+            )
     elif kind == "multi_backend":
         best = select_best_from_runs(result)
         state.model = best.model
@@ -1357,6 +1493,11 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_slice_report = None
         state.latest_subgroup_disparity_report = None
         state.latest_stress_report = None
+        state.latest_permutation_null_report = None
+        state.latest_population_drift_report = None
+        state.latest_adversarial_validation_report = None
+        state.latest_cartography_report = None
+        state.latest_mps_sweep_report = None
         for item in result:
             slot = ModelSlot(
                 model=item.model,
@@ -1393,6 +1534,11 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_slice_report = None
         state.latest_subgroup_disparity_report = None
         state.latest_stress_report = None
+        state.latest_permutation_null_report = None
+        state.latest_population_drift_report = None
+        state.latest_adversarial_validation_report = None
+        state.latest_cartography_report = None
+        state.latest_mps_sweep_report = None
         
         # Auto-store in slots
         slot = ModelSlot(
@@ -1487,6 +1633,11 @@ def _invalidate_model_artifacts(state: AppState) -> None:
     state.latest_slice_report = None
     state.latest_subgroup_disparity_report = None
     state.latest_stress_report = None
+    state.latest_permutation_null_report = None
+    state.latest_population_drift_report = None
+    state.latest_adversarial_validation_report = None
+    state.latest_cartography_report = None
+    state.latest_mps_sweep_report = None
 
 
 def _refresh_state(window, state: AppState) -> None:
@@ -1530,6 +1681,8 @@ def _set_busy(window, busy: bool) -> None:
         "-LOAD_REGISTRY-",
         "-BUILD_STACKED_ENSEMBLE-",
         "-AUDIT_DATASET-",
+        "-POPULATION_DRIFT-",
+        "-ADVERSARIAL_VALIDATION-",
         "-LEARNING_CURVE-",
         "-ABLATION_DIAGNOSTICS-",
         "-STRESS_TEST-",
@@ -1543,6 +1696,7 @@ def _set_busy(window, busy: bool) -> None:
         "-CALIBRATION_REPAIR-",
         "-SELECTIVE_RISK-",
         "-SAMPLE_REVIEW-",
+        "-PERMUTATION_NULL-",
         "-CARTOGRAPHY-",
         "-RELIABILITY-",
         "-MPS_BOND_SWEEP-",
@@ -1845,6 +1999,11 @@ def _activate_model_slot(window, state: AppState, values: dict[str, Any]) -> Non
     state.latest_slice_report = None
     state.latest_subgroup_disparity_report = None
     state.latest_stress_report = None
+    state.latest_permutation_null_report = None
+    state.latest_population_drift_report = None
+    state.latest_adversarial_validation_report = None
+    state.latest_cartography_report = None
+    state.latest_mps_sweep_report = None
     _log(window, f"Activated slot '{slot.name}'. Predictions and weight analysis will now run on this model.")
     _update_slots_listbox(window, state)
 
@@ -1940,6 +2099,11 @@ def _load_registry(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_slice_report = None
         state.latest_subgroup_disparity_report = None
         state.latest_stress_report = None
+        state.latest_permutation_null_report = None
+        state.latest_population_drift_report = None
+        state.latest_adversarial_validation_report = None
+        state.latest_cartography_report = None
+        state.latest_mps_sweep_report = None
     _update_slots_listbox(window, state)
     _log(window, f"Loaded {len(slots)} slot(s) from registry.")
 
@@ -1970,6 +2134,11 @@ def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_slice_report = None
     state.latest_subgroup_disparity_report = None
     state.latest_stress_report = None
+    state.latest_permutation_null_report = None
+    state.latest_population_drift_report = None
+    state.latest_adversarial_validation_report = None
+    state.latest_cartography_report = None
+    state.latest_mps_sweep_report = None
     
     state.latest_config = ModelConfig(
         lr_schedule="constant",
@@ -2038,6 +2207,11 @@ def _build_stacked_ensemble(window, state: AppState, values: dict[str, Any]) -> 
     state.latest_slice_report = None
     state.latest_subgroup_disparity_report = None
     state.latest_stress_report = None
+    state.latest_permutation_null_report = None
+    state.latest_population_drift_report = None
+    state.latest_adversarial_validation_report = None
+    state.latest_cartography_report = None
+    state.latest_mps_sweep_report = None
     probs = ensemble.predict(dataset.features).reshape(-1)
     metrics = evaluate_predictions(dataset.labels, probs, threshold=0.5)
     state.latest_metrics = metrics
@@ -2279,6 +2453,11 @@ def _merge_slots(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_slice_report = None
         state.latest_subgroup_disparity_report = None
         state.latest_stress_report = None
+        state.latest_permutation_null_report = None
+        state.latest_population_drift_report = None
+        state.latest_adversarial_validation_report = None
+        state.latest_cartography_report = None
+        state.latest_mps_sweep_report = None
         state.latest_config = ModelConfig(
             lr_schedule="constant",
             gradient_clip=0.0,

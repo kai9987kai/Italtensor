@@ -27,6 +27,9 @@ The full `requirements.txt` install includes TensorFlow. The app code still has 
   - Response curve lab
   - Interaction surface lab
   - Calibration repair lab
+  - Permutation null lab
+  - Population drift lab
+  - Adversarial validation lab
   - Cost-sensitive screening
   - Decision utility tradeoff
   - Selective abstention triage
@@ -57,6 +60,9 @@ The full `requirements.txt` install includes TensorFlow. The app code still has 
 - Permutation-style feature importance on validation data.
 - Probability diagnostics including Brier score, log loss, calibration error, ROC-AUC, and average precision.
 - Post-hoc calibration repair diagnostics comparing raw, Platt, and isotonic probability repairs.
+- Post-hoc permutation-null diagnostics comparing the active score against shuffled-label baselines.
+- Population drift diagnostics for ordered reference/current dataset slices.
+- Adversarial validation diagnostics for multivariate reference/current drift detection.
 - Split-conformal and **APS** (Adaptive Prediction Sets) uncertainty diagnostics for abstention experiments.
 - **MPS tensor-chain** binary classifier (`backend=mps`): ordered features as sites, bond dimension chi, soft site embeddings.
 - Dataset **audit** (imbalance, duplicates, constant/correlated features) in the workbench and reports.
@@ -183,11 +189,17 @@ Feature maps are used by the NumPy fallback backend. If TensorFlow is installed 
 
 Auto experiments search model settings and feature maps, then rank runs by validation F1, accuracy, and validation loss.
 
-Experiment reports include dataset availability, class counts when a dataset is loaded, the selected threshold, fixed-`0.5` baseline metrics, calibration diagnostics, post-hoc calibration repair diagnostics, conformal-style uncertainty diagnostics, post-hoc conformal prediction-set diagnostics, feature importance, feature ablation diagnostics, model response diagnostics, pairwise interaction diagnostics, subgroup disparity diagnostics, decision-curve utility diagnostics, selective prediction risk-coverage diagnostics, and trial history for auto experiments.
+Experiment reports include dataset availability, class counts when a dataset is loaded, the selected threshold, fixed-`0.5` baseline metrics, calibration diagnostics, post-hoc calibration repair diagnostics, post-hoc permutation-null diagnostics, population drift diagnostics, adversarial validation diagnostics, conformal-style uncertainty diagnostics, post-hoc conformal prediction-set diagnostics, feature importance, feature ablation diagnostics, model response diagnostics, pairwise interaction diagnostics, subgroup disparity diagnostics, decision-curve utility diagnostics, selective prediction risk-coverage diagnostics, dataset cartography, MPS bond sweeps, and trial history for auto experiments.
 
 The uncertainty output is intended as an experimental local diagnostic. When each class has enough samples, Italtensor uses a separate calibration split to estimate a split-conformal-style quantile, then evaluates coverage on the validation split. Prediction displays a label set such as `{0}`, `{1}`, `{0,1}`, or `abstain`. Tiny datasets fall back to validation-reused uncertainty and mark that source in model metadata and reports.
 
 Post-hoc calibration repair diagnostics split the loaded dataset into calibration and evaluation rows, then compare raw probabilities with Platt scaling and isotonic regression on held-out rows. The output recommends the repair with the best Brier/ECE/log-loss tradeoff and stores method parameters for inspection without mutating the active model. The `Calibration repair lab` preset creates overconfident margins and noisy shoulders so miscalibration is visible.
+
+Post-hoc permutation-null diagnostics keep the active model's probabilities fixed, repeatedly shuffle labels, and compare observed F1, accuracy, and balanced accuracy with the shuffled-label null distribution. This is a fast sanity check before trusting high validation scores: a model whose observed score is not above shuffled labels is probably exploiting noise, a tiny dataset artifact, or a stale evaluation setup. The `Permutation null lab` preset includes a real margin signal plus decoys so the null gap should be visible after training.
+
+Population drift diagnostics compare the first loaded rows as a reference slice against later rows as a current slice. The output ranks features by population stability index, KS distance, standardized mean shift, outside-reference-range rate, and label prevalence shift. This is useful after importing reviewed labels, appending CSV batches, or loading a time-ordered preset. The `Population drift lab` preset keeps row order meaningful so the drift signal is visible without a separate production batch file.
+
+Adversarial validation diagnostics train a lightweight domain classifier to distinguish first-half reference rows from later current rows. High domain AUC means the two row groups are separable, even when single-feature PSI checks miss a correlation or interaction shift. The output includes domain AUC, accuracy, detectability, permutation feature importance, and top domain-shift drivers. The `Adversarial validation lab` preset includes a correlation-sign flip and variance marker so multivariate drift is visible.
 
 Batch prediction exports rank rows for review using threshold-distance uncertainty, conformal ambiguity, and row-level drift diagnostics. Rows near the decision threshold, rows whose conformal set contains both labels, or rows whose standardized features cross the OOD flag threshold get higher review priority. The separate active-query score favors uncertain in-distribution rows so the file can double as a lightweight active-learning queue without mistaking every shifted row for a good labeling candidate.
 
@@ -249,6 +261,9 @@ TensorFlow-specific tests skip when TensorFlow is not installed.
 - Reports are richest when the dataset is loaded in the same session as the model; model-only reports cannot reconstruct class counts.
 - Validation metrics need enough examples from both classes. The app requires at least two samples per class for train/validation splitting.
 - Post-hoc calibration repair is an evaluation aid, not an automatic deployment change. Estimates are noisy with small calibration/evaluation splits and optimistic if run on rows used to tune the model.
+- Post-hoc permutation-null diagnostics reuse the active model's fixed predictions; they do not retrain the model on permuted labels. Treat them as a fast local significance screen, not a full cross-validated permutation test.
+- Population drift diagnostics assume row order means reference first and current later. Shuffle your dataset before loading if row order is arbitrary.
+- Adversarial validation is a local drift screen, not proof of deployment failure. High domain AUC says rows are distinguishable; it does not say whether task accuracy changed.
 - Conformal-style uncertainty is strongest when the dataset is large enough for the dedicated calibration split. On tiny datasets, it falls back to validation-reused diagnostics.
 
 ## Multi-Model Controls
@@ -266,6 +281,9 @@ TensorFlow-specific tests skip when TensorFlow is not installed.
 - Random Fourier features are based on Rahimi and Recht's random kitchen sinks work for approximating kernel methods.
 - Conformal prediction design is informed by Vovk, Gammerman, and Shafer's [Algorithmic Learning in a Random World](https://link.springer.com/book/10.1007/978-3-031-06649-8), Angelopoulos and Bates' [gentle introduction](https://arxiv.org/abs/2107.07511), and Romano, Sesia, and Candes' classification-set work, [Classification with Valid and Adaptive Coverage](https://papers.nips.cc/paper/2020/hash/244edd7e85dc81602b7615cd705545f5-Abstract.html).
 - Calibration repair follows classic post-hoc probability calibration practice: Platt scaling for sigmoid-style correction and isotonic regression for flexible monotonic correction, with Brier score, log loss, and reliability-bin errors reported separately from threshold metrics.
+- Permutation-null diagnostics follow the label-shuffling significance-test idea used by scikit-learn's [`permutation_test_score`](https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.permutation_test_score.html) and Ojala and Garriga's classifier-performance permutation tests ([JMLR](https://jmlr.org/papers/volume11/ojala10a/ojala10a.pdf)). Italtensor keeps the desktop version fast by testing fixed active predictions rather than retraining for every shuffle.
+- Population drift diagnostics use common monitoring statistics: population stability index for binned distribution shift, a two-sample Kolmogorov-Smirnov-style CDF distance, and simple standardized mean shift/outside-range rates. This follows the practical data-drift monitoring pattern used in tabular ML systems while staying dependency-free.
+- Adversarial validation follows the common covariate-shift/domain-classifier practice: train a classifier to distinguish source from target rows, then inspect high domain AUC and feature drivers as evidence of distribution shift before deployment or retraining.
 - The post-hoc conformal diagnostic follows split-conformal classification practice: calibrate nonconformity scores on one split, evaluate prediction-set coverage and efficiency on another, and report target coverage separately from observed coverage. This mirrors recent practical tutorials and robust-conformal framing while keeping Italtensor dependency-free.
 - Batch review priority follows classic uncertainty-sampling intuition from Burr Settles' [Active Learning Literature Survey](https://burrsettles.com/pub/settles.activelearning.pdf): examples closest to the model's decision boundary are often the most informative to inspect or label next.
 - Reviewed-label import closes the pool-based active-learning loop: score an unlabeled pool, label the most useful rows, merge them into the training set, and retrain. This mirrors human-in-the-loop active-learning workflows summarized in recent HITL surveys such as [Human-in-the-loop machine learning: a state of the art](https://link.springer.com/article/10.1007/s10462-022-10246-w).

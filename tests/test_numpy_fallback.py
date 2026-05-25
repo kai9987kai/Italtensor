@@ -135,6 +135,11 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
         slice_report={"summary": {"worst_slice": "x1[0, 1]"}},
         subgroup_disparity_report={"summary": {"max_disparity": 0.6}},
         stress_report={"summary": {"worst_f1": 0.7}},
+        permutation_null_report={"summary": {"verdict": "signal"}},
+        population_drift_report={"summary": {"top_feature": 1}},
+        adversarial_validation_report={"summary": {"verdict": "strong_multivariate_shift"}},
+        cartography_report={"region_counts": {"ambiguous": 1}},
+        mps_sweep_report={"recommended_bond_dim": 8},
     )
     loaded, metadata = load_model_bundle(model_path)
     probabilities = predict_probability(loaded, [[1.0, 0.0]])
@@ -161,6 +166,11 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
     assert metadata["slice_diagnostics"]["summary"]["worst_slice"] == "x1[0, 1]"
     assert metadata["subgroup_disparity_diagnostics"]["summary"]["max_disparity"] == 0.6
     assert metadata["stress_lab"]["summary"]["worst_f1"] == 0.7
+    assert metadata["posthoc_permutation_null_diagnostics"]["summary"]["verdict"] == "signal"
+    assert metadata["population_drift_diagnostics"]["summary"]["top_feature"] == 1
+    assert metadata["adversarial_validation_diagnostics"]["summary"]["verdict"] == "strong_multivariate_shift"
+    assert metadata["dataset_cartography"]["region_counts"]["ambiguous"] == 1
+    assert metadata["mps_bond_sweep"]["recommended_bond_dim"] == 8
     assert probabilities.shape == (1,)
 
 

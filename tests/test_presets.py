@@ -92,6 +92,9 @@ def test_experimental_builtin_presets_are_available():
         "Response curve lab",
         "Interaction surface lab",
         "Calibration repair lab",
+        "Permutation null lab",
+        "Population drift lab",
+        "Adversarial validation lab",
         "Cost-sensitive screening",
         "Decision utility tradeoff",
         "Selective abstention triage",
@@ -192,6 +195,45 @@ def test_calibration_repair_lab_preset_has_confidence_trap():
     assert metadata["recommended_feature_map"] == "linear"
     assert metadata["feature_names"] == ["margin_score", "confidence_trap", "background_noise"]
     assert any(example["name"] == "Miscalibrated shoulder" for example in metadata["prediction_examples"])
+
+
+def test_permutation_null_lab_preset_has_decoy_and_boundary_example():
+    metadata = preset_metadata("Permutation null lab")
+
+    assert metadata["input_dim"] == 4
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == ["real_margin", "weak_support", "label_noise_marker", "decoy_noise"]
+    assert any(example["name"] == "Boundary null check" for example in metadata["prediction_examples"])
+
+
+def test_population_drift_lab_preset_has_shift_probe_features():
+    metadata = preset_metadata("Population drift lab")
+
+    assert metadata["input_dim"] == 5
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == [
+        "stable_signal",
+        "shifted_signal",
+        "variance_drift",
+        "tail_probe",
+        "decoy_noise",
+    ]
+    assert any(example["name"] == "Current shifted review" for example in metadata["prediction_examples"])
+
+
+def test_adversarial_validation_lab_preset_has_multivariate_shift_features():
+    metadata = preset_metadata("Adversarial validation lab")
+
+    assert metadata["input_dim"] == 5
+    assert metadata["recommended_feature_map"] == "quadratic"
+    assert metadata["feature_names"] == [
+        "stable_signal",
+        "domain_shift_axis",
+        "interaction_shift",
+        "variance_marker",
+        "decoy_noise",
+    ]
+    assert any(example["name"] == "Current multivariate shift" for example in metadata["prediction_examples"])
 
 
 def test_cost_sensitive_screening_preset_has_borderline_example():

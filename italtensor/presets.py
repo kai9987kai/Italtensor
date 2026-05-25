@@ -293,6 +293,53 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="permutation_null_lab",
+        name="Permutation null lab",
+        description="A real margin signal with weak support and decoys for shuffled-label significance checks.",
+        default_samples=220,
+        input_dim=4,
+        recommended_feature_map="linear",
+        feature_names=("real_margin", "weak_support", "label_noise_marker", "decoy_noise"),
+        training_defaults={"epochs": 80, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Clear null-negative", "features": [-1.2, -0.4, 0.0, 0.0], "expected_label": 0},
+            {"name": "Boundary null check", "features": [0.02, 0.0, 1.0, 0.0], "expected_label": None},
+            {"name": "Clear null-positive", "features": [1.2, 0.4, 0.0, 0.0], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
+        key="population_drift_lab",
+        name="Population drift lab",
+        description="Ordered reference/current rows with shifted features for population drift monitoring.",
+        default_samples=240,
+        min_samples=6,
+        input_dim=5,
+        recommended_feature_map="linear",
+        feature_names=("stable_signal", "shifted_signal", "variance_drift", "tail_probe", "decoy_noise"),
+        training_defaults={"epochs": 80, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Reference-like negative", "features": [-0.8, 0.0, 0.0, 0.0, 0.0], "expected_label": 0},
+            {"name": "Current shifted review", "features": [0.1, 1.5, 1.8, 3.0, 0.0], "expected_label": None},
+            {"name": "Reference-like positive", "features": [0.8, 0.0, 0.0, 0.0, 0.0], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
+        key="adversarial_validation_lab",
+        name="Adversarial validation lab",
+        description="Ordered reference/current rows with multivariate drift for domain-classifier detection.",
+        default_samples=240,
+        min_samples=12,
+        input_dim=5,
+        recommended_feature_map="quadratic",
+        feature_names=("stable_signal", "domain_shift_axis", "interaction_shift", "variance_marker", "decoy_noise"),
+        training_defaults={"epochs": 90, "batch_size": 16, "trials": 12, "feature_map": "quadratic"},
+        prediction_examples=(
+            {"name": "Reference pattern", "features": [0.4, 0.6, 0.6, 0.0, 0.0], "expected_label": 1},
+            {"name": "Current multivariate shift", "features": [0.4, 0.6, -0.6, 1.4, 0.0], "expected_label": None},
+            {"name": "Reference negative", "features": [-0.6, -0.4, -0.4, 0.0, 0.0], "expected_label": 0},
+        ),
+    ),
+    PresetInfo(
         key="cost_sensitive_screening",
         name="Cost-sensitive screening",
         description="Rare positives with overlapping scores for threshold tradeoff and false-negative-cost experiments.",
@@ -442,6 +489,12 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _interaction_surface_lab(total, rng)
     elif preset.key == "calibration_repair_lab":
         features, labels = _calibration_repair_lab(total, rng)
+    elif preset.key == "permutation_null_lab":
+        features, labels = _permutation_null_lab(total, rng)
+    elif preset.key == "population_drift_lab":
+        features, labels = _population_drift_lab(total, rng)
+    elif preset.key == "adversarial_validation_lab":
+        features, labels = _adversarial_validation_lab(total, rng)
     elif preset.key == "cost_sensitive_screening":
         features, labels = _cost_sensitive_screening(total, rng)
     elif preset.key == "decision_utility_tradeoff":
@@ -746,6 +799,76 @@ def _calibration_repair_lab(total: int, rng: np.random.Generator) -> tuple[np.nd
     labels = (rng.random(total) < noisy_probability).astype(np.int32)
     features = np.column_stack([margin_score, confidence_trap, background_noise]).astype(np.float32)
     return _shuffle(features, labels, rng)
+
+
+def _permutation_null_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    real_margin = rng.normal(0.0, 1.0, size=total)
+    weak_support = rng.normal(0.0, 1.0, size=total)
+    decoy_noise = rng.normal(0.0, 1.0, size=total)
+    latent = 1.25 * real_margin + 0.45 * weak_support + rng.normal(0.0, 0.45, size=total)
+    labels = (latent > np.median(latent)).astype(np.int32)
+    label_noise_marker = np.abs(latent - np.median(latent)) < 0.35
+    flip_candidates = np.where(label_noise_marker)[0]
+    if flip_candidates.size:
+        flip_count = min(flip_candidates.size, max(1, total // 12))
+        flip_indices = rng.choice(flip_candidates, size=flip_count, replace=False)
+        labels[flip_indices] = 1 - labels[flip_indices]
+    marker_feature = label_noise_marker.astype(np.float32) + rng.normal(0.0, 0.08, size=total)
+    features = np.column_stack([real_margin, weak_support, marker_feature, decoy_noise]).astype(np.float32)
+    return _shuffle(features, labels.astype(np.int32), rng)
+
+
+def _population_drift_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    reference_count = total // 2
+    current_count = total - reference_count
+    stable_reference = rng.normal(0.0, 1.0, size=reference_count)
+    stable_current = rng.normal(0.0, 1.0, size=current_count)
+    shifted_reference = rng.normal(0.0, 0.35, size=reference_count)
+    shifted_current = rng.normal(1.35, 0.35, size=current_count)
+    variance_reference = rng.normal(0.0, 0.35, size=reference_count)
+    variance_current = rng.normal(0.0, 1.1, size=current_count)
+    tail_reference = rng.normal(0.0, 0.4, size=reference_count)
+    tail_current = rng.normal(0.0, 0.4, size=current_count)
+    tail_count = max(2, current_count // 10)
+    tail_current[:tail_count] = rng.normal(3.0, 0.25, size=tail_count)
+    decoy_reference = rng.normal(0.0, 1.0, size=reference_count)
+    decoy_current = rng.normal(0.0, 1.0, size=current_count)
+
+    reference = np.column_stack(
+        [stable_reference, shifted_reference, variance_reference, tail_reference, decoy_reference]
+    )
+    current = np.column_stack(
+        [stable_current, shifted_current, variance_current, tail_current, decoy_current]
+    )
+    features = np.vstack([reference, current]).astype(np.float32)
+    latent = 1.0 * features[:, 0] + 0.25 * features[:, 1] + rng.normal(0.0, 0.45, size=total)
+    labels = (latent > np.quantile(latent, 0.52)).astype(np.int32)
+    return features, labels.astype(np.int32)
+
+
+def _adversarial_validation_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    reference_count = total // 2
+    current_count = total - reference_count
+    stable_reference = rng.normal(0.0, 1.0, size=reference_count)
+    stable_current = rng.normal(0.0, 1.0, size=current_count)
+    axis_reference = rng.normal(0.0, 1.0, size=reference_count)
+    axis_current = rng.normal(0.25, 1.0, size=current_count)
+    interaction_reference = axis_reference + rng.normal(0.0, 0.18, size=reference_count)
+    interaction_current = -axis_current + rng.normal(0.0, 0.18, size=current_count)
+    variance_reference = rng.normal(0.0, 0.45, size=reference_count)
+    variance_current = rng.normal(0.0, 1.25, size=current_count)
+    decoy_reference = rng.normal(0.0, 1.0, size=reference_count)
+    decoy_current = rng.normal(0.0, 1.0, size=current_count)
+    reference = np.column_stack(
+        [stable_reference, axis_reference, interaction_reference, variance_reference, decoy_reference]
+    )
+    current = np.column_stack(
+        [stable_current, axis_current, interaction_current, variance_current, decoy_current]
+    )
+    features = np.vstack([reference, current]).astype(np.float32)
+    latent = 1.0 * features[:, 0] + 0.25 * features[:, 1] + rng.normal(0.0, 0.45, size=total)
+    labels = (latent > np.median(latent)).astype(np.int32)
+    return features, labels.astype(np.int32)
 
 
 def _cost_sensitive_screening(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:

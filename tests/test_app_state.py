@@ -77,6 +77,11 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         latest_slice_report={"summary": {"worst_f1_delta": -0.5}},
         latest_subgroup_disparity_report={"summary": {"max_disparity": 0.4}},
         latest_stress_report={"summary": {"worst_f1": 0.5}},
+        latest_permutation_null_report={"summary": {"verdict": "signal"}},
+        latest_population_drift_report={"summary": {"top_feature": 1}},
+        latest_adversarial_validation_report={"summary": {"verdict": "strong_multivariate_shift"}},
+        latest_cartography_report={"region_counts": {"easy_to_learn": 1}},
+        latest_mps_sweep_report={"recommended_bond_dim": 4},
     )
 
     _invalidate_model_artifacts(state)
@@ -104,6 +109,11 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
     assert state.latest_slice_report is None
     assert state.latest_subgroup_disparity_report is None
     assert state.latest_stress_report is None
+    assert state.latest_permutation_null_report is None
+    assert state.latest_population_drift_report is None
+    assert state.latest_adversarial_validation_report is None
+    assert state.latest_cartography_report is None
+    assert state.latest_mps_sweep_report is None
 
 
 def test_replace_dataset_invalidates_old_model_state():
@@ -341,6 +351,102 @@ def test_handle_worker_done_stores_calibration_repair_without_mutating_model():
     assert state.latest_calibration_repair_report == report
     assert state.busy is False
     assert "Calibration repair" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_permutation_null_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
+    model = state.model
+    report = {
+        "summary": {
+            "observed_f1": 0.9,
+            "null_mean_f1": 0.45,
+            "f1_gap": 0.45,
+            "f1_p_value": 0.01,
+            "verdict": "strong_signal",
+        },
+        "observed": {"f1": 0.9, "accuracy": 0.85, "balanced_accuracy": 0.84},
+        "p_values": {"f1": 0.01, "accuracy": 0.02, "balanced_accuracy": 0.03},
+        "null_distribution": {
+            "f1": {"mean": 0.45, "p95": 0.7},
+            "accuracy": {"mean": 0.5, "p95": 0.75},
+            "balanced_accuracy": {"mean": 0.5, "p95": 0.74},
+        },
+    }
+
+    _handle_worker_done(window, state, ("permutation_null", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_permutation_null_report == report
+    assert state.busy is False
+    assert "Permutation null" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_population_drift_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
+    model = state.model
+    report = {
+        "summary": {
+            "top_feature": 1,
+            "max_psi": 0.4,
+            "max_ks_statistic": 0.5,
+            "max_mean_shift_std": 1.2,
+            "label_prevalence_shift": 0.2,
+            "drifted_feature_count": 1,
+        },
+        "features": [
+            {
+                "feature_index": 1,
+                "psi": 0.4,
+                "ks_statistic": 0.5,
+                "mean_shift_std": 1.2,
+                "outside_reference_rate": 0.25,
+                "risk_flags": ["major_psi_shift"],
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("population_drift", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_population_drift_report == report
+    assert state.busy is False
+    assert "Population drift" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_adversarial_validation_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
+    model = state.model
+    report = {
+        "summary": {
+            "domain_auc": 0.88,
+            "domain_accuracy": 0.8,
+            "detectability": 0.88,
+            "top_feature": 2,
+            "verdict": "strong_multivariate_shift",
+        },
+        "features": [
+            {
+                "feature_index": 2,
+                "auc_drop": 0.2,
+                "accuracy_drop": 0.15,
+                "mean_probability_shift": 0.12,
+                "risk_flags": ["domain_auc_driver"],
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("adversarial_validation", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_adversarial_validation_report == report
+    assert state.busy is False
+    assert "Adversarial validation" in window["-LOG-"].value
 
 
 def test_handle_worker_done_stores_slice_report_without_mutating_model():
