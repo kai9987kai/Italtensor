@@ -28,10 +28,14 @@ def build_experiment_report(
     ablation_report: dict[str, Any] | None = None,
     decision_curve_report: dict[str, Any] | None = None,
     conformal_set_report: dict[str, Any] | None = None,
+    calibration_repair_report: dict[str, Any] | None = None,
     selective_risk_report: dict[str, Any] | None = None,
     sample_review_report: dict[str, Any] | None = None,
     threshold_report: dict[str, Any] | None = None,
+    model_response_report: dict[str, Any] | None = None,
+    pairwise_interaction_report: dict[str, Any] | None = None,
     slice_report: dict[str, Any] | None = None,
+    subgroup_disparity_report: dict[str, Any] | None = None,
     stress_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     label_array = np.asarray(labels, dtype=np.int32)
@@ -63,10 +67,14 @@ def build_experiment_report(
         "feature_ablation_diagnostics": ablation_report or None,
         "decision_curve_diagnostics": decision_curve_report or None,
         "posthoc_conformal_diagnostics": conformal_set_report or None,
+        "posthoc_calibration_repair_diagnostics": calibration_repair_report or None,
         "selective_prediction_diagnostics": selective_risk_report or None,
         "sample_review": sample_review_report or None,
         "threshold_diagnostics": threshold_report or None,
+        "model_response_diagnostics": model_response_report or None,
+        "pairwise_interaction_diagnostics": pairwise_interaction_report or None,
         "slice_diagnostics": slice_report or None,
+        "subgroup_disparity_diagnostics": subgroup_disparity_report or None,
         "stress_lab": stress_report or None,
         "feature_importances": feature_importances,
         "trial_history": trial_history or [],
@@ -90,12 +98,16 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     trial_history = report.get("trial_history", [])
     uncertainty = report.get("uncertainty") or {}
     conformal_sets = report.get("posthoc_conformal_diagnostics") or {}
+    calibration_repair = report.get("posthoc_calibration_repair_diagnostics") or {}
     ablation_diagnostics = report.get("feature_ablation_diagnostics") or {}
     decision_curve = report.get("decision_curve_diagnostics") or {}
     selective_risk = report.get("selective_prediction_diagnostics") or {}
     sample_review = report.get("sample_review") or {}
     threshold_diagnostics = report.get("threshold_diagnostics") or {}
+    model_response = report.get("model_response_diagnostics") or {}
+    pairwise_interactions = report.get("pairwise_interaction_diagnostics") or {}
     slice_diagnostics = report.get("slice_diagnostics") or {}
+    subgroup_disparity = report.get("subgroup_disparity_diagnostics") or {}
     stress_lab = report.get("stress_lab") or {}
     audit = dataset.get("audit") or {}
 
@@ -209,6 +221,35 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     else:
         lines.append("- None")
 
+    lines.extend(["", "## Post-Hoc Calibration Repair"])
+    if calibration_repair:
+        summary = calibration_repair.get("summary", {})
+        split = calibration_repair.get("split", {})
+        lines.extend(
+            [
+                f"- Split source: {split.get('source', '-')}",
+                f"- Calibration rows: {split.get('calibration_count', '-')}",
+                f"- Evaluation rows: {split.get('evaluation_count', '-')}",
+                f"- Recommended method: {summary.get('recommended_method', '-')}",
+                f"- Recommended Brier: {_format_value(summary.get('recommended_brier_score', '-'))}",
+                f"- Recommended ECE: {_format_value(summary.get('recommended_ece', '-'))}",
+                f"- Recommended log loss: {_format_value(summary.get('recommended_log_loss', '-'))}",
+                f"- Brier improvement: {_format_value(summary.get('best_brier_improvement', '-'))}",
+                f"- ECE improvement: {_format_value(summary.get('best_ece_improvement', '-'))}",
+                f"- Warning: {summary.get('warning') or 'none'}",
+            ]
+        )
+        for item in calibration_repair.get("methods", [])[:8]:
+            lines.append(
+                f"- {item.get('method', '-')}: "
+                f"Brier={_format_value(item.get('brier_score', '-'))}, "
+                f"ECE={_format_value(item.get('ece', '-'))}, "
+                f"logloss={_format_value(item.get('log_loss', '-'))}, "
+                f"dBrier={_format_value(item.get('brier_improvement', '-'))}"
+            )
+    else:
+        lines.append("- None")
+
     lines.extend(["", "## Top Feature Importances"])
     if importances:
         for item in importances:
@@ -241,6 +282,66 @@ def format_markdown_report(report: dict[str, Any]) -> str:
                 f"perm_drop={_format_value(item.get('permutation_f1_drop', '-'))}, "
                 f"flip={_format_value(max(float(item.get('label_flip_rate', 0.0)), float(item.get('permutation_label_flip_rate', 0.0))))}, "
                 f"corr={_format_value(item.get('label_correlation', '-'))}, "
+                f"flags={flags}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Model Response / Partial Dependence"])
+    if model_response:
+        summary = model_response.get("summary", {})
+        lines.extend(
+            [
+                f"- Top feature: {summary.get('top_feature', '-')}",
+                f"- Top response range: {_format_value(summary.get('top_response_range', '-'))}",
+                f"- Top direction: {summary.get('top_direction', '-')}",
+                f"- Nonmonotonic features: {summary.get('nonmonotonic_feature_count', '-')}",
+                f"- High-impact features: {summary.get('high_impact_feature_count', '-')}",
+                f"- Warning: {summary.get('warning') or 'none'}",
+            ]
+        )
+        for item in model_response.get("features", [])[:8]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            lines.append(
+                f"- Feature {item.get('feature_index')}: "
+                f"range={_format_value(item.get('response_range', '-'))}, "
+                f"change={_format_value(item.get('signed_change', '-'))}, "
+                f"direction={item.get('direction', '-')}, "
+                f"min_at={_format_value(item.get('min_response_value', '-'))}, "
+                f"max_at={_format_value(item.get('max_response_value', '-'))}, "
+                f"flags={flags}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Pairwise Feature Interactions"])
+    if pairwise_interactions:
+        summary = pairwise_interactions.get("summary", {})
+        top_pair = summary.get("top_pair")
+        pair_text = (
+            f"x{int(top_pair[0]) + 1}:x{int(top_pair[1]) + 1}"
+            if isinstance(top_pair, list) and len(top_pair) == 2
+            else "-"
+        )
+        lines.extend(
+            [
+                f"- Evaluated pairs: {summary.get('evaluated_pair_count', '-')}",
+                f"- Top pair: {pair_text}",
+                f"- Top interaction strength: {_format_value(summary.get('top_interaction_strength', '-'))}",
+                f"- Top max absolute interaction: {_format_value(summary.get('top_max_abs_interaction', '-'))}",
+                f"- Strong pairs: {summary.get('strong_pair_count', '-')}",
+                f"- Threshold-crossing pairs: {summary.get('threshold_crossing_pair_count', '-')}",
+                f"- Warning: {summary.get('warning') or 'none'}",
+            ]
+        )
+        for item in pairwise_interactions.get("pairs", [])[:8]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            lines.append(
+                f"- x{int(item.get('feature_i', 0)) + 1}:x{int(item.get('feature_j', 0)) + 1}: "
+                f"H={_format_value(item.get('interaction_strength', '-'))}, "
+                f"max_abs={_format_value(item.get('max_abs_interaction', '-'))}, "
+                f"mean_abs={_format_value(item.get('mean_abs_interaction', '-'))}, "
+                f"crossings={item.get('threshold_crossings', '-')}, "
                 f"flags={flags}"
             )
     else:
@@ -373,6 +474,36 @@ def format_markdown_report(report: dict[str, Any]) -> str:
                 f"n={item.get('count', '-')}, "
                 f"F1={_format_value(item.get('f1', '-'))}, "
                 f"delta={_format_value(item.get('f1_delta', '-'))}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Subgroup Disparity Diagnostics"])
+    if subgroup_disparity:
+        summary = subgroup_disparity.get("summary", {})
+        lines.extend(
+            [
+                f"- Evaluated features: {summary.get('evaluated_feature_count', '-')}",
+                f"- Evaluated subgroups: {summary.get('evaluated_subgroup_count', '-')}",
+                f"- Worst feature: {summary.get('worst_feature', '-')}",
+                f"- Worst subgroup: {summary.get('worst_subgroup', '-')}",
+                f"- Worst metric: {summary.get('worst_metric', '-')}",
+                f"- Max disparity: {_format_value(summary.get('max_disparity', '-'))}",
+                f"- Max FNR gap: {_format_value(summary.get('max_false_negative_rate_gap', '-'))}",
+                f"- Max FPR gap: {_format_value(summary.get('max_false_positive_rate_gap', '-'))}",
+                f"- Max selection-rate gap: {_format_value(summary.get('max_predicted_positive_rate_gap', '-'))}",
+                f"- Warning: {summary.get('warning') or 'none'}",
+            ]
+        )
+        for item in subgroup_disparity.get("subgroups", [])[:8]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            lines.append(
+                f"- {item.get('label', '-')}: "
+                f"n={item.get('count', '-')}, "
+                f"coverage={_format_value(item.get('coverage', '-'))}, "
+                f"gap={_format_value(item.get('risk_score', '-'))}, "
+                f"metric={item.get('worst_metric', '-')}, "
+                f"flags={flags}"
             )
     else:
         lines.append("- None")

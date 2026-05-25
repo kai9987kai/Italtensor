@@ -11,6 +11,7 @@ from .data import (
     parse_training_example,
     validate_dataset,
 )
+from .calibration_repair import format_calibration_repair_summary, run_calibration_repair_diagnostics
 from .counterfactual import find_counterfactual, format_counterfactual_result
 from .conformal_sets import format_conformal_set_summary, run_conformal_set_diagnostics
 from .decision_curve import format_decision_curve_summary, run_decision_curve_diagnostics
@@ -24,7 +25,9 @@ from .experiments import (
 )
 from .modeling import ModelConfig, NumpyBinaryClassifier, predict_probability
 from .model_communication import FUSION_CHOICES, ModelPanel, PanelMember, fit_stacking_weights
+from .model_response import format_model_response_summary, run_model_response_diagnostics
 from .model_runner import ModelRunQueue, available_backends, run_model_queue, select_best_from_runs
+from .pairwise_interactions import format_pairwise_interaction_summary, run_pairwise_interaction_diagnostics
 from .ablation import format_ablation_summary, run_ablation_diagnostics
 from .persistence import (
     load_dataset,
@@ -41,6 +44,7 @@ from .registry import ModelSlot
 from .sample_review import format_sample_review_summary, run_sample_review
 from .scoring import load_reviewed_prediction_csv, score_prediction_csv
 from .selective_risk import format_selective_risk_summary, run_selective_risk_diagnostics
+from .subgroup_disparity import format_subgroup_disparity_summary, run_subgroup_disparity_diagnostics
 from .audit import audit_dataset, format_audit_summary
 from .learning_curves import learning_curve_points
 from .slices import format_slice_summary, run_slice_diagnostics
@@ -71,7 +75,11 @@ class AppState:
     latest_selective_risk_report: dict[str, Any] | None = None
     latest_sample_review_report: dict[str, Any] | None = None
     latest_threshold_report: dict[str, Any] | None = None
+    latest_calibration_repair_report: dict[str, Any] | None = None
+    latest_model_response_report: dict[str, Any] | None = None
+    latest_pairwise_interaction_report: dict[str, Any] | None = None
     latest_slice_report: dict[str, Any] | None = None
+    latest_subgroup_disparity_report: dict[str, Any] | None = None
     latest_stress_report: dict[str, Any] | None = None
     latest_cartography_report: dict[str, Any] | None = None
     latest_mps_sweep_report: dict[str, Any] | None = None
@@ -143,12 +151,20 @@ def run_app() -> None:
                 _start_decision_curve(window, state)
             elif event == "-CONFORMAL_SETS-":
                 _start_conformal_sets(window, state)
+            elif event == "-CALIBRATION_REPAIR-":
+                _start_calibration_repair(window, state)
             elif event == "-SELECTIVE_RISK-":
                 _start_selective_risk(window, state)
             elif event == "-STRESS_TEST-":
                 _start_stress_test(window, state)
             elif event == "-SLICE_DIAGNOSTICS-":
                 _start_slice_diagnostics(window, state)
+            elif event == "-MODEL_RESPONSE-":
+                _start_model_response(window, state)
+            elif event == "-PAIRWISE_INTERACTIONS-":
+                _start_pairwise_interactions(window, state)
+            elif event == "-SUBGROUP_DISPARITY-":
+                _start_subgroup_disparity(window, state)
             elif event == "-THRESHOLD_DIAGNOSTICS-":
                 _start_threshold_diagnostics(window, state)
             elif event == "-SAMPLE_REVIEW-":
@@ -433,11 +449,15 @@ def _layout(sg):
         ],
         [
             sg.Button("Slice diagnostics", key="-SLICE_DIAGNOSTICS-", expand_x=True),
+            sg.Button("Model response", key="-MODEL_RESPONSE-", expand_x=True),
+            sg.Button("Pairwise interactions", key="-PAIRWISE_INTERACTIONS-", expand_x=True),
+            sg.Button("Subgroup disparity", key="-SUBGROUP_DISPARITY-", expand_x=True),
             sg.Button("Threshold tradeoff", key="-THRESHOLD_DIAGNOSTICS-", expand_x=True),
         ],
         [
             sg.Button("Decision curve", key="-DECISION_CURVE-", expand_x=True),
             sg.Button("Conformal sets", key="-CONFORMAL_SETS-", expand_x=True),
+            sg.Button("Calibration repair", key="-CALIBRATION_REPAIR-", expand_x=True),
             sg.Button("Selective risk", key="-SELECTIVE_RISK-", expand_x=True),
         ],
         [
@@ -622,6 +642,24 @@ def _start_conformal_sets(window, state: AppState) -> None:
     _start_worker(window, state, "Running conformal set diagnostics...", task)
 
 
+def _start_calibration_repair(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    if state.model is None:
+        raise ValueError("Train or load a model before running calibration repair diagnostics.")
+    dataset = validate_dataset(state.features, state.labels, min_samples=4, require_two_classes=True)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_calibration_repair_diagnostics(
+            state.model,
+            dataset.features,
+            dataset.labels,
+            preprocessor=state.preprocessor,
+        )
+        return "calibration_repair", report
+
+    _start_worker(window, state, "Running calibration repair diagnostics...", task)
+
+
 def _start_selective_risk(window, state: AppState) -> None:
     _ensure_not_busy(state)
     if state.model is None:
@@ -677,6 +715,61 @@ def _start_slice_diagnostics(window, state: AppState) -> None:
         return "slice_diagnostics", report
 
     _start_worker(window, state, "Running slice diagnostics...", task)
+
+
+def _start_model_response(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    if state.model is None:
+        raise ValueError("Train or load a model before running model response diagnostics.")
+    dataset = validate_dataset(state.features, state.labels, min_samples=1, require_two_classes=False)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_model_response_diagnostics(
+            state.model,
+            dataset.features,
+            dataset.labels,
+            preprocessor=state.preprocessor,
+        )
+        return "model_response", report
+
+    _start_worker(window, state, "Running model response diagnostics...", task)
+
+
+def _start_pairwise_interactions(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    if state.model is None:
+        raise ValueError("Train or load a model before running pairwise interaction diagnostics.")
+    dataset = validate_dataset(state.features, state.labels, min_samples=1, require_two_classes=False)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_pairwise_interaction_diagnostics(
+            state.model,
+            dataset.features,
+            dataset.labels,
+            preprocessor=state.preprocessor,
+        )
+        return "pairwise_interactions", report
+
+    _start_worker(window, state, "Running pairwise interaction diagnostics...", task)
+
+
+def _start_subgroup_disparity(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    if state.model is None:
+        raise ValueError("Train or load a model before running subgroup disparity diagnostics.")
+    dataset = validate_dataset(state.features, state.labels, min_samples=2, require_two_classes=False)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_subgroup_disparity_diagnostics(
+            state.model,
+            dataset.features,
+            dataset.labels,
+            preprocessor=state.preprocessor,
+            threshold=state.latest_threshold,
+        )
+        return "subgroup_disparity", report
+
+    _start_worker(window, state, "Running subgroup disparity diagnostics...", task)
 
 
 def _start_threshold_diagnostics(window, state: AppState) -> None:
@@ -817,10 +910,14 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         ablation_report=state.latest_ablation_report,
         decision_curve_report=state.latest_decision_curve_report,
         conformal_set_report=state.latest_conformal_set_report,
+        calibration_repair_report=state.latest_calibration_repair_report,
         selective_risk_report=state.latest_selective_risk_report,
         sample_review_report=state.latest_sample_review_report,
         threshold_report=state.latest_threshold_report,
+        model_response_report=state.latest_model_response_report,
+        pairwise_interaction_report=state.latest_pairwise_interaction_report,
         slice_report=state.latest_slice_report,
+        subgroup_disparity_report=state.latest_subgroup_disparity_report,
         stress_report=state.latest_stress_report,
     )
     window["-MODEL_PATH-"].update(str(model_path))
@@ -861,18 +958,32 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     ablation_report = metadata.get("feature_ablation_diagnostics")
     decision_curve_report = metadata.get("decision_curve_diagnostics")
     conformal_set_report = metadata.get("posthoc_conformal_diagnostics") or metadata.get("conformal_set_diagnostics")
+    calibration_repair_report = metadata.get("posthoc_calibration_repair_diagnostics")
     selective_risk_report = metadata.get("selective_prediction_diagnostics")
     sample_review_report = metadata.get("sample_review")
     threshold_report = metadata.get("threshold_diagnostics")
+    model_response_report = metadata.get("model_response_diagnostics")
+    pairwise_interaction_report = metadata.get("pairwise_interaction_diagnostics")
     slice_report = metadata.get("slice_diagnostics")
+    subgroup_disparity_report = metadata.get("subgroup_disparity_diagnostics")
     stress_report = metadata.get("stress_lab")
     state.latest_ablation_report = ablation_report if isinstance(ablation_report, dict) else None
     state.latest_decision_curve_report = decision_curve_report if isinstance(decision_curve_report, dict) else None
     state.latest_conformal_set_report = conformal_set_report if isinstance(conformal_set_report, dict) else None
+    state.latest_calibration_repair_report = (
+        calibration_repair_report if isinstance(calibration_repair_report, dict) else None
+    )
     state.latest_selective_risk_report = selective_risk_report if isinstance(selective_risk_report, dict) else None
     state.latest_sample_review_report = sample_review_report if isinstance(sample_review_report, dict) else None
     state.latest_threshold_report = threshold_report if isinstance(threshold_report, dict) else None
+    state.latest_model_response_report = model_response_report if isinstance(model_response_report, dict) else None
+    state.latest_pairwise_interaction_report = (
+        pairwise_interaction_report if isinstance(pairwise_interaction_report, dict) else None
+    )
     state.latest_slice_report = slice_report if isinstance(slice_report, dict) else None
+    state.latest_subgroup_disparity_report = (
+        subgroup_disparity_report if isinstance(subgroup_disparity_report, dict) else None
+    )
     state.latest_stress_report = stress_report if isinstance(stress_report, dict) else None
     _log(window, f"Loaded model expecting {state.input_dim} features.")
 
@@ -895,10 +1006,14 @@ def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
         ablation_report=state.latest_ablation_report,
         decision_curve_report=state.latest_decision_curve_report,
         conformal_set_report=state.latest_conformal_set_report,
+        calibration_repair_report=state.latest_calibration_repair_report,
         selective_risk_report=state.latest_selective_risk_report,
         sample_review_report=state.latest_sample_review_report,
         threshold_report=state.latest_threshold_report,
+        model_response_report=state.latest_model_response_report,
+        pairwise_interaction_report=state.latest_pairwise_interaction_report,
         slice_report=state.latest_slice_report,
+        subgroup_disparity_report=state.latest_subgroup_disparity_report,
         stress_report=state.latest_stress_report,
     )
     path = export_experiment_report(_required_path(values["-REPORT_PATH-"], "report path"), report)
@@ -986,10 +1101,14 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_ablation_report = None
         state.latest_decision_curve_report = None
         state.latest_conformal_set_report = None
+        state.latest_calibration_repair_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
         state.latest_threshold_report = None
+        state.latest_model_response_report = None
+        state.latest_pairwise_interaction_report = None
         state.latest_slice_report = None
+        state.latest_subgroup_disparity_report = None
         state.latest_stress_report = None
         _log(window, f"Training complete: {_format_metrics(training_result.metrics)}")
         _log(window, _format_calibration(training_result.metrics))
@@ -1009,10 +1128,14 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_ablation_report = None
         state.latest_decision_curve_report = None
         state.latest_conformal_set_report = None
+        state.latest_calibration_repair_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
         state.latest_threshold_report = None
+        state.latest_model_response_report = None
+        state.latest_pairwise_interaction_report = None
         state.latest_slice_report = None
+        state.latest_subgroup_disparity_report = None
         state.latest_stress_report = None
         _log(window, f"Best config: {_format_config(best.config)}")
         _log(window, f"Best metrics: {_format_metrics(best.metrics)}")
@@ -1070,6 +1193,18 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                 f"mean_size={float(item['mean_set_size']):.4f}, "
                 f"singleton_acc={singleton_text}",
             )
+    elif kind == "calibration_repair":
+        state.latest_calibration_repair_report = result
+        _log(window, format_calibration_repair_summary(result))
+        for item in result.get("methods", [])[:6]:
+            _log(
+                window,
+                f"  {item['method']}: "
+                f"Brier={float(item['brier_score']):.4f}, "
+                f"ECE={float(item['ece']):.4f}, "
+                f"logloss={float(item['log_loss']):.4f}, "
+                f"dBrier={float(item.get('brier_improvement', 0.0)):.4f}",
+            )
     elif kind == "selective_risk":
         state.latest_selective_risk_report = result
         _log(window, format_selective_risk_summary(result))
@@ -1107,6 +1242,45 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                 f"F1={float(item['f1']):.4f}, "
                 f"acc={float(item['accuracy']):.4f}, "
                 f"delta={float(item['f1_delta']):.4f}",
+            )
+    elif kind == "model_response":
+        state.latest_model_response_report = result
+        _log(window, format_model_response_summary(result))
+        for item in result.get("features", [])[:6]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            _log(
+                window,
+                f"  x{int(item['feature_index']) + 1}: "
+                f"range={float(item['response_range']):.4f}, "
+                f"change={float(item['signed_change']):.4f}, "
+                f"direction={item['direction']}, "
+                f"flags={flags}",
+            )
+    elif kind == "pairwise_interactions":
+        state.latest_pairwise_interaction_report = result
+        _log(window, format_pairwise_interaction_summary(result))
+        for item in result.get("pairs", [])[:6]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            _log(
+                window,
+                f"  x{int(item['feature_i']) + 1}:x{int(item['feature_j']) + 1}: "
+                f"H={float(item['interaction_strength']):.4f}, "
+                f"max_abs={float(item['max_abs_interaction']):.4f}, "
+                f"cross={int(item['threshold_crossings'])}, "
+                f"flags={flags}",
+            )
+    elif kind == "subgroup_disparity":
+        state.latest_subgroup_disparity_report = result
+        _log(window, format_subgroup_disparity_summary(result))
+        for item in result.get("subgroups", [])[:6]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            _log(
+                window,
+                f"  {item['label']}: "
+                f"n={int(item['count'])}, "
+                f"gap={float(item['risk_score']):.4f}, "
+                f"metric={item['worst_metric']}, "
+                f"flags={flags}",
             )
     elif kind == "threshold_diagnostics":
         state.latest_threshold_report = result
@@ -1174,10 +1348,14 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_ablation_report = None
         state.latest_decision_curve_report = None
         state.latest_conformal_set_report = None
+        state.latest_calibration_repair_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
         state.latest_threshold_report = None
+        state.latest_model_response_report = None
+        state.latest_pairwise_interaction_report = None
         state.latest_slice_report = None
+        state.latest_subgroup_disparity_report = None
         state.latest_stress_report = None
         for item in result:
             slot = ModelSlot(
@@ -1206,10 +1384,14 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_ablation_report = None
         state.latest_decision_curve_report = None
         state.latest_conformal_set_report = None
+        state.latest_calibration_repair_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
         state.latest_threshold_report = None
+        state.latest_model_response_report = None
+        state.latest_pairwise_interaction_report = None
         state.latest_slice_report = None
+        state.latest_subgroup_disparity_report = None
         state.latest_stress_report = None
         
         # Auto-store in slots
@@ -1296,10 +1478,14 @@ def _invalidate_model_artifacts(state: AppState) -> None:
     state.latest_ablation_report = None
     state.latest_decision_curve_report = None
     state.latest_conformal_set_report = None
+    state.latest_calibration_repair_report = None
     state.latest_selective_risk_report = None
     state.latest_sample_review_report = None
     state.latest_threshold_report = None
+    state.latest_model_response_report = None
+    state.latest_pairwise_interaction_report = None
     state.latest_slice_report = None
+    state.latest_subgroup_disparity_report = None
     state.latest_stress_report = None
 
 
@@ -1348,9 +1534,13 @@ def _set_busy(window, busy: bool) -> None:
         "-ABLATION_DIAGNOSTICS-",
         "-STRESS_TEST-",
         "-SLICE_DIAGNOSTICS-",
+        "-MODEL_RESPONSE-",
+        "-PAIRWISE_INTERACTIONS-",
+        "-SUBGROUP_DISPARITY-",
         "-THRESHOLD_DIAGNOSTICS-",
         "-DECISION_CURVE-",
         "-CONFORMAL_SETS-",
+        "-CALIBRATION_REPAIR-",
         "-SELECTIVE_RISK-",
         "-SAMPLE_REVIEW-",
         "-CARTOGRAPHY-",
@@ -1646,10 +1836,14 @@ def _activate_model_slot(window, state: AppState, values: dict[str, Any]) -> Non
     state.latest_ablation_report = None
     state.latest_decision_curve_report = None
     state.latest_conformal_set_report = None
+    state.latest_calibration_repair_report = None
     state.latest_selective_risk_report = None
     state.latest_sample_review_report = None
     state.latest_threshold_report = None
+    state.latest_model_response_report = None
+    state.latest_pairwise_interaction_report = None
     state.latest_slice_report = None
+    state.latest_subgroup_disparity_report = None
     state.latest_stress_report = None
     _log(window, f"Activated slot '{slot.name}'. Predictions and weight analysis will now run on this model.")
     _update_slots_listbox(window, state)
@@ -1737,10 +1931,14 @@ def _load_registry(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_ablation_report = None
         state.latest_decision_curve_report = None
         state.latest_conformal_set_report = None
+        state.latest_calibration_repair_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
         state.latest_threshold_report = None
+        state.latest_model_response_report = None
+        state.latest_pairwise_interaction_report = None
         state.latest_slice_report = None
+        state.latest_subgroup_disparity_report = None
         state.latest_stress_report = None
     _update_slots_listbox(window, state)
     _log(window, f"Loaded {len(slots)} slot(s) from registry.")
@@ -1763,10 +1961,14 @@ def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_ablation_report = None
     state.latest_decision_curve_report = None
     state.latest_conformal_set_report = None
+    state.latest_calibration_repair_report = None
     state.latest_selective_risk_report = None
     state.latest_sample_review_report = None
     state.latest_threshold_report = None
+    state.latest_model_response_report = None
+    state.latest_pairwise_interaction_report = None
     state.latest_slice_report = None
+    state.latest_subgroup_disparity_report = None
     state.latest_stress_report = None
     
     state.latest_config = ModelConfig(
@@ -1827,10 +2029,14 @@ def _build_stacked_ensemble(window, state: AppState, values: dict[str, Any]) -> 
     state.latest_ablation_report = None
     state.latest_decision_curve_report = None
     state.latest_conformal_set_report = None
+    state.latest_calibration_repair_report = None
     state.latest_selective_risk_report = None
     state.latest_sample_review_report = None
     state.latest_threshold_report = None
+    state.latest_model_response_report = None
+    state.latest_pairwise_interaction_report = None
     state.latest_slice_report = None
+    state.latest_subgroup_disparity_report = None
     state.latest_stress_report = None
     probs = ensemble.predict(dataset.features).reshape(-1)
     metrics = evaluate_predictions(dataset.labels, probs, threshold=0.5)
@@ -2064,10 +2270,14 @@ def _merge_slots(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_ablation_report = None
         state.latest_decision_curve_report = None
         state.latest_conformal_set_report = None
+        state.latest_calibration_repair_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
         state.latest_threshold_report = None
+        state.latest_model_response_report = None
+        state.latest_pairwise_interaction_report = None
         state.latest_slice_report = None
+        state.latest_subgroup_disparity_report = None
         state.latest_stress_report = None
         state.latest_config = ModelConfig(
             lr_schedule="constant",

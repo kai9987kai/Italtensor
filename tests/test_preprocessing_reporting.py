@@ -158,6 +158,38 @@ def test_report_export_json_and_markdown(tmp_path):
                 }
             ],
         },
+        calibration_repair_report={
+            "split": {
+                "source": "posthoc_stratified_split",
+                "calibration_count": 4,
+                "evaluation_count": 4,
+            },
+            "summary": {
+                "recommended_method": "platt",
+                "recommended_brier_score": 0.1,
+                "recommended_ece": 0.05,
+                "recommended_log_loss": 0.4,
+                "best_brier_improvement": 0.08,
+                "best_ece_improvement": 0.03,
+                "warning": None,
+            },
+            "methods": [
+                {
+                    "method": "raw",
+                    "brier_score": 0.18,
+                    "ece": 0.08,
+                    "log_loss": 0.5,
+                    "brier_improvement": 0.0,
+                },
+                {
+                    "method": "platt",
+                    "brier_score": 0.1,
+                    "ece": 0.05,
+                    "log_loss": 0.4,
+                    "brier_improvement": 0.08,
+                },
+            ],
+        },
         selective_risk_report={
             "base": {"error_rate": 0.5},
             "summary": {
@@ -180,6 +212,49 @@ def test_report_export_json_and_markdown(tmp_path):
                 }
             ],
         },
+        model_response_report={
+            "summary": {
+                "top_feature": 0,
+                "top_response_range": 0.5,
+                "top_direction": "increasing",
+                "nonmonotonic_feature_count": 1,
+                "high_impact_feature_count": 2,
+                "warning": None,
+            },
+            "features": [
+                {
+                    "feature_index": 0,
+                    "response_range": 0.5,
+                    "signed_change": 0.45,
+                    "direction": "increasing",
+                    "min_response_value": -1.0,
+                    "max_response_value": 1.0,
+                    "risk_flags": ["high_impact"],
+                }
+            ],
+        },
+        pairwise_interaction_report={
+            "summary": {
+                "evaluated_pair_count": 1,
+                "top_pair": [0, 1],
+                "top_interaction_strength": 0.55,
+                "top_max_abs_interaction": 0.22,
+                "strong_pair_count": 1,
+                "threshold_crossing_pair_count": 1,
+                "warning": None,
+            },
+            "pairs": [
+                {
+                    "feature_i": 0,
+                    "feature_j": 1,
+                    "interaction_strength": 0.55,
+                    "max_abs_interaction": 0.22,
+                    "mean_abs_interaction": 0.1,
+                    "threshold_crossings": 2,
+                    "risk_flags": ["strong_interaction"],
+                }
+            ],
+        },
         slice_report={
             "base": {"f1": 0.75},
             "summary": {
@@ -196,6 +271,30 @@ def test_report_export_json_and_markdown(tmp_path):
                     "count": 2,
                     "f1": 0.5,
                     "f1_delta": -0.25,
+                }
+            ],
+        },
+        subgroup_disparity_report={
+            "summary": {
+                "evaluated_feature_count": 1,
+                "evaluated_subgroup_count": 2,
+                "worst_feature": 1,
+                "worst_subgroup": "x2=1",
+                "worst_metric": "false_negative_rate_gap",
+                "max_disparity": 0.6,
+                "max_false_negative_rate_gap": 0.6,
+                "max_false_positive_rate_gap": 0.2,
+                "max_predicted_positive_rate_gap": 0.3,
+                "warning": "Numeric feature slices are proxy subgroup diagnostics.",
+            },
+            "subgroups": [
+                {
+                    "label": "x2=1",
+                    "count": 4,
+                    "coverage": 0.5,
+                    "risk_score": 0.6,
+                    "worst_metric": "false_negative_rate_gap",
+                    "risk_flags": ["fnr_gap"],
                 }
             ],
         },
@@ -237,8 +336,12 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["threshold_diagnostics"]["summary"]["best_f1_threshold"] == 0.3
     assert saved_json["decision_curve_diagnostics"]["summary"]["best_threshold"] == 0.4
     assert saved_json["posthoc_conformal_diagnostics"]["summary"]["recommended_alpha"] == 0.1
+    assert saved_json["posthoc_calibration_repair_diagnostics"]["summary"]["recommended_method"] == "platt"
     assert saved_json["selective_prediction_diagnostics"]["summary"]["recommended_cutoff"] == 0.2
+    assert saved_json["model_response_diagnostics"]["summary"]["top_feature"] == 0
+    assert saved_json["pairwise_interaction_diagnostics"]["summary"]["top_pair"] == [0, 1]
     assert saved_json["slice_diagnostics"]["summary"]["worst_slice"] == "x1[0, 1]"
+    assert saved_json["subgroup_disparity_diagnostics"]["summary"]["max_disparity"] == 0.6
     assert saved_json["stress_lab"]["summary"]["worst_f1"] == 0.5
     assert saved_json["trial_history"][0]["config"]["feature_map"] == "rff"
     assert "Feature 0" in saved_markdown
@@ -256,10 +359,18 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "Useful threshold ranges" in saved_markdown
     assert "## Post-Hoc Conformal Diagnostics" in saved_markdown
     assert "Recommended alpha" in saved_markdown
+    assert "## Post-Hoc Calibration Repair" in saved_markdown
+    assert "Recommended method" in saved_markdown
     assert "## Selective Prediction / Risk-Coverage" in saved_markdown
     assert "Recommended cutoff" in saved_markdown
+    assert "## Model Response / Partial Dependence" in saved_markdown
+    assert "Top response range" in saved_markdown
+    assert "## Pairwise Feature Interactions" in saved_markdown
+    assert "Top interaction strength" in saved_markdown
     assert "## Slice Diagnostics" in saved_markdown
     assert "x1[0.0000, 1.0000]" in saved_markdown
+    assert "## Subgroup Disparity Diagnostics" in saved_markdown
+    assert "Max FNR gap" in saved_markdown
     assert "## Robustness Stress Lab" in saved_markdown
     assert "feature_dropout" in saved_markdown
 

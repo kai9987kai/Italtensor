@@ -126,10 +126,14 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
         ablation_report={"summary": {"top_feature": "x1"}},
         decision_curve_report={"summary": {"best_threshold": 0.4}},
         conformal_set_report={"summary": {"recommended_alpha": 0.1}},
+        calibration_repair_report={"summary": {"recommended_method": "platt"}},
         selective_risk_report={"summary": {"recommended_cutoff": 0.2}},
         sample_review_report={"summary": {"label_issue_count": 1}},
         threshold_report={"summary": {"best_f1_threshold": 0.3}},
+        model_response_report={"summary": {"top_feature": 0}},
+        pairwise_interaction_report={"summary": {"top_pair": [0, 1]}},
         slice_report={"summary": {"worst_slice": "x1[0, 1]"}},
+        subgroup_disparity_report={"summary": {"max_disparity": 0.6}},
         stress_report={"summary": {"worst_f1": 0.7}},
     )
     loaded, metadata = load_model_bundle(model_path)
@@ -148,10 +152,14 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
     assert metadata["feature_ablation_diagnostics"]["summary"]["top_feature"] == "x1"
     assert metadata["decision_curve_diagnostics"]["summary"]["best_threshold"] == 0.4
     assert metadata["posthoc_conformal_diagnostics"]["summary"]["recommended_alpha"] == 0.1
+    assert metadata["posthoc_calibration_repair_diagnostics"]["summary"]["recommended_method"] == "platt"
     assert metadata["selective_prediction_diagnostics"]["summary"]["recommended_cutoff"] == 0.2
     assert metadata["sample_review"]["summary"]["label_issue_count"] == 1
     assert metadata["threshold_diagnostics"]["summary"]["best_f1_threshold"] == 0.3
+    assert metadata["model_response_diagnostics"]["summary"]["top_feature"] == 0
+    assert metadata["pairwise_interaction_diagnostics"]["summary"]["top_pair"] == [0, 1]
     assert metadata["slice_diagnostics"]["summary"]["worst_slice"] == "x1[0, 1]"
+    assert metadata["subgroup_disparity_diagnostics"]["summary"]["max_disparity"] == 0.6
     assert metadata["stress_lab"]["summary"]["worst_f1"] == 0.7
     assert probabilities.shape == (1,)
 

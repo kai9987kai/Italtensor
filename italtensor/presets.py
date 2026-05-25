@@ -233,6 +233,66 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="subgroup_disparity_lab",
+        name="Subgroup disparity lab",
+        description="A visible marker group has different error behavior for subgroup disparity diagnostics.",
+        default_samples=220,
+        input_dim=3,
+        recommended_feature_map="quadratic",
+        feature_names=("primary_signal", "group_marker", "context_noise"),
+        training_defaults={"epochs": 90, "batch_size": 16, "trials": 16, "feature_map": "quadratic"},
+        prediction_examples=(
+            {"name": "Majority clear positive", "features": [1.0, 0.0, 0.0], "expected_label": 1},
+            {"name": "Minority conflict", "features": [1.0, 1.0, 0.0], "expected_label": None},
+            {"name": "Majority clear negative", "features": [-1.0, 0.0, 0.0], "expected_label": 0},
+        ),
+    ),
+    PresetInfo(
+        key="response_curve_lab",
+        name="Response curve lab",
+        description="Monotonic, nonlinear, and weak features for model-response and partial-dependence diagnostics.",
+        default_samples=220,
+        input_dim=3,
+        recommended_feature_map="quadratic",
+        feature_names=("linear_driver", "nonlinear_arc", "weak_noise"),
+        training_defaults={"epochs": 90, "batch_size": 16, "trials": 16, "feature_map": "quadratic"},
+        prediction_examples=(
+            {"name": "Low response", "features": [-1.2, -1.0, 0.0], "expected_label": 0},
+            {"name": "Arc peak", "features": [0.1, 0.0, 0.0], "expected_label": 1},
+            {"name": "Arc tail", "features": [0.4, 1.4, 0.0], "expected_label": None},
+        ),
+    ),
+    PresetInfo(
+        key="interaction_surface_lab",
+        name="Interaction surface lab",
+        description="A product-like x1*x2 signal with distractors for pairwise interaction diagnostics.",
+        default_samples=240,
+        input_dim=4,
+        recommended_feature_map="quadratic",
+        feature_names=("left_factor", "right_factor", "weak_signal", "distractor_noise"),
+        training_defaults={"epochs": 90, "batch_size": 16, "trials": 16, "feature_map": "quadratic"},
+        prediction_examples=(
+            {"name": "Both factors aligned", "features": [1.2, 1.2, 0.0, 0.0], "expected_label": 1},
+            {"name": "Opposing factors", "features": [1.2, -1.2, 0.0, 0.0], "expected_label": 0},
+            {"name": "Weak-signal distractor", "features": [0.1, 0.1, 1.0, 0.0], "expected_label": None},
+        ),
+    ),
+    PresetInfo(
+        key="calibration_repair_lab",
+        name="Calibration repair lab",
+        description="Overconfident margins and noisy shoulders for post-hoc probability calibration experiments.",
+        default_samples=220,
+        input_dim=3,
+        recommended_feature_map="linear",
+        feature_names=("margin_score", "confidence_trap", "background_noise"),
+        training_defaults={"epochs": 80, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Confident negative", "features": [-1.2, 1.0, 0.0], "expected_label": 0},
+            {"name": "Miscalibrated shoulder", "features": [0.35, 1.0, 0.0], "expected_label": None},
+            {"name": "Confident positive", "features": [1.2, 1.0, 0.0], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
         key="cost_sensitive_screening",
         name="Cost-sensitive screening",
         description="Rare positives with overlapping scores for threshold tradeoff and false-negative-cost experiments.",
@@ -374,6 +434,14 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _spurious_shortcut(total, rng)
     elif preset.key == "subgroup_blind_spot":
         features, labels = _subgroup_blind_spot(total, rng)
+    elif preset.key == "subgroup_disparity_lab":
+        features, labels = _subgroup_disparity_lab(total, rng)
+    elif preset.key == "response_curve_lab":
+        features, labels = _response_curve_lab(total, rng)
+    elif preset.key == "interaction_surface_lab":
+        features, labels = _interaction_surface_lab(total, rng)
+    elif preset.key == "calibration_repair_lab":
+        features, labels = _calibration_repair_lab(total, rng)
     elif preset.key == "cost_sensitive_screening":
         features, labels = _cost_sensitive_screening(total, rng)
     elif preset.key == "decision_utility_tradeoff":
@@ -631,6 +699,52 @@ def _subgroup_blind_spot(total: int, rng: np.random.Generator) -> tuple[np.ndarr
     labels = (score > 0.0).astype(np.int32)
     subgroup_marker = subgroup.astype(np.float32) + rng.normal(0.0, 0.04, size=total)
     features = np.column_stack([primary_signal, subgroup_marker, context_noise]).astype(np.float32)
+    return _shuffle(features, labels, rng)
+
+
+def _subgroup_disparity_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    subgroup = rng.random(total) < 0.28
+    primary_signal = rng.normal(0.0, 1.0, size=total)
+    context_noise = rng.normal(0.0, 1.0, size=total)
+    majority_score = primary_signal + 0.35 * context_noise + rng.normal(0.0, 0.35, size=total)
+    minority_score = -0.85 * primary_signal + 0.25 * context_noise + rng.normal(0.0, 0.55, size=total)
+    score = np.where(subgroup, minority_score, majority_score)
+    labels = (score > np.median(score)).astype(np.int32)
+    features = np.column_stack([primary_signal, subgroup.astype(np.float32), context_noise]).astype(np.float32)
+    return _shuffle(features, labels, rng)
+
+
+def _response_curve_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    linear_driver = rng.normal(0.0, 1.0, size=total)
+    nonlinear_arc = rng.uniform(-1.8, 1.8, size=total)
+    weak_noise = rng.normal(0.0, 1.0, size=total)
+    arc_signal = 1.25 - 1.15 * np.square(nonlinear_arc)
+    latent = 0.85 * linear_driver + arc_signal + 0.12 * weak_noise + rng.normal(0.0, 0.35, size=total)
+    labels = (latent > np.median(latent)).astype(np.int32)
+    features = np.column_stack([linear_driver, nonlinear_arc, weak_noise]).astype(np.float32)
+    return _shuffle(features, labels, rng)
+
+
+def _interaction_surface_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    left_factor = rng.normal(0.0, 1.0, size=total)
+    right_factor = rng.normal(0.0, 1.0, size=total)
+    weak_signal = rng.normal(0.0, 1.0, size=total)
+    distractor_noise = rng.normal(0.0, 1.0, size=total)
+    latent = 1.4 * left_factor * right_factor + 0.3 * weak_signal + rng.normal(0.0, 0.35, size=total)
+    labels = (latent > np.median(latent)).astype(np.int32)
+    features = np.column_stack([left_factor, right_factor, weak_signal, distractor_noise]).astype(np.float32)
+    return _shuffle(features, labels, rng)
+
+
+def _calibration_repair_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    margin_score = rng.normal(0.0, 1.0, size=total)
+    confidence_trap = np.abs(margin_score) + rng.normal(0.0, 0.2, size=total)
+    background_noise = rng.normal(0.0, 1.0, size=total)
+    shoulder = np.abs(margin_score) < 0.75
+    base_probability = 1.0 / (1.0 + np.exp(-(1.35 * margin_score + 0.15 * background_noise)))
+    noisy_probability = np.where(shoulder, 0.35 + 0.3 * base_probability, base_probability)
+    labels = (rng.random(total) < noisy_probability).astype(np.int32)
+    features = np.column_stack([margin_score, confidence_trap, background_noise]).astype(np.float32)
     return _shuffle(features, labels, rng)
 
 

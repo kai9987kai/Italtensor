@@ -88,6 +88,10 @@ def test_experimental_builtin_presets_are_available():
         "Active learning margin",
         "Spurious shortcut",
         "Subgroup blind spot",
+        "Subgroup disparity lab",
+        "Response curve lab",
+        "Interaction surface lab",
+        "Calibration repair lab",
         "Cost-sensitive screening",
         "Decision utility tradeoff",
         "Selective abstention triage",
@@ -152,6 +156,42 @@ def test_subgroup_blind_spot_preset_recommends_interactions():
     assert metadata["recommended_feature_map"] == "quadratic"
     assert metadata["feature_names"] == ["primary_signal", "subgroup_marker", "context_noise"]
     assert any(example["name"] == "Minority flipped rule" for example in metadata["prediction_examples"])
+
+
+def test_subgroup_disparity_lab_preset_has_marker_feature():
+    metadata = preset_metadata("Subgroup disparity lab")
+
+    assert metadata["input_dim"] == 3
+    assert metadata["recommended_feature_map"] == "quadratic"
+    assert metadata["feature_names"] == ["primary_signal", "group_marker", "context_noise"]
+    assert any(example["name"] == "Minority conflict" for example in metadata["prediction_examples"])
+
+
+def test_response_curve_lab_preset_has_nonlinear_feature():
+    metadata = preset_metadata("Response curve lab")
+
+    assert metadata["input_dim"] == 3
+    assert metadata["recommended_feature_map"] == "quadratic"
+    assert metadata["feature_names"] == ["linear_driver", "nonlinear_arc", "weak_noise"]
+    assert any(example["name"] == "Arc peak" for example in metadata["prediction_examples"])
+
+
+def test_interaction_surface_lab_preset_has_factor_features():
+    metadata = preset_metadata("Interaction surface lab")
+
+    assert metadata["input_dim"] == 4
+    assert metadata["recommended_feature_map"] == "quadratic"
+    assert metadata["feature_names"] == ["left_factor", "right_factor", "weak_signal", "distractor_noise"]
+    assert any(example["name"] == "Both factors aligned" for example in metadata["prediction_examples"])
+
+
+def test_calibration_repair_lab_preset_has_confidence_trap():
+    metadata = preset_metadata("Calibration repair lab")
+
+    assert metadata["input_dim"] == 3
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == ["margin_score", "confidence_trap", "background_noise"]
+    assert any(example["name"] == "Miscalibrated shoulder" for example in metadata["prediction_examples"])
 
 
 def test_cost_sensitive_screening_preset_has_borderline_example():

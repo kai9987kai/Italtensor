@@ -68,10 +68,14 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         latest_ablation_report={"summary": {"top_feature": "x1"}},
         latest_decision_curve_report={"summary": {"best_threshold": 0.4}},
         latest_conformal_set_report={"summary": {"recommended_alpha": 0.1}},
+        latest_calibration_repair_report={"summary": {"recommended_method": "platt"}},
         latest_selective_risk_report={"summary": {"recommended_cutoff": 0.2}},
         latest_sample_review_report={"summary": {"label_issue_count": 1}},
         latest_threshold_report={"summary": {"best_f1": 1.0}},
+        latest_model_response_report={"summary": {"top_feature": 0}},
+        latest_pairwise_interaction_report={"summary": {"top_pair": [0, 1]}},
         latest_slice_report={"summary": {"worst_f1_delta": -0.5}},
+        latest_subgroup_disparity_report={"summary": {"max_disparity": 0.4}},
         latest_stress_report={"summary": {"worst_f1": 0.5}},
     )
 
@@ -91,10 +95,14 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
     assert state.latest_ablation_report is None
     assert state.latest_decision_curve_report is None
     assert state.latest_conformal_set_report is None
+    assert state.latest_calibration_repair_report is None
     assert state.latest_selective_risk_report is None
     assert state.latest_sample_review_report is None
     assert state.latest_threshold_report is None
+    assert state.latest_model_response_report is None
+    assert state.latest_pairwise_interaction_report is None
     assert state.latest_slice_report is None
+    assert state.latest_subgroup_disparity_report is None
     assert state.latest_stress_report is None
 
 
@@ -296,6 +304,45 @@ def test_handle_worker_done_stores_conformal_sets_without_mutating_model():
     assert "Conformal sets" in window["-LOG-"].value
 
 
+def test_handle_worker_done_stores_calibration_repair_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
+    model = state.model
+    report = {
+        "summary": {
+            "recommended_method": "platt",
+            "recommended_brier_score": 0.1,
+            "recommended_ece": 0.05,
+            "best_brier_improvement": 0.08,
+            "best_ece_improvement": 0.03,
+        },
+        "methods": [
+            {
+                "method": "raw",
+                "brier_score": 0.18,
+                "ece": 0.08,
+                "log_loss": 0.5,
+                "brier_improvement": 0.0,
+            },
+            {
+                "method": "platt",
+                "brier_score": 0.1,
+                "ece": 0.05,
+                "log_loss": 0.4,
+                "brier_improvement": 0.08,
+            },
+        ],
+    }
+
+    _handle_worker_done(window, state, ("calibration_repair", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_calibration_repair_report == report
+    assert state.busy is False
+    assert "Calibration repair" in window["-LOG-"].value
+
+
 def test_handle_worker_done_stores_slice_report_without_mutating_model():
     window = FakeWindow()
     state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
@@ -328,6 +375,103 @@ def test_handle_worker_done_stores_slice_report_without_mutating_model():
     assert state.latest_slice_report == report
     assert state.busy is False
     assert "Slice diagnostics" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_model_response_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
+    model = state.model
+    report = {
+        "summary": {
+            "top_feature": 0,
+            "top_response_range": 0.5,
+            "top_direction": "increasing",
+            "nonmonotonic_feature_count": 1,
+            "high_impact_feature_count": 2,
+        },
+        "features": [
+            {
+                "feature_index": 0,
+                "response_range": 0.5,
+                "signed_change": 0.5,
+                "direction": "increasing",
+                "risk_flags": ["high_impact"],
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("model_response", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_model_response_report == report
+    assert state.busy is False
+    assert "Model response" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_pairwise_interactions_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
+    model = state.model
+    report = {
+        "summary": {
+            "evaluated_pair_count": 1,
+            "top_pair": [0, 1],
+            "top_interaction_strength": 0.5,
+            "top_max_abs_interaction": 0.2,
+            "strong_pair_count": 1,
+        },
+        "pairs": [
+            {
+                "feature_i": 0,
+                "feature_j": 1,
+                "interaction_strength": 0.5,
+                "max_abs_interaction": 0.2,
+                "threshold_crossings": 2,
+                "risk_flags": ["strong_interaction"],
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("pairwise_interactions", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_pairwise_interaction_report == report
+    assert state.busy is False
+    assert "Pairwise interactions" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_subgroup_disparity_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
+    model = state.model
+    report = {
+        "summary": {
+            "evaluated_feature_count": 1,
+            "evaluated_subgroup_count": 2,
+            "worst_feature": 1,
+            "worst_metric": "false_negative_rate_gap",
+            "max_disparity": 0.6,
+        },
+        "subgroups": [
+            {
+                "label": "x2=1",
+                "count": 4,
+                "risk_score": 0.6,
+                "worst_metric": "false_negative_rate_gap",
+                "risk_flags": ["fnr_gap"],
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("subgroup_disparity", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_subgroup_disparity_report == report
+    assert state.busy is False
+    assert "Subgroup disparity" in window["-LOG-"].value
 
 
 def test_handle_worker_done_stores_threshold_report_without_mutating_model():
