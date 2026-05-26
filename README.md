@@ -39,6 +39,7 @@ The full `requirements.txt` install includes TensorFlow. The app code still has 
   - OOD sentinel lab
   - Bootstrap stability lab
   - Prototype coverage lab
+  - Separability lens lab
   - Proxy leakage lab
 - Save and import reusable dataset presets.
 - Train once or run random-search experiments.
@@ -60,6 +61,7 @@ The full `requirements.txt` install includes TensorFlow. The app code still has 
 - OOD sentinel diagnostics for robust outlier, leverage, isolation, and high-loss row screening.
 - Bootstrap stability diagnostics for resampled-committee row uncertainty and disagreement.
 - Prototype audit diagnostics for nearest-neighbor class prototypes, sparse islands, boundary rows, and local label contradictions.
+- Feature separability lens for one-feature AUC, threshold separation, shortcut-risk, and redundancy scans.
 - No-TensorFlow fallback trainer with linear, quadratic, and random Fourier feature maps.
 - Validation-tuned decision threshold plus fixed-`0.5` baseline metrics.
 - Class weighting for imbalanced binary datasets.
@@ -183,7 +185,7 @@ Preset files wrap the normal dataset shape with metadata:
 }
 ```
 
-Use `Save as preset` to turn the current dataset into a reusable preset. Built-in and imported presets can carry training defaults, a recommended feature map, feature names, label names, and prediction examples; the GUI applies core training defaults when loading presets.
+Use `Save as preset` to turn the current dataset into a reusable preset. Saved presets keep the current GUI training controls, including epochs, batch size, trials, feature map, backend, learning-rate schedule, gradient clipping, L1 penalty, feature-selection count, MPS dimensions, and a valid prediction vector as an optional example. Built-in, saved, and imported presets can carry training defaults, a recommended feature map, feature names, label names, and prediction examples; the GUI applies those defaults when loading presets.
 
 ## Experiment Notes
 
@@ -197,7 +199,7 @@ Feature maps are used by the NumPy fallback backend. If TensorFlow is installed 
 
 Auto experiments search model settings and feature maps, then rank runs by validation F1, accuracy, and validation loss.
 
-Experiment reports include dataset availability, class counts when a dataset is loaded, the selected threshold, fixed-`0.5` baseline metrics, calibration diagnostics, post-hoc calibration repair diagnostics, post-hoc permutation-null diagnostics, population drift diagnostics, adversarial validation diagnostics, chronological holdout diagnostics, conformal-style uncertainty diagnostics, post-hoc conformal prediction-set diagnostics, feature importance, feature ablation diagnostics, model response diagnostics, pairwise interaction diagnostics, subgroup disparity diagnostics, decision-curve utility diagnostics, selective prediction risk-coverage diagnostics, dataset cartography, prototype audit diagnostics, OOD sentinel rows, bootstrap stability diagnostics, MPS bond sweeps, and trial history for auto experiments.
+Experiment reports can be exported before training when a dataset is loaded, so model-free audits are easy to archive. Reports include dataset availability, class counts when a dataset is loaded, the selected threshold, fixed-`0.5` baseline metrics, calibration diagnostics, post-hoc calibration repair diagnostics, post-hoc permutation-null diagnostics, population drift diagnostics, adversarial validation diagnostics, chronological holdout diagnostics, conformal-style uncertainty diagnostics, post-hoc conformal prediction-set diagnostics, feature importance, feature ablation diagnostics, model response diagnostics, pairwise interaction diagnostics, subgroup disparity diagnostics, decision-curve utility diagnostics, selective prediction risk-coverage diagnostics, dataset cartography, feature separability diagnostics, prototype audit diagnostics, OOD sentinel rows, bootstrap stability diagnostics, MPS bond sweeps, and trial history for auto experiments.
 
 The uncertainty output is intended as an experimental local diagnostic. When each class has enough samples, Italtensor uses a separate calibration split to estimate a split-conformal-style quantile, then evaluates coverage on the validation split. Prediction displays a label set such as `{0}`, `{1}`, `{0,1}`, or `abstain`. Tiny datasets fall back to validation-reused uncertainty and mark that source in model metadata and reports.
 
@@ -241,6 +243,8 @@ The robustness stress lab runs against the current dataset and active model. It 
 
 Dataset audits run from the desktop and are embedded in JSON/Markdown reports. They summarize class balance, duplicate feature rows, possible label conflicts, constant columns, highly correlated feature pairs, and compact warnings before you spend time tuning a model.
 
+Feature separability diagnostics run without an active model. They scan each raw numeric feature by one-dimensional AUC, best threshold balanced accuracy, standardized mean difference, low-cardinality shortcut risk, and highly correlated redundant pairs. This helps answer whether the dataset has a clear signal, only weak overlapping features, or one suspiciously perfect column before training. The `Separability lens lab` preset includes a strong real signal, weak/noisy columns, a shortcut-like code, and a redundant copy so those warnings are visible.
+
 Prototype audit diagnostics run without an active model. They standardize the loaded features, compute nearest-neighbor neighborhoods, then rank class prototypes, boundary rows, sparse same-class islands, and rows whose nearest neighbors mostly have the opposite label. Use it immediately after loading a CSV or preset to see whether your data has representative examples, label contradictions, or sparse pockets before training. The `Prototype coverage lab` preset includes dense class cores, a mixed boundary bridge, and sparse islands to make those ranks visible.
 
 OOD sentinel diagnostics rank loaded dataset rows by robust median/MAD distance, nearest-neighbor isolation, and optional model loss when an active model is available. Use it before and after training: in model-free mode it acts as a leverage/outlier screen, and in model-aware mode it highlights rows that are both geometrically unusual and costly for the classifier. The `OOD sentinel lab` preset includes ordinary class structure plus artifact-like leverage rows so the ranking is visible.
@@ -274,6 +278,7 @@ TensorFlow-specific tests skip when TensorFlow is not installed.
 - Post-hoc conformal diagnostics are strongest on held-out or newly reviewed data. If you run them on the same rows used to train the model, treat coverage as a local sanity check rather than a finite-sample guarantee.
 - Selective prediction can hide weak subgroup performance if abstention falls unevenly across groups. Pair it with slice diagnostics when coverage fairness matters.
 - Sample review can surface genuine label mistakes, ambiguous cases, or model blind spots. Treat flagged rows as a review queue, not ground truth.
+- Feature separability scans one feature at a time. Interaction-only signals can look weak here even when a quadratic or neural model can learn them.
 - Prototype audit depends on raw-feature distance after standardization. It is strongest for compact numeric vectors and can be misleading when features encode incomparable units or high-dimensional sparse tokens.
 - OOD sentinel scores mix simple robust distance, neighbor isolation, and optional model loss. They are triage scores for inspection, not automatic deletion criteria.
 - Bootstrap stability retrains several lightweight fallback models, so it is slower than fixed-prediction diagnostics. It estimates local resampling sensitivity, not Bayesian posterior uncertainty.
@@ -307,6 +312,7 @@ TensorFlow-specific tests skip when TensorFlow is not installed.
 - Chronological holdout diagnostics follow the same core evaluation principle as time-series cross-validation: train only on earlier rows and evaluate on later rows when sample order carries time. This mirrors scikit-learn's [`TimeSeriesSplit`](https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.TimeSeriesSplit.html) guidance that standard shuffled validation can train on future data and inflate estimates on ordered data.
 - The post-hoc conformal diagnostic follows split-conformal classification practice: calibrate nonconformity scores on one split, evaluate prediction-set coverage and efficiency on another, and report target coverage separately from observed coverage. This mirrors recent practical tutorials and robust-conformal framing while keeping Italtensor dependency-free.
 - Batch review priority follows classic uncertainty-sampling intuition from Burr Settles' [Active Learning Literature Survey](https://burrsettles.com/pub/settles.activelearning.pdf): examples closest to the model's decision boundary are often the most informative to inspect or label next.
+- Feature separability uses model-free filter scores similar to standard univariate feature-selection diagnostics: ROC-AUC/Mann-Whitney ranking, one-dimensional threshold accuracy, effect-size separation, and pairwise correlation redundancy. It is meant as an inspection lens before model fitting, not a replacement for multivariate validation.
 - Prototype audit uses standardized k-nearest-neighbor neighborhoods, following the same locality principle documented in scikit-learn's [Nearest Neighbors guide](https://scikit-learn.org/stable/modules/neighbors.html). Its prototype/criticism split is inspired by Kim, Khanna, and Koyejo's [Examples are not enough, learn to criticize!](https://experts.illinois.edu/en/publications/examples-are-not-enough-learn-to-criticize-criticism-for-interpre), but the desktop version stays dependency-free and uses transparent local label-neighborhood scores instead of MMD optimization.
 - Reviewed-label import closes the pool-based active-learning loop: score an unlabeled pool, label the most useful rows, merge them into the training set, and retrain. This mirrors human-in-the-loop active-learning workflows summarized in recent HITL surveys such as [Human-in-the-loop machine learning: a state of the art](https://link.springer.com/article/10.1007/s10462-022-10246-w).
 - Sample review is inspired by confident-learning style label-audit workflows such as Northcutt, Jiang, and Chuang's [Confident Learning](https://arxiv.org/abs/1911.00068) and dataset cartography ideas that use model behavior to find hard or ambiguous examples ([Dataset Cartography](https://arxiv.org/abs/2009.10795)). Italtensor uses a lightweight probability/loss heuristic rather than a full Cleanlab implementation.

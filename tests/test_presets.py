@@ -13,7 +13,26 @@ from italtensor.presets import BUILT_IN_PRESETS, generate_builtin_preset, load_p
 
 def test_preset_round_trip_preserves_dataset_and_metadata(tmp_path):
     dataset = validate_dataset([[0.1, 0.2], [0.8, 0.9], [0.2, 0.1], [0.9, 0.7]], [0, 1, 0, 1])
-    path = save_preset_file(tmp_path / "preset.json", dataset, name="Demo", description="Reusable demo")
+    path = save_preset_file(
+        tmp_path / "preset.json",
+        dataset,
+        name="Demo",
+        description="Reusable demo",
+        training_defaults={
+            "epochs": 44,
+            "batch_size": 8,
+            "trials": 6,
+            "feature_map": "quadratic",
+            "backend": "numpy",
+            "gradient_clip": 0.5,
+            "l1_penalty": 0.001,
+            "feature_selection_k": 2,
+        },
+        recommended_feature_map="quadratic",
+        feature_names=["left", "right"],
+        label_names={"0": "reject", "1": "accept"},
+        prediction_examples=[{"name": "Review row", "features": [0.4, 0.5], "expected_label": None}],
+    )
 
     loaded, metadata = load_preset_file(path)
 
@@ -23,7 +42,17 @@ def test_preset_round_trip_preserves_dataset_and_metadata(tmp_path):
     assert metadata["name"] == "Demo"
     assert metadata["description"] == "Reusable demo"
     assert metadata["schema_version"] == 1
-    assert metadata["training_defaults"]["trials"] == 8
+    assert metadata["training_defaults"]["epochs"] == 44
+    assert metadata["training_defaults"]["trials"] == 6
+    assert metadata["training_defaults"]["feature_map"] == "quadratic"
+    assert metadata["training_defaults"]["backend"] == "numpy"
+    assert metadata["training_defaults"]["gradient_clip"] == 0.5
+    assert metadata["training_defaults"]["l1_penalty"] == 0.001
+    assert metadata["training_defaults"]["feature_selection_k"] == 2
+    assert metadata["recommended_feature_map"] == "quadratic"
+    assert metadata["feature_names"] == ["left", "right"]
+    assert metadata["label_names"] == {"0": "reject", "1": "accept"}
+    assert metadata["prediction_examples"][0]["features"] == [0.4, 0.5]
 
 
 def test_load_preset_accepts_plain_dataset_json(tmp_path):
@@ -61,6 +90,22 @@ def test_load_preset_rejects_missing_dataset_or_bad_schema_version(tmp_path):
         load_preset_file(missing_dataset)
     with pytest.raises(DataValidationError, match="Unsupported preset"):
         load_preset_file(bad_version)
+
+
+def test_save_preset_rejects_inconsistent_metadata(tmp_path):
+    dataset = validate_dataset([[0.1, 0.2], [0.8, 0.9]], [0, 1])
+
+    with pytest.raises(DataValidationError, match="feature_names"):
+        save_preset_file(tmp_path / "bad-features.json", dataset, name="Bad", feature_names=["only_one"])
+    with pytest.raises(DataValidationError, match="recommended_feature_map"):
+        save_preset_file(tmp_path / "bad-map.json", dataset, name="Bad", recommended_feature_map="unknown")
+    with pytest.raises(DataValidationError, match="prediction example"):
+        save_preset_file(
+            tmp_path / "bad-example.json",
+            dataset,
+            name="Bad",
+            prediction_examples=[{"name": "Bad width", "features": [0.1], "expected_label": 1}],
+        )
 
 
 def test_builtin_presets_are_trainable():
@@ -105,6 +150,7 @@ def test_experimental_builtin_presets_are_available():
         "OOD sentinel lab",
         "Bootstrap stability lab",
         "Prototype coverage lab",
+        "Separability lens lab",
         "Proxy leakage lab",
     }.issubset(names)
 
@@ -326,6 +372,25 @@ def test_prototype_coverage_lab_preset_has_boundary_and_island_markers():
     assert any(example["name"] == "Sparse island review" for example in metadata["prediction_examples"])
     assert int(np.sum(dataset.features[:, 2] > 0.7)) >= 12
     assert float(np.max(np.abs(dataset.features[:, 3]))) > 1.5
+
+
+def test_separability_lens_lab_preset_has_shortcut_and_redundant_features():
+    metadata = preset_metadata("Separability lens lab")
+    dataset = generate_builtin_preset("Separability lens lab", sample_count=120, seed=10)
+
+    assert metadata["input_dim"] == 5
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == [
+        "strong_signal",
+        "weak_signal",
+        "overlap_noise",
+        "shortcut_code",
+        "redundant_signal",
+    ]
+    assert any(example["name"] == "Shortcut conflict" for example in metadata["prediction_examples"])
+    shortcut_alignment = np.mean(np.sign(dataset.features[:, 3]) == np.where(dataset.labels == 1, 1.0, -1.0))
+    assert float(shortcut_alignment) >= 0.90
+    assert float(np.corrcoef(dataset.features[:, 0], dataset.features[:, 4])[0, 1]) > 0.95
 
 
 def test_label_audit_traps_preset_has_suspicious_example():

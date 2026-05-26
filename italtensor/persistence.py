@@ -56,6 +56,7 @@ def save_model_bundle(
     ood_sentinel_report: dict[str, Any] | None = None,
     bootstrap_stability_report: dict[str, Any] | None = None,
     prototype_audit_report: dict[str, Any] | None = None,
+    feature_separability_report: dict[str, Any] | None = None,
     mps_sweep_report: dict[str, Any] | None = None,
 ) -> tuple[Path, Path]:
     model_path = Path(path)
@@ -127,6 +128,7 @@ def save_model_bundle(
         "ood_sentinel": ood_sentinel_report or None,
         "bootstrap_stability_diagnostics": bootstrap_stability_report or None,
         "prototype_audit": prototype_audit_report or None,
+        "feature_separability": feature_separability_report or None,
         "mps_bond_sweep": mps_sweep_report or None,
         "threshold": float(threshold),
         "preprocessing": resolved_preprocessor.to_dict(),

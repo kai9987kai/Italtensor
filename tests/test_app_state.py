@@ -1,3 +1,6 @@
+import json
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 from unittest.mock import patch
@@ -14,6 +17,8 @@ from italtensor.app import (
     _run_weight_analysis,
     _handle_worker_done,
     _import_reviewed_labels,
+    _export_report,
+    _save_preset,
     _run_shap_analysis,
     _run_decision_boundary,
 )
@@ -85,6 +90,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         latest_ood_sentinel_report={"summary": {"top_row_index": 3}},
         latest_bootstrap_stability_report={"summary": {"top_row_index": 4}},
         latest_prototype_audit_report={"summary": {"top_boundary_row": 5}},
+        latest_feature_separability_report={"summary": {"top_feature": 2}},
         latest_mps_sweep_report={"recommended_bond_dim": 4},
     )
 
@@ -121,6 +127,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
     assert state.latest_ood_sentinel_report is None
     assert state.latest_bootstrap_stability_report is None
     assert state.latest_prototype_audit_report is None
+    assert state.latest_feature_separability_report is None
     assert state.latest_mps_sweep_report is None
 
 
@@ -158,6 +165,61 @@ def test_format_uncertainty_includes_source_and_coverage():
     assert "source=dedicated_calibration" in summary
     assert "conformal_target_coverage=0.9000" in summary
     assert "conformal_coverage=0.8500" in summary
+
+
+def test_export_report_allows_dataset_only_diagnostics(tmp_path):
+    window = FakeWindow()
+    state = AppState(
+        features=[[0.1, 0.2], [0.8, 0.9]],
+        labels=[0, 1],
+        input_dim=2,
+        latest_feature_separability_report={"summary": {"top_feature": 1}},
+        latest_prototype_audit_report={"summary": {"top_boundary_row": 0}},
+    )
+    path = tmp_path / "dataset-report.json"
+
+    _export_report(window, state, {"-REPORT_PATH-": str(path)})
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["dataset"]["available"] is True
+    assert payload["model"]["config"] is None
+    assert payload["metrics"] == {}
+    assert payload["feature_separability"]["summary"]["top_feature"] == 1
+    assert payload["prototype_audit"]["summary"]["top_boundary_row"] == 0
+    assert "Exported report" in window["-LOG-"].value
+
+
+def test_export_report_rejects_empty_workspace(tmp_path):
+    window = FakeWindow()
+    state = AppState()
+
+    with pytest.raises(ValueError, match="Load a dataset"):
+        _export_report(window, state, {"-REPORT_PATH-": str(tmp_path / "empty.json")})
+
+
+def test_training_preserves_dataset_only_diagnostics():
+    window = FakeWindow()
+    state = AppState(
+        latest_feature_separability_report={"summary": {"top_feature": 1}},
+        latest_prototype_audit_report={"summary": {"top_boundary_row": 0}},
+        busy=True,
+    )
+    training_result = SimpleNamespace(
+        model=object(),
+        config=ModelConfig(),
+        metrics={"f1": 0.5},
+        threshold=0.5,
+        preprocessor=None,
+        feature_importances=[],
+        history={"loss": [1.0]},
+        uncertainty={},
+    )
+
+    _handle_worker_done(window, state, ("single", training_result))
+
+    assert state.latest_feature_separability_report == {"summary": {"top_feature": 1}}
+    assert state.latest_prototype_audit_report == {"summary": {"top_boundary_row": 0}}
+    assert state.latest_metrics == {"f1": 0.5}
 
 
 def test_handle_worker_done_stores_stress_report_without_mutating_model():
@@ -611,6 +673,47 @@ def test_handle_worker_done_stores_prototype_audit_without_mutating_model():
     assert "Prototype audit" in window["-LOG-"].value
 
 
+def test_handle_worker_done_stores_feature_separability_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
+    model = state.model
+    report = {
+        "summary": {
+            "top_feature": 1,
+            "top_auc": 0.95,
+            "top_balanced_accuracy": 0.9,
+            "near_perfect_feature_count": 1,
+            "weak_feature_count": 1,
+            "redundant_pair_count": 1,
+        },
+        "features": [
+            {
+                "feature_index": 1,
+                "auc": 0.95,
+                "best_balanced_accuracy": 0.9,
+                "standardized_mean_difference": 2.4,
+                "risk_flags": ["strong_single_feature"],
+            }
+        ],
+        "redundant_pairs": [
+            {
+                "left_feature_index": 0,
+                "right_feature_index": 2,
+                "correlation": 0.98,
+                "risk_flags": ["redundant_features"],
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("feature_separability", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_feature_separability_report == report
+    assert state.busy is False
+    assert "Feature separability" in window["-LOG-"].value
+
+
 def test_handle_worker_done_stores_slice_report_without_mutating_model():
     window = FakeWindow()
     state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
@@ -866,6 +969,76 @@ def test_apply_preset_metadata_updates_sparse_training_defaults():
     assert window["-FEATURE_MAP-"].value == "quadratic"
     assert window["-L1_PENALTY-"].value == "0.001"
     assert window["-FEATURE_K-"].value == "6"
+
+
+def test_apply_preset_metadata_updates_extended_training_defaults():
+    window = FakeWindow()
+
+    _apply_preset_metadata(
+        window,
+        {
+            "recommended_feature_map": "rff",
+            "training_defaults": {
+                "epochs": 55,
+                "batch_size": 12,
+                "trials": 9,
+                "feature_map": "quadratic",
+                "backend": "mps",
+                "lr_schedule": "cosine",
+                "gradient_clip": 0.5,
+                "mps_bond_dim": 6,
+                "mps_physical_dim": 5,
+            },
+        },
+    )
+
+    assert window["-BACKEND-"].value == "mps"
+    assert window["-LR_SCHEDULE-"].value == "cosine"
+    assert window["-GRADIENT_CLIP-"].value == "0.5"
+    assert window["-MPS_BOND-"].value == "6"
+    assert window["-MPS_PHYS-"].value == "5"
+    assert window["-FEATURE_MAP-"].value == "rff"
+
+
+def test_save_preset_uses_current_gui_training_defaults_and_prediction_example(tmp_path):
+    window = FakeWindow()
+    state = AppState(features=[[0.1, 0.2], [0.8, 0.9]], labels=[0, 1], input_dim=2)
+    path = tmp_path / "custom-preset.json"
+    values = {
+        "-PRESET_PATH-": str(path),
+        "-PRESET_SAVE_NAME-": "Custom useful preset",
+        "-PRESET_DESCRIPTION-": "Keeps GUI defaults",
+        "-EPOCHS-": "77",
+        "-BATCH_SIZE-": "11",
+        "-TRIALS-": "5",
+        "-FEATURE_MAP-": "quadratic",
+        "-BACKEND-": "numpy",
+        "-LR_SCHEDULE-": "cosine",
+        "-GRADIENT_CLIP-": "0.25",
+        "-L1_PENALTY-": "0.002",
+        "-FEATURE_K-": "2",
+        "-MPS_BOND-": "7",
+        "-MPS_PHYS-": "3",
+        "-PREDICTION_VECTOR-": "[0.3, 0.4]",
+    }
+
+    _save_preset(window, state, values)
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    defaults = payload["training_defaults"]
+    assert defaults["epochs"] == 77
+    assert defaults["batch_size"] == 11
+    assert defaults["trials"] == 5
+    assert defaults["feature_map"] == "quadratic"
+    assert defaults["backend"] == "numpy"
+    assert defaults["lr_schedule"] == "cosine"
+    assert defaults["gradient_clip"] == 0.25
+    assert defaults["l1_penalty"] == 0.002
+    assert defaults["feature_selection_k"] == 2
+    assert defaults["mps_bond_dim"] == 7
+    assert defaults["mps_physical_dim"] == 3
+    assert payload["recommended_feature_map"] == "quadratic"
+    assert payload["prediction_examples"][0]["features"] == [0.3, 0.4]
 
 
 def test_store_model_slot():

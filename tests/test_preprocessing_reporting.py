@@ -527,6 +527,37 @@ def test_report_export_json_and_markdown(tmp_path):
                 }
             ],
         },
+        feature_separability_report={
+            "sample_count": 4,
+            "input_dim": 2,
+            "summary": {
+                "top_feature": 1,
+                "top_auc": 0.95,
+                "top_balanced_accuracy": 0.9,
+                "near_perfect_feature_count": 1,
+                "weak_feature_count": 1,
+                "redundant_pair_count": 1,
+                "warning": None,
+            },
+            "features": [
+                {
+                    "feature_index": 1,
+                    "auc": 0.95,
+                    "best_balanced_accuracy": 0.9,
+                    "standardized_mean_difference": 2.4,
+                    "direction": "positive_high",
+                    "risk_flags": ["strong_single_feature"],
+                }
+            ],
+            "redundant_pairs": [
+                {
+                    "left_feature_index": 0,
+                    "right_feature_index": 1,
+                    "correlation": 0.97,
+                    "risk_flags": ["redundant_features"],
+                }
+            ],
+        },
         mps_sweep_report={
             "input_dim": 2,
             "physical_dim": 4,
@@ -572,6 +603,7 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["ood_sentinel"]["summary"]["top_row_index"] == 3
     assert saved_json["bootstrap_stability_diagnostics"]["summary"]["top_row_index"] == 2
     assert saved_json["prototype_audit"]["summary"]["top_boundary_row"] == 2
+    assert saved_json["feature_separability"]["summary"]["top_feature"] == 1
     assert saved_json["mps_bond_sweep"]["recommended_bond_dim"] == 8
     assert saved_json["trial_history"][0]["config"]["feature_map"] == "rff"
     assert "Feature 0" in saved_markdown
@@ -613,6 +645,8 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "feature_dropout" in saved_markdown
     assert "## Dataset Cartography" in saved_markdown
     assert "Ambiguous rows" in saved_markdown
+    assert "## Feature Separability Lens" in saved_markdown
+    assert "Near-perfect features" in saved_markdown
     assert "## OOD Sentinel" in saved_markdown
     assert "Max OOD score" in saved_markdown
     assert "## Bootstrap Stability Diagnostics" in saved_markdown

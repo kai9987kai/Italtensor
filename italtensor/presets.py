@@ -475,6 +475,21 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="separability_lens_lab",
+        name="Separability lens lab",
+        description="Strong, weak, redundant, and shortcut-like features for single-feature separation audits.",
+        default_samples=220,
+        input_dim=5,
+        recommended_feature_map="linear",
+        feature_names=("strong_signal", "weak_signal", "overlap_noise", "shortcut_code", "redundant_signal"),
+        training_defaults={"epochs": 70, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Clear negative", "features": [-1.0, -0.3, 0.0, -1.0, -1.0], "expected_label": 0},
+            {"name": "Shortcut conflict", "features": [1.0, 0.3, 0.0, -1.0, 1.0], "expected_label": None},
+            {"name": "Clear positive", "features": [1.0, 0.3, 0.0, 1.0, 1.0], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
         key="proxy_leakage_lab",
         name="Proxy leakage lab",
         description="A label-correlated proxy feature that makes ablation and reliance diagnostics visible.",
@@ -575,6 +590,8 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _bootstrap_stability_lab(total, rng)
     elif preset.key == "prototype_coverage_lab":
         features, labels = _prototype_coverage_lab(total, rng)
+    elif preset.key == "separability_lens_lab":
+        features, labels = _separability_lens_lab(total, rng)
     elif preset.key == "proxy_leakage_lab":
         features, labels = _proxy_leakage_lab(total, rng)
     else:
@@ -588,20 +605,27 @@ def save_preset_file(
     *,
     name: str,
     description: str = "",
+    training_defaults: dict[str, object] | None = None,
+    recommended_feature_map: str | None = None,
+    feature_names: list[str] | tuple[str, ...] | None = None,
+    label_names: dict[str, str] | None = None,
+    prediction_examples: list[dict[str, object]] | tuple[dict[str, object], ...] | None = None,
 ) -> Path:
     if not name or not name.strip():
         raise DataValidationError("Preset name is required.")
     output_path = Path(path)
+    resolved_defaults = _sanitize_training_defaults(training_defaults)
+    resolved_map = _sanitize_feature_map(recommended_feature_map or resolved_defaults.get("feature_map") or "linear")
     payload = {
         "kind": "italtensor.dataset_preset",
         "schema_version": SCHEMA_VERSION,
         "name": name.strip(),
         "description": description.strip(),
-        "training_defaults": DEFAULT_TRAINING_DEFAULTS,
-        "recommended_feature_map": "linear",
-        "feature_names": [f"x{index + 1}" for index in range(dataset.input_dim)],
-        "label_names": {"0": "negative", "1": "positive"},
-        "prediction_examples": [],
+        "training_defaults": resolved_defaults,
+        "recommended_feature_map": resolved_map,
+        "feature_names": _sanitize_feature_names(feature_names, dataset.input_dim),
+        "label_names": _sanitize_label_names(label_names),
+        "prediction_examples": _sanitize_prediction_examples(prediction_examples, dataset.input_dim),
         "dataset": dataset_to_jsonable(dataset),
     }
     output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -648,6 +672,97 @@ def load_preset_file(path: str | Path) -> tuple[Dataset, dict[str, Any]]:
 
     dataset = dataset_from_jsonable(dataset_payload)
     return dataset, metadata
+
+
+def _sanitize_training_defaults(defaults: dict[str, object] | None) -> dict[str, object]:
+    if defaults is None:
+        return DEFAULT_TRAINING_DEFAULTS.copy()
+    if not isinstance(defaults, dict):
+        raise DataValidationError("Preset training_defaults must be a JSON object.")
+    sanitized = DEFAULT_TRAINING_DEFAULTS.copy()
+    for key, value in defaults.items():
+        if value is None or value == "":
+            continue
+        if key in {"epochs", "batch_size", "trials", "feature_selection_k", "mps_bond_dim", "mps_physical_dim"}:
+            parsed = int(value)
+            if parsed <= 0:
+                raise DataValidationError(f"Preset training default {key} must be positive.")
+            sanitized[key] = parsed
+        elif key in {"l1_penalty", "gradient_clip"}:
+            parsed_float = float(value)
+            if parsed_float < 0.0 or not np.isfinite(parsed_float):
+                raise DataValidationError(f"Preset training default {key} must be a finite non-negative number.")
+            sanitized[key] = parsed_float
+        elif key == "feature_map":
+            sanitized[key] = _sanitize_feature_map(str(value))
+        elif key in {"backend", "lr_schedule"}:
+            sanitized[key] = str(value).strip()
+        elif isinstance(value, (str, int, float, bool)):
+            sanitized[key] = value
+    return sanitized
+
+
+def _sanitize_feature_map(value: str | object) -> str:
+    parsed = str(value).strip().lower()
+    if parsed not in {"linear", "quadratic", "rff"}:
+        raise DataValidationError("Preset recommended_feature_map must be linear, quadratic, or rff.")
+    return parsed
+
+
+def _sanitize_feature_names(names: list[str] | tuple[str, ...] | None, input_dim: int) -> list[str]:
+    if names is None:
+        return [f"x{index + 1}" for index in range(input_dim)]
+    if len(names) != input_dim:
+        raise DataValidationError(f"Preset feature_names must contain {input_dim} name(s).")
+    cleaned = [str(name).strip() or f"x{index + 1}" for index, name in enumerate(names)]
+    return cleaned
+
+
+def _sanitize_label_names(label_names: dict[str, str] | None) -> dict[str, str]:
+    if label_names is None:
+        return {"0": "negative", "1": "positive"}
+    if not isinstance(label_names, dict):
+        raise DataValidationError("Preset label_names must be a JSON object.")
+    negative = str(label_names.get("0", label_names.get(0, "negative"))).strip() or "negative"
+    positive = str(label_names.get("1", label_names.get(1, "positive"))).strip() or "positive"
+    return {"0": negative, "1": positive}
+
+
+def _sanitize_prediction_examples(
+    examples: list[dict[str, object]] | tuple[dict[str, object], ...] | None,
+    input_dim: int,
+) -> list[dict[str, object]]:
+    if examples is None:
+        return []
+    sanitized: list[dict[str, object]] = []
+    for index, example in enumerate(examples):
+        if not isinstance(example, dict):
+            raise DataValidationError("Preset prediction examples must be JSON objects.")
+        try:
+            features = np.asarray(example.get("features"), dtype=np.float64).reshape(-1)
+        except (TypeError, ValueError) as exc:
+            raise DataValidationError("Preset prediction example features must be numeric.") from exc
+        if features.shape[0] != input_dim:
+            raise DataValidationError(f"Preset prediction example {index + 1} must contain {input_dim} feature(s).")
+        if not np.all(np.isfinite(features)):
+            raise DataValidationError("Preset prediction example features must be finite numbers.")
+        expected_label = example.get("expected_label")
+        if expected_label is not None:
+            try:
+                parsed_label = int(expected_label)
+            except (TypeError, ValueError) as exc:
+                raise DataValidationError("Preset prediction example expected_label must be 0, 1, or null.") from exc
+            if parsed_label not in {0, 1}:
+                raise DataValidationError("Preset prediction example expected_label must be 0, 1, or null.")
+            expected_label = parsed_label
+        sanitized.append(
+            {
+                "name": str(example.get("name") or f"Example {index + 1}").strip(),
+                "features": [float(value) for value in features],
+                "expected_label": expected_label,
+            }
+        )
+    return sanitized
 
 
 def _linear_blobs(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
@@ -1196,6 +1311,24 @@ def _prototype_coverage_lab(total: int, rng: np.random.Generator) -> tuple[np.nd
         + [1] * (positive_core_count + positive_boundary_count + positive_island_count),
         dtype=np.int32,
     )
+    return _shuffle(features, labels, rng)
+
+
+def _separability_lens_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    strong_signal = rng.normal(0.0, 1.0, size=total)
+    weak_signal = rng.normal(0.0, 1.0, size=total)
+    latent = 1.35 * strong_signal + 0.35 * weak_signal + rng.normal(0.0, 0.45, size=total)
+    labels = (latent > np.median(latent)).astype(np.int32)
+    signed = np.where(labels == 1, 1.0, -1.0)
+    overlap_noise = rng.normal(0.0, 1.0, size=total)
+    shortcut_code = signed + rng.normal(0.0, 0.025, size=total)
+    conflict_count = max(2, total // 20)
+    conflict_indices = rng.choice(total, size=conflict_count, replace=False)
+    shortcut_code[conflict_indices] *= -1.0
+    redundant_signal = strong_signal + rng.normal(0.0, 0.05, size=total)
+    features = np.column_stack(
+        [strong_signal, weak_signal, overlap_noise, shortcut_code, redundant_signal]
+    ).astype(np.float32)
     return _shuffle(features, labels, rng)
 
 

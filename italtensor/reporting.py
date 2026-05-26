@@ -45,6 +45,7 @@ def build_experiment_report(
     ood_sentinel_report: dict[str, Any] | None = None,
     bootstrap_stability_report: dict[str, Any] | None = None,
     prototype_audit_report: dict[str, Any] | None = None,
+    feature_separability_report: dict[str, Any] | None = None,
     mps_sweep_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     label_array = np.asarray(labels, dtype=np.int32)
@@ -93,6 +94,7 @@ def build_experiment_report(
         "ood_sentinel": ood_sentinel_report or None,
         "bootstrap_stability_diagnostics": bootstrap_stability_report or None,
         "prototype_audit": prototype_audit_report or None,
+        "feature_separability": feature_separability_report or None,
         "mps_bond_sweep": mps_sweep_report or None,
         "feature_importances": feature_importances,
         "trial_history": trial_history or [],
@@ -135,6 +137,7 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     ood_sentinel = report.get("ood_sentinel") or {}
     bootstrap_stability = report.get("bootstrap_stability_diagnostics") or {}
     prototype_audit = report.get("prototype_audit") or {}
+    feature_separability = report.get("feature_separability") or {}
     mps_sweep = report.get("mps_bond_sweep") or {}
     audit = dataset.get("audit") or {}
 
@@ -756,6 +759,43 @@ def format_markdown_report(report: dict[str, Any]) -> str:
                     f"conf={_format_value(item.get('confidence', '-'))}, "
                     f"var={_format_value(item.get('variability', '-'))}"
                 )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Feature Separability Lens"])
+    if feature_separability:
+        summary = feature_separability.get("summary", {})
+        top_feature = summary.get("top_feature")
+        top_text = "-" if top_feature is None else f"x{int(top_feature) + 1}"
+        lines.extend(
+            [
+                f"- Rows scanned: {feature_separability.get('sample_count', '-')}",
+                f"- Input dimension: {feature_separability.get('input_dim', '-')}",
+                f"- Top feature: {top_text}",
+                f"- Top AUC: {_format_value(summary.get('top_auc', '-'))}",
+                f"- Top balanced accuracy: {_format_value(summary.get('top_balanced_accuracy', '-'))}",
+                f"- Near-perfect features: {summary.get('near_perfect_feature_count', '-')}",
+                f"- Weak features: {summary.get('weak_feature_count', '-')}",
+                f"- Redundant pairs: {summary.get('redundant_pair_count', '-')}",
+                f"- Warning: {summary.get('warning') or 'none'}",
+            ]
+        )
+        for item in feature_separability.get("features", [])[:8]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            lines.append(
+                f"- x{int(item.get('feature_index', 0)) + 1}: "
+                f"AUC={_format_value(item.get('auc', '-'))}, "
+                f"bal_acc={_format_value(item.get('best_balanced_accuracy', '-'))}, "
+                f"SMD={_format_value(item.get('standardized_mean_difference', '-'))}, "
+                f"direction={item.get('direction', '-')}, "
+                f"flags={flags}"
+            )
+        for item in feature_separability.get("redundant_pairs", [])[:5]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            lines.append(
+                f"- redundant x{int(item.get('left_feature_index', 0)) + 1}/x{int(item.get('right_feature_index', 0)) + 1}: "
+                f"corr={_format_value(item.get('correlation', '-'))}, flags={flags}"
+            )
     else:
         lines.append("- None")
 

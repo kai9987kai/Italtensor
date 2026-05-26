@@ -68,6 +68,10 @@ from .bootstrap_stability import (
     run_bootstrap_stability_diagnostics,
 )
 from .prototype_audit import format_prototype_audit_summary, run_prototype_audit
+from .feature_separability import (
+    format_feature_separability_summary,
+    run_feature_separability_diagnostics,
+)
 from .trials_io import export_trial_history_csv
 from . import __version__
 
@@ -105,6 +109,7 @@ class AppState:
     latest_ood_sentinel_report: dict[str, Any] | None = None
     latest_bootstrap_stability_report: dict[str, Any] | None = None
     latest_prototype_audit_report: dict[str, Any] | None = None
+    latest_feature_separability_report: dict[str, Any] | None = None
     latest_mps_sweep_report: dict[str, Any] | None = None
     busy: bool = False
     status_message: str = "Ready"
@@ -208,6 +213,8 @@ def run_app() -> None:
                 _start_bootstrap_stability(window, state, values)
             elif event == "-PROTOTYPE_AUDIT-":
                 _start_prototype_audit(window, state)
+            elif event == "-FEATURE_SEPARABILITY-":
+                _start_feature_separability(window, state)
             elif event == "-RELIABILITY-":
                 _run_reliability_diagram(window, state)
             elif event == "-MPS_BOND_SWEEP-":
@@ -510,6 +517,7 @@ def _layout(sg):
             sg.Button("OOD sentinel", key="-OOD_SENTINEL-", expand_x=True),
             sg.Button("Bootstrap stability", key="-BOOTSTRAP_STABILITY-", expand_x=True),
             sg.Button("Prototype audit", key="-PROTOTYPE_AUDIT-", expand_x=True),
+            sg.Button("Separability lens", key="-FEATURE_SEPARABILITY-", expand_x=True),
             sg.Button("MPS bond sweep", key="-MPS_BOND_SWEEP-", expand_x=True),
         ],
         [
@@ -580,8 +588,41 @@ def _save_preset(window, state: AppState, values: dict[str, Any]) -> None:
         dataset,
         name=values["-PRESET_SAVE_NAME-"],
         description=values["-PRESET_DESCRIPTION-"],
+        training_defaults=_preset_training_defaults_from_values(values),
+        recommended_feature_map=values.get("-FEATURE_MAP-", "linear"),
+        prediction_examples=_preset_prediction_examples_from_values(values, dataset.input_dim),
     )
     _log(window, f"Saved preset '{values['-PRESET_SAVE_NAME-']}' to {path}.")
+
+
+def _preset_training_defaults_from_values(values: dict[str, Any]) -> dict[str, object]:
+    defaults: dict[str, object] = {
+        "epochs": _positive_int(values.get("-EPOCHS-", "50"), "epochs"),
+        "batch_size": _positive_int(values.get("-BATCH_SIZE-", "16"), "batch size"),
+        "trials": _positive_int(values.get("-TRIALS-", "8"), "trials"),
+        "feature_map": values.get("-FEATURE_MAP-", "linear"),
+        "backend": values.get("-BACKEND-", "auto"),
+        "lr_schedule": values.get("-LR_SCHEDULE-", "constant"),
+        "gradient_clip": _nonnegative_float(values.get("-GRADIENT_CLIP-", "0.0"), "gradient clip"),
+        "l1_penalty": _nonnegative_float(values.get("-L1_PENALTY-", "0.0"), "L1 penalty"),
+        "mps_bond_dim": _positive_int(values.get("-MPS_BOND-", "8"), "MPS bond dimension"),
+        "mps_physical_dim": _positive_int(values.get("-MPS_PHYS-", "4"), "MPS physical dimension"),
+    }
+    feature_k = str(values.get("-FEATURE_K-", "")).strip()
+    if feature_k:
+        defaults["feature_selection_k"] = _positive_int(feature_k, "feature selection k")
+    return defaults
+
+
+def _preset_prediction_examples_from_values(values: dict[str, Any], input_dim: int) -> list[dict[str, object]]:
+    raw = str(values.get("-PREDICTION_VECTOR-", "")).strip()
+    if not raw:
+        return []
+    try:
+        vector = parse_prediction_vector(raw, input_dim)
+    except DataValidationError:
+        return []
+    return [{"name": "Saved prediction vector", "features": vector, "expected_label": None}]
 
 
 def _load_csv(window, state: AppState, values: dict[str, Any]) -> None:
@@ -1027,6 +1068,7 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         ood_sentinel_report=state.latest_ood_sentinel_report,
         bootstrap_stability_report=state.latest_bootstrap_stability_report,
         prototype_audit_report=state.latest_prototype_audit_report,
+        feature_separability_report=state.latest_feature_separability_report,
         mps_sweep_report=state.latest_mps_sweep_report,
     )
     window["-MODEL_PATH-"].update(str(model_path))
@@ -1084,6 +1126,7 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     ood_sentinel_report = metadata.get("ood_sentinel")
     bootstrap_stability_report = metadata.get("bootstrap_stability_diagnostics")
     prototype_audit_report = metadata.get("prototype_audit")
+    feature_separability_report = metadata.get("feature_separability")
     mps_sweep_report = metadata.get("mps_bond_sweep")
     state.latest_ablation_report = ablation_report if isinstance(ablation_report, dict) else None
     state.latest_decision_curve_report = decision_curve_report if isinstance(decision_curve_report, dict) else None
@@ -1121,13 +1164,16 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
         bootstrap_stability_report if isinstance(bootstrap_stability_report, dict) else None
     )
     state.latest_prototype_audit_report = prototype_audit_report if isinstance(prototype_audit_report, dict) else None
+    state.latest_feature_separability_report = (
+        feature_separability_report if isinstance(feature_separability_report, dict) else None
+    )
     state.latest_mps_sweep_report = mps_sweep_report if isinstance(mps_sweep_report, dict) else None
     _log(window, f"Loaded model expecting {state.input_dim} features.")
 
 
 def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
-    if state.latest_config is None and not state.latest_metrics:
-        raise ValueError("Train or load a model before exporting a report.")
+    if state.latest_config is None and not state.latest_metrics and not state.labels:
+        raise ValueError("Load a dataset or train/load a model before exporting a report.")
     report = build_experiment_report(
         sample_count=len(state.labels),
         input_dim=state.input_dim,
@@ -1160,6 +1206,7 @@ def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
         ood_sentinel_report=state.latest_ood_sentinel_report,
         bootstrap_stability_report=state.latest_bootstrap_stability_report,
         prototype_audit_report=state.latest_prototype_audit_report,
+        feature_separability_report=state.latest_feature_separability_report,
         mps_sweep_report=state.latest_mps_sweep_report,
     )
     path = export_experiment_report(_required_path(values["-REPORT_PATH-"], "report path"), report)
@@ -1263,7 +1310,6 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
-        state.latest_prototype_audit_report = None
         state.latest_mps_sweep_report = None
         _log(window, f"Training complete: {_format_metrics(training_result.metrics)}")
         _log(window, _format_calibration(training_result.metrics))
@@ -1299,7 +1345,6 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
-        state.latest_prototype_audit_report = None
         state.latest_mps_sweep_report = None
         _log(window, f"Best config: {_format_config(best.config)}")
         _log(window, f"Best metrics: {_format_metrics(best.metrics)}")
@@ -1530,6 +1575,26 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                 f"label={int(item['label'])}, score={float(item['boundary_score']):.4f}, "
                 f"opp_frac={float(item['local_opposite_fraction']):.4f}, flags={flags}",
             )
+    elif kind == "feature_separability":
+        state.latest_feature_separability_report = result
+        _log(window, format_feature_separability_summary(result))
+        for item in result.get("features", [])[:6]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            _log(
+                window,
+                f"  x{int(item['feature_index']) + 1}: "
+                f"AUC={float(item['auc']):.4f}, "
+                f"bal_acc={float(item['best_balanced_accuracy']):.4f}, "
+                f"SMD={float(item['standardized_mean_difference']):.4f}, "
+                f"flags={flags}",
+            )
+        for item in result.get("redundant_pairs", [])[:3]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            _log(
+                window,
+                f"  redundant x{int(item['left_feature_index']) + 1}/x{int(item['right_feature_index']) + 1}: "
+                f"corr={float(item['correlation']):.4f}, flags={flags}",
+            )
     elif kind == "mps_sweep":
         state.latest_mps_sweep_report = result
         _log(window, format_mps_sweep_summary(result))
@@ -1659,7 +1724,6 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
-        state.latest_prototype_audit_report = None
         state.latest_mps_sweep_report = None
         for item in result:
             slot = ModelSlot(
@@ -1704,7 +1768,6 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
-        state.latest_prototype_audit_report = None
         state.latest_mps_sweep_report = None
         
         # Auto-store in slots
@@ -1774,6 +1837,16 @@ def _apply_preset_metadata(window, metadata: dict[str, Any]) -> None:
             window["-L1_PENALTY-"].update(str(defaults["l1_penalty"]))
         if defaults.get("feature_selection_k") is not None:
             window["-FEATURE_K-"].update(str(defaults["feature_selection_k"]))
+        if defaults.get("backend") is not None:
+            window["-BACKEND-"].update(str(defaults["backend"]))
+        if defaults.get("lr_schedule") is not None:
+            window["-LR_SCHEDULE-"].update(str(defaults["lr_schedule"]))
+        if defaults.get("gradient_clip") is not None:
+            window["-GRADIENT_CLIP-"].update(str(defaults["gradient_clip"]))
+        if defaults.get("mps_bond_dim") is not None:
+            window["-MPS_BOND-"].update(str(defaults["mps_bond_dim"]))
+        if defaults.get("mps_physical_dim") is not None:
+            window["-MPS_PHYS-"].update(str(defaults["mps_physical_dim"]))
     recommended_map = metadata.get("recommended_feature_map")
     if recommended_map in {"linear", "quadratic", "rff"}:
         window["-FEATURE_MAP-"].update(recommended_map)
@@ -1808,6 +1881,7 @@ def _invalidate_model_artifacts(state: AppState) -> None:
     state.latest_ood_sentinel_report = None
     state.latest_bootstrap_stability_report = None
     state.latest_prototype_audit_report = None
+    state.latest_feature_separability_report = None
     state.latest_mps_sweep_report = None
 
 
@@ -1873,6 +1947,7 @@ def _set_busy(window, busy: bool) -> None:
         "-OOD_SENTINEL-",
         "-BOOTSTRAP_STABILITY-",
         "-PROTOTYPE_AUDIT-",
+        "-FEATURE_SEPARABILITY-",
         "-RELIABILITY-",
         "-MPS_BOND_SWEEP-",
         "-EXPORT_TRIALS-",
@@ -1902,6 +1977,16 @@ def _positive_int(raw_value: str, label: str) -> int:
         raise ValueError(f"{label.capitalize()} must be a positive integer.") from exc
     if value <= 0:
         raise ValueError(f"{label.capitalize()} must be a positive integer.")
+    return value
+
+
+def _nonnegative_float(raw_value: str, label: str) -> float:
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label.capitalize()} must be a non-negative number.") from exc
+    if value < 0.0:
+        raise ValueError(f"{label.capitalize()} must be a non-negative number.")
     return value
 
 
@@ -2182,6 +2267,7 @@ def _activate_model_slot(window, state: AppState, values: dict[str, Any]) -> Non
     state.latest_ood_sentinel_report = None
     state.latest_bootstrap_stability_report = None
     state.latest_prototype_audit_report = None
+    state.latest_feature_separability_report = None
     state.latest_mps_sweep_report = None
     _log(window, f"Activated slot '{slot.name}'. Predictions and weight analysis will now run on this model.")
     _update_slots_listbox(window, state)
@@ -2286,6 +2372,7 @@ def _load_registry(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
         state.latest_prototype_audit_report = None
+        state.latest_feature_separability_report = None
         state.latest_mps_sweep_report = None
     _update_slots_listbox(window, state)
     _log(window, f"Loaded {len(slots)} slot(s) from registry.")
@@ -2325,6 +2412,7 @@ def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_ood_sentinel_report = None
     state.latest_bootstrap_stability_report = None
     state.latest_prototype_audit_report = None
+    state.latest_feature_separability_report = None
     state.latest_mps_sweep_report = None
     
     state.latest_config = ModelConfig(
@@ -2402,6 +2490,7 @@ def _build_stacked_ensemble(window, state: AppState, values: dict[str, Any]) -> 
     state.latest_ood_sentinel_report = None
     state.latest_bootstrap_stability_report = None
     state.latest_prototype_audit_report = None
+    state.latest_feature_separability_report = None
     state.latest_mps_sweep_report = None
     probs = ensemble.predict(dataset.features).reshape(-1)
     metrics = evaluate_predictions(dataset.labels, probs, threshold=0.5)
@@ -2509,6 +2598,17 @@ def _start_prototype_audit(window, state: AppState) -> None:
         return "prototype_audit", report
 
     _start_worker(window, state, "Running nearest-neighbor prototype audit...", task)
+
+
+def _start_feature_separability(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    dataset = validate_dataset(state.features, state.labels, min_samples=6, require_two_classes=True)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_feature_separability_diagnostics(dataset.features, dataset.labels)
+        return "feature_separability", report
+
+    _start_worker(window, state, "Running feature separability lens...", task)
 
 
 def _run_reliability_diagram(window, state: AppState) -> None:
@@ -2705,6 +2805,7 @@ def _merge_slots(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
         state.latest_prototype_audit_report = None
+        state.latest_feature_separability_report = None
         state.latest_mps_sweep_report = None
         state.latest_config = ModelConfig(
             lr_schedule="constant",
