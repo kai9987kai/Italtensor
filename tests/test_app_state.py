@@ -80,7 +80,10 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         latest_permutation_null_report={"summary": {"verdict": "signal"}},
         latest_population_drift_report={"summary": {"top_feature": 1}},
         latest_adversarial_validation_report={"summary": {"verdict": "strong_multivariate_shift"}},
+        latest_chronological_holdout_report={"summary": {"verdict": "severe_temporal_degradation"}},
         latest_cartography_report={"region_counts": {"easy_to_learn": 1}},
+        latest_ood_sentinel_report={"summary": {"top_row_index": 3}},
+        latest_bootstrap_stability_report={"summary": {"top_row_index": 4}},
         latest_mps_sweep_report={"recommended_bond_dim": 4},
     )
 
@@ -112,7 +115,10 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
     assert state.latest_permutation_null_report is None
     assert state.latest_population_drift_report is None
     assert state.latest_adversarial_validation_report is None
+    assert state.latest_chronological_holdout_report is None
     assert state.latest_cartography_report is None
+    assert state.latest_ood_sentinel_report is None
+    assert state.latest_bootstrap_stability_report is None
     assert state.latest_mps_sweep_report is None
 
 
@@ -447,6 +453,117 @@ def test_handle_worker_done_stores_adversarial_validation_without_mutating_model
     assert state.latest_adversarial_validation_report == report
     assert state.busy is False
     assert "Adversarial validation" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_chronological_holdout_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
+    model = state.model
+    report = {
+        "summary": {
+            "reference_f1": 0.9,
+            "current_f1": 0.55,
+            "f1_delta": -0.35,
+            "top_current_reliance_feature": 1,
+            "verdict": "severe_temporal_degradation",
+            "warning": "current F1 is lower than reference validation",
+        },
+        "metric_deltas": {"f1_delta": -0.35, "accuracy_delta": -0.25, "brier_score_delta": 0.12},
+        "current_baseline": {
+            "available": True,
+            "current_model_metrics": {"f1": 0.75},
+            "metric_deltas_vs_reference_model": {"f1_delta": 0.2},
+        },
+        "permutation_reliance": [
+            {
+                "feature_index": 1,
+                "f1_drop": 0.2,
+                "log_loss_increase": 0.15,
+                "mean_probability_shift": 0.12,
+                "risk_flags": ["current_f1_driver"],
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("chronological_holdout", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_chronological_holdout_report == report
+    assert state.busy is False
+    assert "Chronological holdout" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_ood_sentinel_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
+    model = state.model
+    report = {
+        "model_used": True,
+        "sample_count": 4,
+        "summary": {
+            "top_row_index": 2,
+            "max_ood_score": 3.5,
+            "max_abs_robust_z": 4.0,
+            "max_nearest_neighbor_distance": 3.0,
+            "flagged_row_count": 1,
+        },
+        "rows": [
+            {
+                "row_index": 2,
+                "ood_score": 3.5,
+                "max_abs_robust_z": 4.0,
+                "nearest_neighbor_distance": 3.0,
+                "loss": 1.2,
+                "probability": 0.9,
+                "risk_flags": ["robust_outlier"],
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("ood_sentinel", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_ood_sentinel_report == report
+    assert state.busy is False
+    assert "OOD sentinel" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_bootstrap_stability_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
+    model = state.model
+    report = {
+        "model_count": 8,
+        "feature_map": "linear",
+        "threshold": 0.4,
+        "ensemble_metrics": {"f1": 0.8, "accuracy": 0.75, "brier_score": 0.2},
+        "summary": {
+            "top_row_index": 3,
+            "max_probability_std": 0.22,
+            "max_disagreement_rate": 0.5,
+            "unstable_row_count": 1,
+        },
+        "rows": [
+            {
+                "row_index": 3,
+                "instability_score": 0.7,
+                "probability_std": 0.22,
+                "disagreement_rate": 0.5,
+                "mean_probability": 0.48,
+                "risk_flags": ["committee_disagreement"],
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("bootstrap_stability", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_bootstrap_stability_report == report
+    assert state.busy is False
+    assert "Bootstrap stability" in window["-LOG-"].value
 
 
 def test_handle_worker_done_stores_slice_report_without_mutating_model():

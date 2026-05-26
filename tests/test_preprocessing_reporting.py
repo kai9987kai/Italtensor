@@ -262,6 +262,40 @@ def test_report_export_json_and_markdown(tmp_path):
                 }
             ],
         },
+        chronological_holdout_report={
+            "split_source": "row_order_reference_then_current",
+            "reference_count": 3,
+            "reference_evaluation_count": 1,
+            "current_count": 2,
+            "feature_map": "linear",
+            "reference_metrics": {"f1": 0.9, "accuracy": 0.9},
+            "current_metrics": {"f1": 0.5, "accuracy": 0.6},
+            "metric_deltas": {"f1_delta": -0.4, "accuracy_delta": -0.3, "brier_score_delta": 0.15, "log_loss_delta": 0.4},
+            "current_probability_diagnostics": {"mean_probability_delta": 0.2},
+            "label_shift": {"prevalence_shift": 0.25},
+            "summary": {
+                "top_current_reliance_feature": 1,
+                "current_baseline_f1_gain": 0.2,
+                "verdict": "severe_temporal_degradation_current_relearns",
+                "warning": None,
+            },
+            "current_baseline": {
+                "available": True,
+                "current_train_count": 4,
+                "current_evaluation_count": 2,
+                "current_model_metrics": {"f1": 0.7},
+                "metric_deltas_vs_reference_model": {"f1_delta": 0.2},
+            },
+            "permutation_reliance": [
+                {
+                    "feature_index": 1,
+                    "f1_drop": 0.2,
+                    "log_loss_increase": 0.1,
+                    "mean_probability_shift": 0.15,
+                    "risk_flags": ["current_f1_driver"],
+                }
+            ],
+        },
         selective_risk_report={
             "base": {"error_rate": 0.5},
             "summary": {
@@ -410,6 +444,57 @@ def test_report_export_json_and_markdown(tmp_path):
                 ]
             },
         },
+        ood_sentinel_report={
+            "sample_count": 4,
+            "input_dim": 2,
+            "threshold": 0.4,
+            "model_used": True,
+            "summary": {
+                "top_row_index": 3,
+                "max_ood_score": 3.2,
+                "max_abs_robust_z": 4.1,
+                "max_nearest_neighbor_distance": 2.5,
+                "flagged_row_count": 1,
+                "warning": None,
+            },
+            "rows": [
+                {
+                    "row_index": 3,
+                    "ood_score": 3.2,
+                    "max_abs_robust_z": 4.1,
+                    "nearest_neighbor_distance": 2.5,
+                    "loss": 1.1,
+                    "probability": 0.9,
+                    "risk_flags": ["robust_outlier"],
+                }
+            ],
+        },
+        bootstrap_stability_report={
+            "sample_count": 4,
+            "input_dim": 2,
+            "model_count": 8,
+            "feature_map": "linear",
+            "threshold": 0.4,
+            "ensemble_metrics": {"f1": 0.8, "accuracy": 0.75, "brier_score": 0.2},
+            "summary": {
+                "top_row_index": 2,
+                "mean_probability_std": 0.08,
+                "max_probability_std": 0.22,
+                "max_disagreement_rate": 0.5,
+                "unstable_row_count": 1,
+                "warning": None,
+            },
+            "rows": [
+                {
+                    "row_index": 2,
+                    "instability_score": 0.7,
+                    "probability_std": 0.22,
+                    "disagreement_rate": 0.5,
+                    "mean_probability": 0.48,
+                    "risk_flags": ["committee_disagreement"],
+                }
+            ],
+        },
         mps_sweep_report={
             "input_dim": 2,
             "physical_dim": 4,
@@ -444,6 +529,7 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["posthoc_permutation_null_diagnostics"]["summary"]["verdict"] == "strong_signal"
     assert saved_json["population_drift_diagnostics"]["summary"]["top_feature"] == 1
     assert saved_json["adversarial_validation_diagnostics"]["summary"]["verdict"] == "strong_multivariate_shift"
+    assert saved_json["chronological_holdout_diagnostics"]["summary"]["verdict"] == "severe_temporal_degradation_current_relearns"
     assert saved_json["selective_prediction_diagnostics"]["summary"]["recommended_cutoff"] == 0.2
     assert saved_json["model_response_diagnostics"]["summary"]["top_feature"] == 0
     assert saved_json["pairwise_interaction_diagnostics"]["summary"]["top_pair"] == [0, 1]
@@ -451,6 +537,8 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["subgroup_disparity_diagnostics"]["summary"]["max_disparity"] == 0.6
     assert saved_json["stress_lab"]["summary"]["worst_f1"] == 0.5
     assert saved_json["dataset_cartography"]["region_counts"]["ambiguous"] == 1
+    assert saved_json["ood_sentinel"]["summary"]["top_row_index"] == 3
+    assert saved_json["bootstrap_stability_diagnostics"]["summary"]["top_row_index"] == 2
     assert saved_json["mps_bond_sweep"]["recommended_bond_dim"] == 8
     assert saved_json["trial_history"][0]["config"]["feature_map"] == "rff"
     assert "Feature 0" in saved_markdown
@@ -476,6 +564,8 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "Max PSI" in saved_markdown
     assert "## Adversarial Validation" in saved_markdown
     assert "Domain AUC" in saved_markdown
+    assert "## Chronological Holdout Diagnostics" in saved_markdown
+    assert "Current-baseline F1 gain" in saved_markdown
     assert "## Selective Prediction / Risk-Coverage" in saved_markdown
     assert "Recommended cutoff" in saved_markdown
     assert "## Model Response / Partial Dependence" in saved_markdown
@@ -490,6 +580,10 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "feature_dropout" in saved_markdown
     assert "## Dataset Cartography" in saved_markdown
     assert "Ambiguous rows" in saved_markdown
+    assert "## OOD Sentinel" in saved_markdown
+    assert "Max OOD score" in saved_markdown
+    assert "## Bootstrap Stability Diagnostics" in saved_markdown
+    assert "Mean probability std" in saved_markdown
     assert "## MPS Bond Sweep" in saved_markdown
     assert "Recommended chi" in saved_markdown
 

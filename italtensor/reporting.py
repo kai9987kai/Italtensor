@@ -40,7 +40,10 @@ def build_experiment_report(
     permutation_null_report: dict[str, Any] | None = None,
     population_drift_report: dict[str, Any] | None = None,
     adversarial_validation_report: dict[str, Any] | None = None,
+    chronological_holdout_report: dict[str, Any] | None = None,
     cartography_report: dict[str, Any] | None = None,
+    ood_sentinel_report: dict[str, Any] | None = None,
+    bootstrap_stability_report: dict[str, Any] | None = None,
     mps_sweep_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     label_array = np.asarray(labels, dtype=np.int32)
@@ -84,7 +87,10 @@ def build_experiment_report(
         "posthoc_permutation_null_diagnostics": permutation_null_report or None,
         "population_drift_diagnostics": population_drift_report or None,
         "adversarial_validation_diagnostics": adversarial_validation_report or None,
+        "chronological_holdout_diagnostics": chronological_holdout_report or None,
         "dataset_cartography": cartography_report or None,
+        "ood_sentinel": ood_sentinel_report or None,
+        "bootstrap_stability_diagnostics": bootstrap_stability_report or None,
         "mps_bond_sweep": mps_sweep_report or None,
         "feature_importances": feature_importances,
         "trial_history": trial_history or [],
@@ -122,7 +128,10 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     permutation_null = report.get("posthoc_permutation_null_diagnostics") or {}
     population_drift = report.get("population_drift_diagnostics") or {}
     adversarial_validation = report.get("adversarial_validation_diagnostics") or {}
+    chronological_holdout = report.get("chronological_holdout_diagnostics") or {}
     cartography = report.get("dataset_cartography") or {}
+    ood_sentinel = report.get("ood_sentinel") or {}
+    bootstrap_stability = report.get("bootstrap_stability_diagnostics") or {}
     mps_sweep = report.get("mps_bond_sweep") or {}
     audit = dataset.get("audit") or {}
 
@@ -658,6 +667,69 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     else:
         lines.append("- None")
 
+    lines.extend(["", "## Chronological Holdout Diagnostics"])
+    if chronological_holdout:
+        summary = chronological_holdout.get("summary", {})
+        reference_metrics = chronological_holdout.get("reference_metrics", {})
+        current_metrics = chronological_holdout.get("current_metrics", {})
+        metric_deltas = chronological_holdout.get("metric_deltas", {})
+        probability_diagnostics = chronological_holdout.get("current_probability_diagnostics", {})
+        label_shift = chronological_holdout.get("label_shift", {})
+        baseline = chronological_holdout.get("current_baseline", {})
+        top_feature = summary.get("top_current_reliance_feature")
+        top_text = (
+            f"x{int(top_feature) + 1}"
+            if isinstance(top_feature, int)
+            else "-"
+        )
+        lines.extend(
+            [
+                f"- Split source: {chronological_holdout.get('split_source', '-')}",
+                f"- Reference rows: {chronological_holdout.get('reference_count', '-')}",
+                f"- Reference evaluation rows: {chronological_holdout.get('reference_evaluation_count', '-')}",
+                f"- Current rows: {chronological_holdout.get('current_count', '-')}",
+                f"- Feature map: {chronological_holdout.get('feature_map', '-')}",
+                f"- Threshold: {_format_value(chronological_holdout.get('threshold', '-'))}",
+                f"- Reference F1: {_format_value(reference_metrics.get('f1', '-'))}",
+                f"- Current F1: {_format_value(current_metrics.get('f1', '-'))}",
+                f"- F1 delta: {_format_value(metric_deltas.get('f1_delta', '-'))}",
+                f"- Accuracy delta: {_format_value(metric_deltas.get('accuracy_delta', '-'))}",
+                f"- Brier delta: {_format_value(metric_deltas.get('brier_score_delta', '-'))}",
+                f"- Log loss delta: {_format_value(metric_deltas.get('log_loss_delta', '-'))}",
+                f"- Mean probability delta: {_format_value(probability_diagnostics.get('mean_probability_delta', '-'))}",
+                f"- Current ECE: {_format_value(probability_diagnostics.get('current_ece', '-'))}",
+                f"- Label prevalence shift: {_format_value(label_shift.get('prevalence_shift', '-'))}",
+                f"- Top current reliance feature: {top_text}",
+                f"- Current-baseline F1 gain: {_format_value(summary.get('current_baseline_f1_gain', '-'))}",
+                f"- Verdict: {summary.get('verdict', '-')}",
+                f"- Warning: {summary.get('warning') or 'none'}",
+            ]
+        )
+        if baseline.get("available"):
+            baseline_metrics = baseline.get("current_model_metrics", {})
+            baseline_deltas = baseline.get("metric_deltas_vs_reference_model", {})
+            lines.extend(
+                [
+                    f"- Current-baseline train rows: {baseline.get('current_train_count', '-')}",
+                    f"- Current-baseline evaluation rows: {baseline.get('current_evaluation_count', '-')}",
+                    f"- Current-baseline F1: {_format_value(baseline_metrics.get('f1', '-'))}",
+                    f"- Current-baseline F1 gain vs reference model: {_format_value(baseline_deltas.get('f1_delta', '-'))}",
+                ]
+            )
+        else:
+            lines.append(f"- Current-baseline unavailable: {baseline.get('reason', '-')}")
+        for item in chronological_holdout.get("permutation_reliance", [])[:8]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            lines.append(
+                f"- x{int(item.get('feature_index', 0)) + 1}: "
+                f"F1_drop={_format_value(item.get('f1_drop', '-'))}, "
+                f"logloss_increase={_format_value(item.get('log_loss_increase', '-'))}, "
+                f"prob_shift={_format_value(item.get('mean_probability_shift', '-'))}, "
+                f"flags={flags}"
+            )
+    else:
+        lines.append("- None")
+
     lines.extend(["", "## Dataset Cartography"])
     if cartography:
         counts = cartography.get("region_counts", {})
@@ -681,6 +753,72 @@ def format_markdown_report(report: dict[str, Any]) -> str:
                     f"conf={_format_value(item.get('confidence', '-'))}, "
                     f"var={_format_value(item.get('variability', '-'))}"
                 )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## OOD Sentinel"])
+    if ood_sentinel:
+        summary = ood_sentinel.get("summary", {})
+        top_row = summary.get("top_row_index")
+        lines.extend(
+            [
+                f"- Model used: {ood_sentinel.get('model_used', False)}",
+                f"- Rows scanned: {ood_sentinel.get('sample_count', '-')}",
+                f"- Top row: {top_row if top_row is not None else '-'}",
+                f"- Max OOD score: {_format_value(summary.get('max_ood_score', '-'))}",
+                f"- Max robust z: {_format_value(summary.get('max_abs_robust_z', '-'))}",
+                f"- Max nearest-neighbor distance: {_format_value(summary.get('max_nearest_neighbor_distance', '-'))}",
+                f"- Flagged rows: {summary.get('flagged_row_count', '-')}",
+                f"- Warning: {summary.get('warning') or 'none'}",
+            ]
+        )
+        for item in ood_sentinel.get("rows", [])[:8]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            details = (
+                f"- row {item.get('row_index', '-')}: "
+                f"score={_format_value(item.get('ood_score', '-'))}, "
+                f"max_z={_format_value(item.get('max_abs_robust_z', '-'))}, "
+                f"nn={_format_value(item.get('nearest_neighbor_distance', '-'))}"
+            )
+            if item.get("loss") is not None:
+                details += (
+                    f", loss={_format_value(item.get('loss', '-'))}, "
+                    f"p={_format_value(item.get('probability', '-'))}"
+                )
+            lines.append(f"{details}, flags={flags}")
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Bootstrap Stability Diagnostics"])
+    if bootstrap_stability:
+        summary = bootstrap_stability.get("summary", {})
+        metrics = bootstrap_stability.get("ensemble_metrics", {})
+        top_row = summary.get("top_row_index")
+        lines.extend(
+            [
+                f"- Models: {bootstrap_stability.get('model_count', '-')}",
+                f"- Feature map: {bootstrap_stability.get('feature_map', '-')}",
+                f"- Threshold: {_format_value(bootstrap_stability.get('threshold', '-'))}",
+                f"- Ensemble F1: {_format_value(metrics.get('f1', '-'))}",
+                f"- Ensemble accuracy: {_format_value(metrics.get('accuracy', '-'))}",
+                f"- Mean probability std: {_format_value(summary.get('mean_probability_std', '-'))}",
+                f"- Max probability std: {_format_value(summary.get('max_probability_std', '-'))}",
+                f"- Max disagreement: {_format_value(summary.get('max_disagreement_rate', '-'))}",
+                f"- Unstable rows: {summary.get('unstable_row_count', '-')}",
+                f"- Top row: {top_row if top_row is not None else '-'}",
+                f"- Warning: {summary.get('warning') or 'none'}",
+            ]
+        )
+        for item in bootstrap_stability.get("rows", [])[:8]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            lines.append(
+                f"- row {item.get('row_index', '-')}: "
+                f"instability={_format_value(item.get('instability_score', '-'))}, "
+                f"std={_format_value(item.get('probability_std', '-'))}, "
+                f"disagreement={_format_value(item.get('disagreement_rate', '-'))}, "
+                f"mean_p={_format_value(item.get('mean_probability', '-'))}, "
+                f"flags={flags}"
+            )
     else:
         lines.append("- None")
 

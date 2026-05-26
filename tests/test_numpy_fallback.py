@@ -138,7 +138,10 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
         permutation_null_report={"summary": {"verdict": "signal"}},
         population_drift_report={"summary": {"top_feature": 1}},
         adversarial_validation_report={"summary": {"verdict": "strong_multivariate_shift"}},
+        chronological_holdout_report={"summary": {"verdict": "severe_temporal_degradation"}},
         cartography_report={"region_counts": {"ambiguous": 1}},
+        ood_sentinel_report={"summary": {"top_row_index": 2}},
+        bootstrap_stability_report={"summary": {"top_row_index": 4}},
         mps_sweep_report={"recommended_bond_dim": 8},
     )
     loaded, metadata = load_model_bundle(model_path)
@@ -169,7 +172,10 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
     assert metadata["posthoc_permutation_null_diagnostics"]["summary"]["verdict"] == "signal"
     assert metadata["population_drift_diagnostics"]["summary"]["top_feature"] == 1
     assert metadata["adversarial_validation_diagnostics"]["summary"]["verdict"] == "strong_multivariate_shift"
+    assert metadata["chronological_holdout_diagnostics"]["summary"]["verdict"] == "severe_temporal_degradation"
     assert metadata["dataset_cartography"]["region_counts"]["ambiguous"] == 1
+    assert metadata["ood_sentinel"]["summary"]["top_row_index"] == 2
+    assert metadata["bootstrap_stability_diagnostics"]["summary"]["top_row_index"] == 4
     assert metadata["mps_bond_sweep"]["recommended_bond_dim"] == 8
     assert probabilities.shape == (1,)
 

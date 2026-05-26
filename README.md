@@ -30,11 +30,14 @@ The full `requirements.txt` install includes TensorFlow. The app code still has 
   - Permutation null lab
   - Population drift lab
   - Adversarial validation lab
+  - Chronological holdout lab
   - Cost-sensitive screening
   - Decision utility tradeoff
   - Selective abstention triage
   - Conformal coverage lab
   - Label audit traps
+  - OOD sentinel lab
+  - Bootstrap stability lab
   - Proxy leakage lab
 - Save and import reusable dataset presets.
 - Train once or run random-search experiments.
@@ -53,6 +56,8 @@ The full `requirements.txt` install includes TensorFlow. The app code still has 
 - Selective prediction risk-coverage sweeps for choosing when to abstain on low-confidence rows.
 - Robustness stress lab for Gaussian noise, feature dropout, and single-feature shifts.
 - Dataset audit for imbalance, duplicates, label conflicts, constant features, and correlated features.
+- OOD sentinel diagnostics for robust outlier, leverage, isolation, and high-loss row screening.
+- Bootstrap stability diagnostics for resampled-committee row uncertainty and disagreement.
 - No-TensorFlow fallback trainer with linear, quadratic, and random Fourier feature maps.
 - Validation-tuned decision threshold plus fixed-`0.5` baseline metrics.
 - Class weighting for imbalanced binary datasets.
@@ -63,6 +68,7 @@ The full `requirements.txt` install includes TensorFlow. The app code still has 
 - Post-hoc permutation-null diagnostics comparing the active score against shuffled-label baselines.
 - Population drift diagnostics for ordered reference/current dataset slices.
 - Adversarial validation diagnostics for multivariate reference/current drift detection.
+- Chronological holdout diagnostics for replaying an earlier-trained model on later rows.
 - Split-conformal and **APS** (Adaptive Prediction Sets) uncertainty diagnostics for abstention experiments.
 - **MPS tensor-chain** binary classifier (`backend=mps`): ordered features as sites, bond dimension chi, soft site embeddings.
 - Dataset **audit** (imbalance, duplicates, constant/correlated features) in the workbench and reports.
@@ -189,7 +195,7 @@ Feature maps are used by the NumPy fallback backend. If TensorFlow is installed 
 
 Auto experiments search model settings and feature maps, then rank runs by validation F1, accuracy, and validation loss.
 
-Experiment reports include dataset availability, class counts when a dataset is loaded, the selected threshold, fixed-`0.5` baseline metrics, calibration diagnostics, post-hoc calibration repair diagnostics, post-hoc permutation-null diagnostics, population drift diagnostics, adversarial validation diagnostics, conformal-style uncertainty diagnostics, post-hoc conformal prediction-set diagnostics, feature importance, feature ablation diagnostics, model response diagnostics, pairwise interaction diagnostics, subgroup disparity diagnostics, decision-curve utility diagnostics, selective prediction risk-coverage diagnostics, dataset cartography, MPS bond sweeps, and trial history for auto experiments.
+Experiment reports include dataset availability, class counts when a dataset is loaded, the selected threshold, fixed-`0.5` baseline metrics, calibration diagnostics, post-hoc calibration repair diagnostics, post-hoc permutation-null diagnostics, population drift diagnostics, adversarial validation diagnostics, chronological holdout diagnostics, conformal-style uncertainty diagnostics, post-hoc conformal prediction-set diagnostics, feature importance, feature ablation diagnostics, model response diagnostics, pairwise interaction diagnostics, subgroup disparity diagnostics, decision-curve utility diagnostics, selective prediction risk-coverage diagnostics, dataset cartography, OOD sentinel rows, bootstrap stability diagnostics, MPS bond sweeps, and trial history for auto experiments.
 
 The uncertainty output is intended as an experimental local diagnostic. When each class has enough samples, Italtensor uses a separate calibration split to estimate a split-conformal-style quantile, then evaluates coverage on the validation split. Prediction displays a label set such as `{0}`, `{1}`, `{0,1}`, or `abstain`. Tiny datasets fall back to validation-reused uncertainty and mark that source in model metadata and reports.
 
@@ -200,6 +206,8 @@ Post-hoc permutation-null diagnostics keep the active model's probabilities fixe
 Population drift diagnostics compare the first loaded rows as a reference slice against later rows as a current slice. The output ranks features by population stability index, KS distance, standardized mean shift, outside-reference-range rate, and label prevalence shift. This is useful after importing reviewed labels, appending CSV batches, or loading a time-ordered preset. The `Population drift lab` preset keeps row order meaningful so the drift signal is visible without a separate production batch file.
 
 Adversarial validation diagnostics train a lightweight domain classifier to distinguish first-half reference rows from later current rows. High domain AUC means the two row groups are separable, even when single-feature PSI checks miss a correlation or interaction shift. The output includes domain AUC, accuracy, detectability, permutation feature importance, and top domain-shift drivers. The `Adversarial validation lab` preset includes a correlation-sign flip and variance marker so multivariate drift is visible.
+
+Chronological holdout diagnostics train a temporary NumPy model on earlier reference rows, tune it against an internal reference-validation slice, and replay that frozen model on later current rows. The output compares reference-vs-current F1, accuracy, Brier score, log loss, probability-shift diagnostics, label prevalence shift, and current-row permutation reliance. When the current slice has enough rows from both classes, Italtensor also trains a current-only baseline on current rows and evaluates it on held-out current rows; a large baseline gain means the later rule may be learnable but no longer matches the older reference rule. The `Chronological holdout lab` preset keeps row order meaningful and changes the later label rule so temporal degradation is visible without a separate timestamp column.
 
 Batch prediction exports rank rows for review using threshold-distance uncertainty, conformal ambiguity, and row-level drift diagnostics. Rows near the decision threshold, rows whose conformal set contains both labels, or rows whose standardized features cross the OOD flag threshold get higher review priority. The separate active-query score favors uncertain in-distribution rows so the file can double as a lightweight active-learning queue without mistaking every shifted row for a good labeling candidate.
 
@@ -231,6 +239,10 @@ The robustness stress lab runs against the current dataset and active model. It 
 
 Dataset audits run from the desktop and are embedded in JSON/Markdown reports. They summarize class balance, duplicate feature rows, possible label conflicts, constant columns, highly correlated feature pairs, and compact warnings before you spend time tuning a model.
 
+OOD sentinel diagnostics rank loaded dataset rows by robust median/MAD distance, nearest-neighbor isolation, and optional model loss when an active model is available. Use it before and after training: in model-free mode it acts as a leverage/outlier screen, and in model-aware mode it highlights rows that are both geometrically unusual and costly for the classifier. The `OOD sentinel lab` preset includes ordinary class structure plus artifact-like leverage rows so the ranking is visible.
+
+Bootstrap stability diagnostics train a small committee of temporary NumPy models on stratified resamples, then score every loaded row by probability standard deviation and label disagreement across the committee. This is a local model-uncertainty probe: rows that change prediction across resamples are candidates for review, more labels, or more robust model selection. The `Bootstrap stability lab` preset includes stable class cores plus a noisy boundary band so disagreement is visible.
+
 ## Testing
 
 ```powershell
@@ -258,12 +270,15 @@ TensorFlow-specific tests skip when TensorFlow is not installed.
 - Post-hoc conformal diagnostics are strongest on held-out or newly reviewed data. If you run them on the same rows used to train the model, treat coverage as a local sanity check rather than a finite-sample guarantee.
 - Selective prediction can hide weak subgroup performance if abstention falls unevenly across groups. Pair it with slice diagnostics when coverage fairness matters.
 - Sample review can surface genuine label mistakes, ambiguous cases, or model blind spots. Treat flagged rows as a review queue, not ground truth.
+- OOD sentinel scores mix simple robust distance, neighbor isolation, and optional model loss. They are triage scores for inspection, not automatic deletion criteria.
+- Bootstrap stability retrains several lightweight fallback models, so it is slower than fixed-prediction diagnostics. It estimates local resampling sensitivity, not Bayesian posterior uncertainty.
 - Reports are richest when the dataset is loaded in the same session as the model; model-only reports cannot reconstruct class counts.
 - Validation metrics need enough examples from both classes. The app requires at least two samples per class for train/validation splitting.
 - Post-hoc calibration repair is an evaluation aid, not an automatic deployment change. Estimates are noisy with small calibration/evaluation splits and optimistic if run on rows used to tune the model.
 - Post-hoc permutation-null diagnostics reuse the active model's fixed predictions; they do not retrain the model on permuted labels. Treat them as a fast local significance screen, not a full cross-validated permutation test.
 - Population drift diagnostics assume row order means reference first and current later. Shuffle your dataset before loading if row order is arbitrary.
 - Adversarial validation is a local drift screen, not proof of deployment failure. High domain AUC says rows are distinguishable; it does not say whether task accuracy changed.
+- Chronological holdout diagnostics also assume row order means earlier rows first and later rows last. They are a temporal replay smoke test, not a replacement for a timestamp-aware backtest with embargo/gap logic when adjacent rows leak information.
 - Conformal-style uncertainty is strongest when the dataset is large enough for the dedicated calibration split. On tiny datasets, it falls back to validation-reused diagnostics.
 
 ## Multi-Model Controls
@@ -284,6 +299,7 @@ TensorFlow-specific tests skip when TensorFlow is not installed.
 - Permutation-null diagnostics follow the label-shuffling significance-test idea used by scikit-learn's [`permutation_test_score`](https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.permutation_test_score.html) and Ojala and Garriga's classifier-performance permutation tests ([JMLR](https://jmlr.org/papers/volume11/ojala10a/ojala10a.pdf)). Italtensor keeps the desktop version fast by testing fixed active predictions rather than retraining for every shuffle.
 - Population drift diagnostics use common monitoring statistics: population stability index for binned distribution shift, a two-sample Kolmogorov-Smirnov-style CDF distance, and simple standardized mean shift/outside-range rates. This follows the practical data-drift monitoring pattern used in tabular ML systems while staying dependency-free.
 - Adversarial validation follows the common covariate-shift/domain-classifier practice: train a classifier to distinguish source from target rows, then inspect high domain AUC and feature drivers as evidence of distribution shift before deployment or retraining.
+- Chronological holdout diagnostics follow the same core evaluation principle as time-series cross-validation: train only on earlier rows and evaluate on later rows when sample order carries time. This mirrors scikit-learn's [`TimeSeriesSplit`](https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.TimeSeriesSplit.html) guidance that standard shuffled validation can train on future data and inflate estimates on ordered data.
 - The post-hoc conformal diagnostic follows split-conformal classification practice: calibrate nonconformity scores on one split, evaluate prediction-set coverage and efficiency on another, and report target coverage separately from observed coverage. This mirrors recent practical tutorials and robust-conformal framing while keeping Italtensor dependency-free.
 - Batch review priority follows classic uncertainty-sampling intuition from Burr Settles' [Active Learning Literature Survey](https://burrsettles.com/pub/settles.activelearning.pdf): examples closest to the model's decision boundary are often the most informative to inspect or label next.
 - Reviewed-label import closes the pool-based active-learning loop: score an unlabeled pool, label the most useful rows, merge them into the training set, and retrain. This mirrors human-in-the-loop active-learning workflows summarized in recent HITL surveys such as [Human-in-the-loop machine learning: a state of the art](https://link.springer.com/article/10.1007/s10462-022-10246-w).
@@ -292,6 +308,8 @@ TensorFlow-specific tests skip when TensorFlow is not installed.
 - Model response diagnostics follow partial-dependence and ICE-style inspection described in scikit-learn's [PDP/ICE documentation](https://scikit-learn.org/stable/modules/partial_dependence.html), with the usual caution from accumulated-local-effects work that correlated features make naive PDP grids less realistic.
 - Pairwise interaction diagnostics use a lightweight version of the partial-dependence interaction idea associated with Friedman's H-statistic: compare a joint two-feature response surface with additive one-feature effects and rank large residual surfaces.
 - Batch drift flags are a lightweight standardized-distance diagnostic inspired by distance-based OOD detection work such as Lee et al.'s [simple unified framework for detecting out-of-distribution samples](https://proceedings.neurips.cc/paper/2018/file/abdeb6f575ac5c6676b747bca8d09cc2-Paper.pdf). Italtensor uses per-row z-score summaries rather than a full covariance model to stay dependency-free.
+- OOD sentinel diagnostics follow the practical distinction in scikit-learn's [novelty and outlier detection guide](https://scikit-learn.org/stable/modules/outlier_detection.html): unusual rows in the training data are an outlier-screening problem, while future rows are novelty detection. Italtensor keeps the first version local and transparent with robust z-scores, nearest-neighbor isolation, and optional model-loss overlays.
+- Bootstrap stability diagnostics use the same resampled-committee intuition as bagging: fit multiple classifiers on random subsets and aggregate or compare their predictions. This follows scikit-learn's [`BaggingClassifier`](https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.BaggingClassifier.html) framing and the query-by-committee idea that disagreement can identify examples worth review.
 - Slice diagnostics are inspired by Slice Finder's focus on interpretable subsets where model performance is poor ([Google Research summary](https://research.google/pubs/slice-finder-automated-data-slicing-for-model-validation/), [arXiv](https://arxiv.org/abs/1807.06068)) and newer slice-discovery work such as [Error Slice Discovery via Manifold Compactness](https://ojs.aaai.org/index.php/AAAI/article/view/40016). Italtensor keeps the first version lightweight by using raw-feature quantile bins rather than automated semantic slicing.
 - Subgroup disparity diagnostics borrow standard group metric differences from fairness assessment practice: demographic-parity-style predicted positive rate gaps, equal-opportunity-style recall/FNR gaps, and equalized-odds-style FPR/FNR gaps. The naming stays deliberately operational because Italtensor usually has anonymous numeric vectors rather than verified sensitive attributes.
 - Threshold tradeoff diagnostics follow standard decision-threshold tuning practice described in scikit-learn's [tuning the decision threshold](https://scikit-learn.org/stable/modules/classification_threshold.html) guidance and classic cost-sensitive classification framing, where probability estimates and deployment costs are separate decisions.

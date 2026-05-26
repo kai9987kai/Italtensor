@@ -1,5 +1,6 @@
 import json
 
+import numpy as np
 import pytest
 
 from italtensor.app import AppState, _replace_dataset
@@ -95,11 +96,14 @@ def test_experimental_builtin_presets_are_available():
         "Permutation null lab",
         "Population drift lab",
         "Adversarial validation lab",
+        "Chronological holdout lab",
         "Cost-sensitive screening",
         "Decision utility tradeoff",
         "Selective abstention triage",
         "Conformal coverage lab",
         "Label audit traps",
+        "OOD sentinel lab",
+        "Bootstrap stability lab",
         "Proxy leakage lab",
     }.issubset(names)
 
@@ -236,6 +240,23 @@ def test_adversarial_validation_lab_preset_has_multivariate_shift_features():
     assert any(example["name"] == "Current multivariate shift" for example in metadata["prediction_examples"])
 
 
+def test_chronological_holdout_lab_preset_preserves_order_and_has_temporal_features():
+    metadata = preset_metadata("Chronological holdout lab")
+    dataset = generate_builtin_preset("Chronological holdout lab", sample_count=80, seed=9)
+
+    assert metadata["input_dim"] == 5
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == [
+        "early_signal",
+        "late_signal_decay",
+        "threshold_drift",
+        "calibration_wobble",
+        "decoy_noise",
+    ]
+    assert any(example["name"] == "Late degraded review" for example in metadata["prediction_examples"])
+    assert float(dataset.features[:48, 2].mean()) < float(dataset.features[48:, 2].mean())
+
+
 def test_cost_sensitive_screening_preset_has_borderline_example():
     metadata = preset_metadata("Cost-sensitive screening")
 
@@ -270,6 +291,28 @@ def test_conformal_coverage_lab_preset_has_both_label_candidate():
     assert metadata["recommended_feature_map"] == "linear"
     assert metadata["feature_names"] == ["score_signal", "calibration_noise", "overlap_band"]
     assert any(example["name"] == "Both-label set candidate" for example in metadata["prediction_examples"])
+
+
+def test_ood_sentinel_lab_preset_has_leverage_review_example():
+    metadata = preset_metadata("OOD sentinel lab")
+    dataset = generate_builtin_preset("OOD sentinel lab", sample_count=120, seed=10)
+
+    assert metadata["input_dim"] == 4
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == ["main_signal", "support_signal", "leverage_axis", "artifact_code"]
+    assert any(example["name"] == "Leverage review row" for example in metadata["prediction_examples"])
+    assert float(np.max(np.abs(dataset.features[:, 2]))) > 3.0
+
+
+def test_bootstrap_stability_lab_preset_has_boundary_band():
+    metadata = preset_metadata("Bootstrap stability lab")
+    dataset = generate_builtin_preset("Bootstrap stability lab", sample_count=120, seed=10)
+
+    assert metadata["input_dim"] == 4
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == ["stable_margin", "support_signal", "boundary_band", "decoy_noise"]
+    assert any(example["name"] == "Unstable boundary" for example in metadata["prediction_examples"])
+    assert int(np.sum(dataset.features[:, 2] > 0.8)) >= 12
 
 
 def test_label_audit_traps_preset_has_suspicious_example():

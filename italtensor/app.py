@@ -34,6 +34,10 @@ from .adversarial_validation import (
     format_adversarial_validation_summary,
     run_adversarial_validation_diagnostics,
 )
+from .chronological_holdout import (
+    format_chronological_holdout_summary,
+    run_chronological_holdout_diagnostics,
+)
 from .ablation import format_ablation_summary, run_ablation_diagnostics
 from .persistence import (
     load_dataset,
@@ -58,6 +62,11 @@ from .stress import format_stress_summary, run_stress_suite
 from .thresholds import format_threshold_summary, run_threshold_diagnostics
 from .cartography import format_cartography_summary, run_dataset_cartography
 from .mps_diagnostics import format_mps_sweep_summary, run_mps_bond_sweep
+from .ood_sentinel import format_ood_sentinel_summary, run_ood_sentinel
+from .bootstrap_stability import (
+    format_bootstrap_stability_summary,
+    run_bootstrap_stability_diagnostics,
+)
 from .trials_io import export_trial_history_csv
 from . import __version__
 
@@ -90,7 +99,10 @@ class AppState:
     latest_permutation_null_report: dict[str, Any] | None = None
     latest_population_drift_report: dict[str, Any] | None = None
     latest_adversarial_validation_report: dict[str, Any] | None = None
+    latest_chronological_holdout_report: dict[str, Any] | None = None
     latest_cartography_report: dict[str, Any] | None = None
+    latest_ood_sentinel_report: dict[str, Any] | None = None
+    latest_bootstrap_stability_report: dict[str, Any] | None = None
     latest_mps_sweep_report: dict[str, Any] | None = None
     busy: bool = False
     status_message: str = "Ready"
@@ -156,6 +168,8 @@ def run_app() -> None:
                 _start_population_drift(window, state)
             elif event == "-ADVERSARIAL_VALIDATION-":
                 _start_adversarial_validation(window, state)
+            elif event == "-CHRONOLOGICAL_HOLDOUT-":
+                _start_chronological_holdout(window, state)
             elif event == "-LEARNING_CURVE-":
                 _start_learning_curve(window, state, values)
             elif event == "-ABLATION_DIAGNOSTICS-":
@@ -186,6 +200,10 @@ def run_app() -> None:
                 _start_permutation_null(window, state)
             elif event == "-CARTOGRAPHY-":
                 _start_cartography(window, state)
+            elif event == "-OOD_SENTINEL-":
+                _start_ood_sentinel(window, state)
+            elif event == "-BOOTSTRAP_STABILITY-":
+                _start_bootstrap_stability(window, state, values)
             elif event == "-RELIABILITY-":
                 _run_reliability_diagram(window, state)
             elif event == "-MPS_BOND_SWEEP-":
@@ -458,6 +476,7 @@ def _layout(sg):
             sg.Button("Audit dataset", key="-AUDIT_DATASET-", expand_x=True),
             sg.Button("Population drift", key="-POPULATION_DRIFT-", expand_x=True),
             sg.Button("Adversarial validation", key="-ADVERSARIAL_VALIDATION-", expand_x=True),
+            sg.Button("Chronological holdout", key="-CHRONOLOGICAL_HOLDOUT-", expand_x=True),
             sg.Button("Learning curve", key="-LEARNING_CURVE-", expand_x=True),
         ],
         [
@@ -484,6 +503,8 @@ def _layout(sg):
         ],
         [
             sg.Button("Reliability diagram", key="-RELIABILITY-", expand_x=True),
+            sg.Button("OOD sentinel", key="-OOD_SENTINEL-", expand_x=True),
+            sg.Button("Bootstrap stability", key="-BOOTSTRAP_STABILITY-", expand_x=True),
             sg.Button("MPS bond sweep", key="-MPS_BOND_SWEEP-", expand_x=True),
         ],
         [
@@ -850,6 +871,21 @@ def _start_adversarial_validation(window, state: AppState) -> None:
     _start_worker(window, state, "Running adversarial validation...", task)
 
 
+def _start_chronological_holdout(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    dataset = validate_dataset(state.features, state.labels, min_samples=16, require_two_classes=True)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_chronological_holdout_diagnostics(
+            dataset.features,
+            dataset.labels,
+            threshold=state.latest_threshold,
+        )
+        return "chronological_holdout", report
+
+    _start_worker(window, state, "Running chronological holdout replay...", task)
+
+
 def _start_permutation_null(window, state: AppState) -> None:
     _ensure_not_busy(state)
     if state.model is None:
@@ -981,7 +1017,10 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         permutation_null_report=state.latest_permutation_null_report,
         population_drift_report=state.latest_population_drift_report,
         adversarial_validation_report=state.latest_adversarial_validation_report,
+        chronological_holdout_report=state.latest_chronological_holdout_report,
         cartography_report=state.latest_cartography_report,
+        ood_sentinel_report=state.latest_ood_sentinel_report,
+        bootstrap_stability_report=state.latest_bootstrap_stability_report,
         mps_sweep_report=state.latest_mps_sweep_report,
     )
     window["-MODEL_PATH-"].update(str(model_path))
@@ -1034,7 +1073,10 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     permutation_null_report = metadata.get("posthoc_permutation_null_diagnostics")
     population_drift_report = metadata.get("population_drift_diagnostics")
     adversarial_validation_report = metadata.get("adversarial_validation_diagnostics")
+    chronological_holdout_report = metadata.get("chronological_holdout_diagnostics")
     cartography_report = metadata.get("dataset_cartography")
+    ood_sentinel_report = metadata.get("ood_sentinel")
+    bootstrap_stability_report = metadata.get("bootstrap_stability_diagnostics")
     mps_sweep_report = metadata.get("mps_bond_sweep")
     state.latest_ablation_report = ablation_report if isinstance(ablation_report, dict) else None
     state.latest_decision_curve_report = decision_curve_report if isinstance(decision_curve_report, dict) else None
@@ -1063,7 +1105,14 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_adversarial_validation_report = (
         adversarial_validation_report if isinstance(adversarial_validation_report, dict) else None
     )
+    state.latest_chronological_holdout_report = (
+        chronological_holdout_report if isinstance(chronological_holdout_report, dict) else None
+    )
     state.latest_cartography_report = cartography_report if isinstance(cartography_report, dict) else None
+    state.latest_ood_sentinel_report = ood_sentinel_report if isinstance(ood_sentinel_report, dict) else None
+    state.latest_bootstrap_stability_report = (
+        bootstrap_stability_report if isinstance(bootstrap_stability_report, dict) else None
+    )
     state.latest_mps_sweep_report = mps_sweep_report if isinstance(mps_sweep_report, dict) else None
     _log(window, f"Loaded model expecting {state.input_dim} features.")
 
@@ -1098,7 +1147,10 @@ def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
         permutation_null_report=state.latest_permutation_null_report,
         population_drift_report=state.latest_population_drift_report,
         adversarial_validation_report=state.latest_adversarial_validation_report,
+        chronological_holdout_report=state.latest_chronological_holdout_report,
         cartography_report=state.latest_cartography_report,
+        ood_sentinel_report=state.latest_ood_sentinel_report,
+        bootstrap_stability_report=state.latest_bootstrap_stability_report,
         mps_sweep_report=state.latest_mps_sweep_report,
     )
     path = export_experiment_report(_required_path(values["-REPORT_PATH-"], "report path"), report)
@@ -1198,7 +1250,10 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_permutation_null_report = None
         state.latest_population_drift_report = None
         state.latest_adversarial_validation_report = None
+        state.latest_chronological_holdout_report = None
         state.latest_cartography_report = None
+        state.latest_ood_sentinel_report = None
+        state.latest_bootstrap_stability_report = None
         state.latest_mps_sweep_report = None
         _log(window, f"Training complete: {_format_metrics(training_result.metrics)}")
         _log(window, _format_calibration(training_result.metrics))
@@ -1230,7 +1285,10 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_permutation_null_report = None
         state.latest_population_drift_report = None
         state.latest_adversarial_validation_report = None
+        state.latest_chronological_holdout_report = None
         state.latest_cartography_report = None
+        state.latest_ood_sentinel_report = None
+        state.latest_bootstrap_stability_report = None
         state.latest_mps_sweep_report = None
         _log(window, f"Best config: {_format_config(best.config)}")
         _log(window, f"Best metrics: {_format_metrics(best.metrics)}")
@@ -1406,6 +1464,42 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                     f"label={int(item['label'])}, conf={float(item['confidence']):.3f}, "
                     f"var={float(item['variability']):.3f}",
                 )
+    elif kind == "ood_sentinel":
+        state.latest_ood_sentinel_report = result
+        _log(window, format_ood_sentinel_summary(result))
+        for item in result.get("rows", [])[:6]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            row_text = f"  row={int(item['row_index'])}: score={float(item['ood_score']):.4f}, "
+            row_text += (
+                f"max_z={float(item['max_abs_robust_z']):.4f}, "
+                f"nn={float(item['nearest_neighbor_distance']):.4f}"
+            )
+            if item.get("loss") is not None:
+                row_text += f", loss={float(item['loss']):.4f}, p={float(item['probability']):.4f}"
+            _log(window, row_text + f", flags={flags}")
+    elif kind == "bootstrap_stability":
+        state.latest_bootstrap_stability_report = result
+        _log(window, format_bootstrap_stability_summary(result))
+        metrics = result.get("ensemble_metrics", {})
+        if metrics:
+            _log(
+                window,
+                "  ensemble: "
+                f"F1={float(metrics.get('f1', 0.0)):.4f}, "
+                f"acc={float(metrics.get('accuracy', 0.0)):.4f}, "
+                f"Brier={float(metrics.get('brier_score', 0.0)):.4f}",
+            )
+        for item in result.get("rows", [])[:6]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            _log(
+                window,
+                f"  row={int(item['row_index'])}: "
+                f"instability={float(item['instability_score']):.4f}, "
+                f"std={float(item['probability_std']):.4f}, "
+                f"disagree={float(item['disagreement_rate']):.4f}, "
+                f"mean_p={float(item['mean_probability']):.4f}, "
+                f"flags={flags}",
+            )
     elif kind == "mps_sweep":
         state.latest_mps_sweep_report = result
         _log(window, format_mps_sweep_summary(result))
@@ -1471,6 +1565,41 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                 f"prob_shift={float(item['mean_probability_shift']):.4f}, "
                 f"flags={flags}",
             )
+    elif kind == "chronological_holdout":
+        state.latest_chronological_holdout_report = result
+        _log(window, format_chronological_holdout_summary(result))
+        summary = result.get("summary", {})
+        deltas = result.get("metric_deltas", {})
+        _log(
+            window,
+            "  current replay: "
+            f"F1_delta={float(deltas.get('f1_delta', 0.0)):.4f}, "
+            f"acc_delta={float(deltas.get('accuracy_delta', 0.0)):.4f}, "
+            f"Brier_delta={float(deltas.get('brier_score_delta', 0.0)):.4f}, "
+            f"warning={summary.get('warning') or 'none'}",
+        )
+        current_baseline = result.get("current_baseline", {})
+        if current_baseline.get("available"):
+            baseline_metrics = current_baseline.get("current_model_metrics", {})
+            baseline_deltas = current_baseline.get("metric_deltas_vs_reference_model", {})
+            _log(
+                window,
+                "  current-only baseline: "
+                f"F1={float(baseline_metrics.get('f1', 0.0)):.4f}, "
+                f"F1_gain_vs_reference_model={float(baseline_deltas.get('f1_delta', 0.0)):.4f}",
+            )
+        else:
+            _log(window, f"  current-only baseline unavailable: {current_baseline.get('reason', '-')}")
+        for item in result.get("permutation_reliance", [])[:6]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            _log(
+                window,
+                f"  x{int(item['feature_index']) + 1}: "
+                f"current_F1_drop={float(item['f1_drop']):.4f}, "
+                f"logloss_increase={float(item['log_loss_increase']):.4f}, "
+                f"prob_shift={float(item['mean_probability_shift']):.4f}, "
+                f"flags={flags}",
+            )
     elif kind == "multi_backend":
         best = select_best_from_runs(result)
         state.model = best.model
@@ -1496,7 +1625,10 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_permutation_null_report = None
         state.latest_population_drift_report = None
         state.latest_adversarial_validation_report = None
+        state.latest_chronological_holdout_report = None
         state.latest_cartography_report = None
+        state.latest_ood_sentinel_report = None
+        state.latest_bootstrap_stability_report = None
         state.latest_mps_sweep_report = None
         for item in result:
             slot = ModelSlot(
@@ -1537,7 +1669,10 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_permutation_null_report = None
         state.latest_population_drift_report = None
         state.latest_adversarial_validation_report = None
+        state.latest_chronological_holdout_report = None
         state.latest_cartography_report = None
+        state.latest_ood_sentinel_report = None
+        state.latest_bootstrap_stability_report = None
         state.latest_mps_sweep_report = None
         
         # Auto-store in slots
@@ -1636,7 +1771,10 @@ def _invalidate_model_artifacts(state: AppState) -> None:
     state.latest_permutation_null_report = None
     state.latest_population_drift_report = None
     state.latest_adversarial_validation_report = None
+    state.latest_chronological_holdout_report = None
     state.latest_cartography_report = None
+    state.latest_ood_sentinel_report = None
+    state.latest_bootstrap_stability_report = None
     state.latest_mps_sweep_report = None
 
 
@@ -1683,6 +1821,7 @@ def _set_busy(window, busy: bool) -> None:
         "-AUDIT_DATASET-",
         "-POPULATION_DRIFT-",
         "-ADVERSARIAL_VALIDATION-",
+        "-CHRONOLOGICAL_HOLDOUT-",
         "-LEARNING_CURVE-",
         "-ABLATION_DIAGNOSTICS-",
         "-STRESS_TEST-",
@@ -1698,6 +1837,8 @@ def _set_busy(window, busy: bool) -> None:
         "-SAMPLE_REVIEW-",
         "-PERMUTATION_NULL-",
         "-CARTOGRAPHY-",
+        "-OOD_SENTINEL-",
+        "-BOOTSTRAP_STABILITY-",
         "-RELIABILITY-",
         "-MPS_BOND_SWEEP-",
         "-EXPORT_TRIALS-",
@@ -2002,7 +2143,10 @@ def _activate_model_slot(window, state: AppState, values: dict[str, Any]) -> Non
     state.latest_permutation_null_report = None
     state.latest_population_drift_report = None
     state.latest_adversarial_validation_report = None
+    state.latest_chronological_holdout_report = None
     state.latest_cartography_report = None
+    state.latest_ood_sentinel_report = None
+    state.latest_bootstrap_stability_report = None
     state.latest_mps_sweep_report = None
     _log(window, f"Activated slot '{slot.name}'. Predictions and weight analysis will now run on this model.")
     _update_slots_listbox(window, state)
@@ -2102,7 +2246,10 @@ def _load_registry(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_permutation_null_report = None
         state.latest_population_drift_report = None
         state.latest_adversarial_validation_report = None
+        state.latest_chronological_holdout_report = None
         state.latest_cartography_report = None
+        state.latest_ood_sentinel_report = None
+        state.latest_bootstrap_stability_report = None
         state.latest_mps_sweep_report = None
     _update_slots_listbox(window, state)
     _log(window, f"Loaded {len(slots)} slot(s) from registry.")
@@ -2137,7 +2284,10 @@ def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_permutation_null_report = None
     state.latest_population_drift_report = None
     state.latest_adversarial_validation_report = None
+    state.latest_chronological_holdout_report = None
     state.latest_cartography_report = None
+    state.latest_ood_sentinel_report = None
+    state.latest_bootstrap_stability_report = None
     state.latest_mps_sweep_report = None
     
     state.latest_config = ModelConfig(
@@ -2210,7 +2360,10 @@ def _build_stacked_ensemble(window, state: AppState, values: dict[str, Any]) -> 
     state.latest_permutation_null_report = None
     state.latest_population_drift_report = None
     state.latest_adversarial_validation_report = None
+    state.latest_chronological_holdout_report = None
     state.latest_cartography_report = None
+    state.latest_ood_sentinel_report = None
+    state.latest_bootstrap_stability_report = None
     state.latest_mps_sweep_report = None
     probs = ensemble.predict(dataset.features).reshape(-1)
     metrics = evaluate_predictions(dataset.labels, probs, threshold=0.5)
@@ -2265,6 +2418,48 @@ def _start_cartography(window, state: AppState) -> None:
         return "cartography", report
 
     _start_worker(window, state, "Running dataset cartography...", task)
+
+
+def _start_ood_sentinel(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    dataset = validate_dataset(state.features, state.labels, min_samples=4, require_two_classes=False)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_ood_sentinel(
+            state.model,
+            dataset.features,
+            dataset.labels,
+            preprocessor=state.preprocessor,
+            threshold=state.latest_threshold,
+        )
+        return "ood_sentinel", report
+
+    mode = "model-aware" if state.model is not None else "model-free"
+    _start_worker(window, state, f"Running OOD sentinel ({mode})...", task)
+
+
+def _start_bootstrap_stability(window, state: AppState, values: dict[str, Any]) -> None:
+    _ensure_not_busy(state)
+    dataset = validate_dataset(state.features, state.labels, min_samples=8, require_two_classes=True)
+    feature_map = values.get("-FEATURE_MAP-", "linear")
+    if feature_map not in {"linear", "quadratic", "rff"}:
+        feature_map = "linear"
+    try:
+        max_epochs = min(max(5, int(values.get("-EPOCHS-", 45))), 90)
+    except (TypeError, ValueError):
+        max_epochs = 45
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_bootstrap_stability_diagnostics(
+            dataset.features,
+            dataset.labels,
+            max_epochs=max_epochs,
+            feature_map=feature_map,
+            threshold=state.latest_threshold,
+        )
+        return "bootstrap_stability", report
+
+    _start_worker(window, state, "Running bootstrap stability committee...", task)
 
 
 def _run_reliability_diagram(window, state: AppState) -> None:
@@ -2456,7 +2651,10 @@ def _merge_slots(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_permutation_null_report = None
         state.latest_population_drift_report = None
         state.latest_adversarial_validation_report = None
+        state.latest_chronological_holdout_report = None
         state.latest_cartography_report = None
+        state.latest_ood_sentinel_report = None
+        state.latest_bootstrap_stability_report = None
         state.latest_mps_sweep_report = None
         state.latest_config = ModelConfig(
             lr_schedule="constant",

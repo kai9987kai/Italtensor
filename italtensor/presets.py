@@ -340,6 +340,22 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="chronological_holdout_lab",
+        name="Chronological holdout lab",
+        description="Ordered early/current rows with a changing label rule for temporal replay diagnostics.",
+        default_samples=240,
+        min_samples=16,
+        input_dim=5,
+        recommended_feature_map="linear",
+        feature_names=("early_signal", "late_signal_decay", "threshold_drift", "calibration_wobble", "decoy_noise"),
+        training_defaults={"epochs": 80, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Early stable negative", "features": [-1.0, -0.8, -0.2, 0.0, 0.0], "expected_label": 0},
+            {"name": "Early stable positive", "features": [1.0, 0.8, 0.2, 0.0, 0.0], "expected_label": 1},
+            {"name": "Late degraded review", "features": [0.4, 1.1, 1.4, 0.8, 0.0], "expected_label": None},
+        ),
+    ),
+    PresetInfo(
         key="cost_sensitive_screening",
         name="Cost-sensitive screening",
         description="Rare positives with overlapping scores for threshold tradeoff and false-negative-cost experiments.",
@@ -410,6 +426,36 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
             {"name": "Clean negative", "features": [-1.3, -1.0], "expected_label": 0},
             {"name": "Clean positive", "features": [1.3, 1.0], "expected_label": 1},
             {"name": "Suspicious positive-shaped negative", "features": [1.2, 0.9], "expected_label": None},
+        ),
+    ),
+    PresetInfo(
+        key="ood_sentinel_lab",
+        name="OOD sentinel lab",
+        description="Mostly ordinary rows plus leverage and artifact rows for outlier screening.",
+        default_samples=180,
+        input_dim=4,
+        recommended_feature_map="linear",
+        feature_names=("main_signal", "support_signal", "leverage_axis", "artifact_code"),
+        training_defaults={"epochs": 70, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Typical negative", "features": [-1.0, -0.6, 0.0, 0.0], "expected_label": 0},
+            {"name": "Typical positive", "features": [1.0, 0.6, 0.0, 0.0], "expected_label": 1},
+            {"name": "Leverage review row", "features": [0.2, 0.1, 5.0, -4.0], "expected_label": None},
+        ),
+    ),
+    PresetInfo(
+        key="bootstrap_stability_lab",
+        name="Bootstrap stability lab",
+        description="Stable cores plus boundary rows where resampled committees should disagree.",
+        default_samples=220,
+        input_dim=4,
+        recommended_feature_map="linear",
+        feature_names=("stable_margin", "support_signal", "boundary_band", "decoy_noise"),
+        training_defaults={"epochs": 70, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Stable negative", "features": [-1.2, -0.5, -0.8, 0.0], "expected_label": 0},
+            {"name": "Unstable boundary", "features": [0.02, 0.0, 1.1, 0.0], "expected_label": None},
+            {"name": "Stable positive", "features": [1.2, 0.5, -0.8, 0.0], "expected_label": 1},
         ),
     ),
     PresetInfo(
@@ -495,6 +541,8 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _population_drift_lab(total, rng)
     elif preset.key == "adversarial_validation_lab":
         features, labels = _adversarial_validation_lab(total, rng)
+    elif preset.key == "chronological_holdout_lab":
+        features, labels = _chronological_holdout_lab(total, rng)
     elif preset.key == "cost_sensitive_screening":
         features, labels = _cost_sensitive_screening(total, rng)
     elif preset.key == "decision_utility_tradeoff":
@@ -505,6 +553,10 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _conformal_coverage_lab(total, rng)
     elif preset.key == "label_audit_traps":
         features, labels = _label_audit_traps(total, rng)
+    elif preset.key == "ood_sentinel_lab":
+        features, labels = _ood_sentinel_lab(total, rng)
+    elif preset.key == "bootstrap_stability_lab":
+        features, labels = _bootstrap_stability_lab(total, rng)
     elif preset.key == "proxy_leakage_lab":
         features, labels = _proxy_leakage_lab(total, rng)
     else:
@@ -871,6 +923,61 @@ def _adversarial_validation_lab(total: int, rng: np.random.Generator) -> tuple[n
     return features, labels.astype(np.int32)
 
 
+def _chronological_holdout_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    reference_count = max(8, int(round(total * 0.6)))
+    reference_count = min(reference_count, total - 4)
+    current_count = total - reference_count
+
+    reference_early_signal = rng.normal(0.0, 1.0, size=reference_count)
+    reference_late_signal = reference_early_signal * 0.65 + rng.normal(0.0, 0.45, size=reference_count)
+    reference_threshold = rng.normal(0.0, 0.35, size=reference_count)
+    reference_wobble = rng.normal(0.0, 0.25, size=reference_count)
+    reference_decoy = rng.normal(0.0, 1.0, size=reference_count)
+    reference_latent = (
+        1.05 * reference_early_signal
+        + 0.75 * reference_late_signal
+        - 0.25 * reference_threshold
+        + rng.normal(0.0, 0.35, size=reference_count)
+    )
+    reference_labels = (reference_latent > np.median(reference_latent)).astype(np.int32)
+
+    current_early_signal = rng.normal(0.0, 1.0, size=current_count)
+    current_late_signal = current_early_signal * 0.15 + rng.normal(0.0, 0.9, size=current_count)
+    current_threshold = rng.normal(1.0, 0.45, size=current_count)
+    current_wobble = rng.normal(0.5, 0.65, size=current_count)
+    current_decoy = rng.normal(0.0, 1.0, size=current_count)
+    current_latent = (
+        0.20 * current_early_signal
+        - 1.05 * current_late_signal
+        + 0.65 * current_threshold
+        + 0.25 * current_wobble
+        + rng.normal(0.0, 0.45, size=current_count)
+    )
+    current_labels = (current_latent > np.median(current_latent)).astype(np.int32)
+
+    reference = np.column_stack(
+        [
+            reference_early_signal,
+            reference_late_signal,
+            reference_threshold,
+            reference_wobble,
+            reference_decoy,
+        ]
+    )
+    current = np.column_stack(
+        [
+            current_early_signal,
+            current_late_signal,
+            current_threshold,
+            current_wobble,
+            current_decoy,
+        ]
+    )
+    features = np.vstack([reference, current]).astype(np.float32)
+    labels = np.concatenate([reference_labels, current_labels]).astype(np.int32)
+    return features, labels
+
+
 def _cost_sensitive_screening(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
     positive_count = max(3, round(total * 0.12))
     negative_count = total - positive_count
@@ -958,6 +1065,61 @@ def _label_audit_traps(total: int, rng: np.random.Generator) -> tuple[np.ndarray
     labels[chosen_negatives] = 1
     labels[chosen_positives] = 0
     return features.astype(np.float32), labels.astype(np.int32)
+
+
+def _ood_sentinel_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    labels = _balanced_labels(total)
+    signed = np.where(labels == 1, 1.0, -1.0)
+    main_signal = signed * 0.9 + rng.normal(0.0, 0.35, size=total)
+    support_signal = signed * 0.5 + rng.normal(0.0, 0.45, size=total)
+    leverage_axis = rng.normal(0.0, 0.35, size=total)
+    artifact_code = rng.normal(0.0, 0.25, size=total)
+
+    outlier_count = max(4, total // 12)
+    outlier_indices = rng.choice(total, size=outlier_count, replace=False)
+    split = outlier_count // 2
+    high = outlier_indices[:split]
+    low = outlier_indices[split:]
+    leverage_axis[high] = rng.normal(4.5, 0.35, size=high.shape[0])
+    artifact_code[high] = rng.normal(-3.5, 0.25, size=high.shape[0])
+    leverage_axis[low] = rng.normal(-4.5, 0.35, size=low.shape[0])
+    artifact_code[low] = rng.normal(3.5, 0.25, size=low.shape[0])
+
+    conflict_count = max(2, outlier_count // 3)
+    conflict_indices = outlier_indices[:conflict_count]
+    labels = labels.copy()
+    labels[conflict_indices] = 1 - labels[conflict_indices]
+
+    features = np.column_stack([main_signal, support_signal, leverage_axis, artifact_code]).astype(np.float32)
+    return _shuffle(features, labels.astype(np.int32), rng)
+
+
+def _bootstrap_stability_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    labels = _balanced_labels(total)
+    negative_count = int(np.sum(labels == 0))
+    positive_count = int(np.sum(labels == 1))
+    boundary_count = max(12, total // 4)
+    boundary_negative = min(negative_count - 2, boundary_count // 2)
+    boundary_positive = min(positive_count - 2, boundary_count - boundary_negative)
+    core_negative = negative_count - boundary_negative
+    core_positive = positive_count - boundary_positive
+
+    negative_core = rng.normal(loc=(-1.15, -0.45, -0.8, 0.0), scale=(0.25, 0.28, 0.25, 0.8), size=(core_negative, 4))
+    positive_core = rng.normal(loc=(1.15, 0.45, -0.8, 0.0), scale=(0.25, 0.28, 0.25, 0.8), size=(core_positive, 4))
+    negative_boundary = rng.normal(loc=(-0.08, 0.05, 1.1, 0.0), scale=(0.28, 0.45, 0.22, 0.8), size=(boundary_negative, 4))
+    positive_boundary = rng.normal(loc=(0.08, -0.05, 1.1, 0.0), scale=(0.28, 0.45, 0.22, 0.8), size=(boundary_positive, 4))
+    features = np.vstack([negative_core, negative_boundary, positive_core, positive_boundary]).astype(np.float32)
+    output_labels = np.asarray(
+        [0] * (core_negative + boundary_negative) + [1] * (core_positive + boundary_positive),
+        dtype=np.int32,
+    )
+
+    flip_candidates = np.where(features[:, 2] > 0.8)[0]
+    if flip_candidates.size:
+        flip_count = min(flip_candidates.size, max(2, total // 20))
+        flip_indices = rng.choice(flip_candidates, size=flip_count, replace=False)
+        output_labels[flip_indices] = 1 - output_labels[flip_indices]
+    return _shuffle(features, output_labels, rng)
 
 
 def _proxy_leakage_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:

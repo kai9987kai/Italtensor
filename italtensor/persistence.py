@@ -51,7 +51,10 @@ def save_model_bundle(
     permutation_null_report: dict[str, Any] | None = None,
     population_drift_report: dict[str, Any] | None = None,
     adversarial_validation_report: dict[str, Any] | None = None,
+    chronological_holdout_report: dict[str, Any] | None = None,
     cartography_report: dict[str, Any] | None = None,
+    ood_sentinel_report: dict[str, Any] | None = None,
+    bootstrap_stability_report: dict[str, Any] | None = None,
     mps_sweep_report: dict[str, Any] | None = None,
 ) -> tuple[Path, Path]:
     model_path = Path(path)
@@ -118,7 +121,10 @@ def save_model_bundle(
         "posthoc_permutation_null_diagnostics": permutation_null_report or None,
         "population_drift_diagnostics": population_drift_report or None,
         "adversarial_validation_diagnostics": adversarial_validation_report or None,
+        "chronological_holdout_diagnostics": chronological_holdout_report or None,
         "dataset_cartography": cartography_report or None,
+        "ood_sentinel": ood_sentinel_report or None,
+        "bootstrap_stability_diagnostics": bootstrap_stability_report or None,
         "mps_bond_sweep": mps_sweep_report or None,
         "threshold": float(threshold),
         "preprocessing": resolved_preprocessor.to_dict(),
