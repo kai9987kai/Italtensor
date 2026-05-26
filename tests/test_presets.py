@@ -151,6 +151,7 @@ def test_experimental_builtin_presets_are_available():
         "Bootstrap stability lab",
         "Prototype coverage lab",
         "Separability lens lab",
+        "Neighborhood hardness lab",
         "Proxy leakage lab",
     }.issubset(names)
 
@@ -391,6 +392,18 @@ def test_separability_lens_lab_preset_has_shortcut_and_redundant_features():
     shortcut_alignment = np.mean(np.sign(dataset.features[:, 3]) == np.where(dataset.labels == 1, 1.0, -1.0))
     assert float(shortcut_alignment) >= 0.90
     assert float(np.corrcoef(dataset.features[:, 0], dataset.features[:, 4])[0, 1]) > 0.95
+
+
+def test_neighborhood_hardness_lab_preset_has_boundary_and_hard_islands():
+    metadata = preset_metadata("Neighborhood hardness lab")
+    dataset = generate_builtin_preset("Neighborhood hardness lab", sample_count=120, seed=10)
+
+    assert metadata["input_dim"] == 4
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == ["local_signal", "support_signal", "ambiguity_band", "island_marker"]
+    assert any(example["name"] == "Hard island review" for example in metadata["prediction_examples"])
+    assert int(np.sum(dataset.features[:, 2] > 0.7)) >= 12
+    assert float(np.max(np.abs(dataset.features[:, 3]))) > 1.3
 
 
 def test_label_audit_traps_preset_has_suspicious_example():

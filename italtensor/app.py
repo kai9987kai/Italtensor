@@ -72,6 +72,10 @@ from .feature_separability import (
     format_feature_separability_summary,
     run_feature_separability_diagnostics,
 )
+from .neighborhood_hardness import (
+    format_neighborhood_hardness_summary,
+    run_neighborhood_hardness_diagnostics,
+)
 from .trials_io import export_trial_history_csv
 from . import __version__
 
@@ -110,6 +114,7 @@ class AppState:
     latest_bootstrap_stability_report: dict[str, Any] | None = None
     latest_prototype_audit_report: dict[str, Any] | None = None
     latest_feature_separability_report: dict[str, Any] | None = None
+    latest_neighborhood_hardness_report: dict[str, Any] | None = None
     latest_mps_sweep_report: dict[str, Any] | None = None
     busy: bool = False
     status_message: str = "Ready"
@@ -215,6 +220,8 @@ def run_app() -> None:
                 _start_prototype_audit(window, state)
             elif event == "-FEATURE_SEPARABILITY-":
                 _start_feature_separability(window, state)
+            elif event == "-NEIGHBORHOOD_HARDNESS-":
+                _start_neighborhood_hardness(window, state)
             elif event == "-RELIABILITY-":
                 _run_reliability_diagram(window, state)
             elif event == "-MPS_BOND_SWEEP-":
@@ -518,6 +525,7 @@ def _layout(sg):
             sg.Button("Bootstrap stability", key="-BOOTSTRAP_STABILITY-", expand_x=True),
             sg.Button("Prototype audit", key="-PROTOTYPE_AUDIT-", expand_x=True),
             sg.Button("Separability lens", key="-FEATURE_SEPARABILITY-", expand_x=True),
+            sg.Button("Neighborhood hardness", key="-NEIGHBORHOOD_HARDNESS-", expand_x=True),
             sg.Button("MPS bond sweep", key="-MPS_BOND_SWEEP-", expand_x=True),
         ],
         [
@@ -1069,6 +1077,7 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         bootstrap_stability_report=state.latest_bootstrap_stability_report,
         prototype_audit_report=state.latest_prototype_audit_report,
         feature_separability_report=state.latest_feature_separability_report,
+        neighborhood_hardness_report=state.latest_neighborhood_hardness_report,
         mps_sweep_report=state.latest_mps_sweep_report,
     )
     window["-MODEL_PATH-"].update(str(model_path))
@@ -1127,6 +1136,7 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     bootstrap_stability_report = metadata.get("bootstrap_stability_diagnostics")
     prototype_audit_report = metadata.get("prototype_audit")
     feature_separability_report = metadata.get("feature_separability")
+    neighborhood_hardness_report = metadata.get("neighborhood_hardness")
     mps_sweep_report = metadata.get("mps_bond_sweep")
     state.latest_ablation_report = ablation_report if isinstance(ablation_report, dict) else None
     state.latest_decision_curve_report = decision_curve_report if isinstance(decision_curve_report, dict) else None
@@ -1166,6 +1176,9 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_prototype_audit_report = prototype_audit_report if isinstance(prototype_audit_report, dict) else None
     state.latest_feature_separability_report = (
         feature_separability_report if isinstance(feature_separability_report, dict) else None
+    )
+    state.latest_neighborhood_hardness_report = (
+        neighborhood_hardness_report if isinstance(neighborhood_hardness_report, dict) else None
     )
     state.latest_mps_sweep_report = mps_sweep_report if isinstance(mps_sweep_report, dict) else None
     _log(window, f"Loaded model expecting {state.input_dim} features.")
@@ -1207,6 +1220,7 @@ def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
         bootstrap_stability_report=state.latest_bootstrap_stability_report,
         prototype_audit_report=state.latest_prototype_audit_report,
         feature_separability_report=state.latest_feature_separability_report,
+        neighborhood_hardness_report=state.latest_neighborhood_hardness_report,
         mps_sweep_report=state.latest_mps_sweep_report,
     )
     path = export_experiment_report(_required_path(values["-REPORT_PATH-"], "report path"), report)
@@ -1595,6 +1609,18 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                 f"  redundant x{int(item['left_feature_index']) + 1}/x{int(item['right_feature_index']) + 1}: "
                 f"corr={float(item['correlation']):.4f}, flags={flags}",
             )
+    elif kind == "neighborhood_hardness":
+        state.latest_neighborhood_hardness_report = result
+        _log(window, format_neighborhood_hardness_summary(result))
+        for item in result.get("rows", [])[:6]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            _log(
+                window,
+                f"  row={int(item['row_index'])}: "
+                f"label={int(item['label'])}, vote={int(item['predicted_label'])}, "
+                f"hardness={float(item['hardness_score']):.4f}, "
+                f"opp_vote={float(item['opposite_vote_rate']):.4f}, flags={flags}",
+            )
     elif kind == "mps_sweep":
         state.latest_mps_sweep_report = result
         _log(window, format_mps_sweep_summary(result))
@@ -1882,6 +1908,7 @@ def _invalidate_model_artifacts(state: AppState) -> None:
     state.latest_bootstrap_stability_report = None
     state.latest_prototype_audit_report = None
     state.latest_feature_separability_report = None
+    state.latest_neighborhood_hardness_report = None
     state.latest_mps_sweep_report = None
 
 
@@ -1948,6 +1975,7 @@ def _set_busy(window, busy: bool) -> None:
         "-BOOTSTRAP_STABILITY-",
         "-PROTOTYPE_AUDIT-",
         "-FEATURE_SEPARABILITY-",
+        "-NEIGHBORHOOD_HARDNESS-",
         "-RELIABILITY-",
         "-MPS_BOND_SWEEP-",
         "-EXPORT_TRIALS-",
@@ -2268,6 +2296,7 @@ def _activate_model_slot(window, state: AppState, values: dict[str, Any]) -> Non
     state.latest_bootstrap_stability_report = None
     state.latest_prototype_audit_report = None
     state.latest_feature_separability_report = None
+    state.latest_neighborhood_hardness_report = None
     state.latest_mps_sweep_report = None
     _log(window, f"Activated slot '{slot.name}'. Predictions and weight analysis will now run on this model.")
     _update_slots_listbox(window, state)
@@ -2373,6 +2402,7 @@ def _load_registry(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_bootstrap_stability_report = None
         state.latest_prototype_audit_report = None
         state.latest_feature_separability_report = None
+        state.latest_neighborhood_hardness_report = None
         state.latest_mps_sweep_report = None
     _update_slots_listbox(window, state)
     _log(window, f"Loaded {len(slots)} slot(s) from registry.")
@@ -2413,6 +2443,7 @@ def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_bootstrap_stability_report = None
     state.latest_prototype_audit_report = None
     state.latest_feature_separability_report = None
+    state.latest_neighborhood_hardness_report = None
     state.latest_mps_sweep_report = None
     
     state.latest_config = ModelConfig(
@@ -2491,6 +2522,7 @@ def _build_stacked_ensemble(window, state: AppState, values: dict[str, Any]) -> 
     state.latest_bootstrap_stability_report = None
     state.latest_prototype_audit_report = None
     state.latest_feature_separability_report = None
+    state.latest_neighborhood_hardness_report = None
     state.latest_mps_sweep_report = None
     probs = ensemble.predict(dataset.features).reshape(-1)
     metrics = evaluate_predictions(dataset.labels, probs, threshold=0.5)
@@ -2609,6 +2641,17 @@ def _start_feature_separability(window, state: AppState) -> None:
         return "feature_separability", report
 
     _start_worker(window, state, "Running feature separability lens...", task)
+
+
+def _start_neighborhood_hardness(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    dataset = validate_dataset(state.features, state.labels, min_samples=6, require_two_classes=True)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_neighborhood_hardness_diagnostics(dataset.features, dataset.labels)
+        return "neighborhood_hardness", report
+
+    _start_worker(window, state, "Running neighborhood hardness scan...", task)
 
 
 def _run_reliability_diagram(window, state: AppState) -> None:
@@ -2806,6 +2849,7 @@ def _merge_slots(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_bootstrap_stability_report = None
         state.latest_prototype_audit_report = None
         state.latest_feature_separability_report = None
+        state.latest_neighborhood_hardness_report = None
         state.latest_mps_sweep_report = None
         state.latest_config = ModelConfig(
             lr_schedule="constant",

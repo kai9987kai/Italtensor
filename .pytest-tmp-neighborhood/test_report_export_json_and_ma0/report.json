@@ -1,0 +1,799 @@
+{
+  "generated_at": "2026-05-26T18:43:59.585868+00:00",
+  "dataset": {
+    "available": true,
+    "sample_count": 4,
+    "input_dim": 2,
+    "class_counts": {
+      "0": 2,
+      "1": 2
+    },
+    "audit": {
+      "sample_count": 4,
+      "input_dim": 2,
+      "class_counts": {
+        "0": 2,
+        "1": 2
+      },
+      "class_balance": {
+        "majority_label": 0,
+        "minority_label": 0,
+        "majority_count": 2,
+        "minority_count": 2,
+        "minority_fraction": 0.5,
+        "majority_to_minority_ratio": 1.0
+      },
+      "minority_class_count": 2,
+      "majority_class_count": 2,
+      "imbalance_ratio": 1.0,
+      "duplicate_rows": {
+        "duplicate_group_count": 1,
+        "duplicate_row_count": 1,
+        "groups": [
+          {
+            "features": [
+              0.0,
+              0.0
+            ],
+            "labels": {
+              "0": 2,
+              "1": 0
+            },
+            "row_indices": [
+              0,
+              1
+            ]
+          }
+        ]
+      },
+      "duplicate_row_count": 1,
+      "label_conflicts": {
+        "conflict_group_count": 0,
+        "conflicting_row_count": 0,
+        "groups": []
+      },
+      "label_conflict_count": 0,
+      "conflicting_row_count": 0,
+      "constant_features": [],
+      "constant_feature_details": [],
+      "high_correlations": [
+        {
+          "left": 0,
+          "right": 1,
+          "correlation": 1.0
+        }
+      ],
+      "warnings": [
+        "very small dataset",
+        "duplicate feature rows",
+        "highly correlated features"
+      ]
+    }
+  },
+  "model": {
+    "config": {
+      "hidden_layers": [
+        16
+      ],
+      "learning_rate": 0.001,
+      "batch_size": 16,
+      "max_epochs": 3,
+      "patience": 5,
+      "random_seed": 42,
+      "feature_map": "linear",
+      "rff_components": 64,
+      "rff_gamma": 1.0,
+      "l1_penalty": 0.0,
+      "feature_selection_k": null,
+      "lr_schedule": "constant",
+      "gradient_clip": 0.0,
+      "backend": "auto",
+      "mps_bond_dim": 8,
+      "mps_physical_dim": 4
+    },
+    "threshold": 0.4
+  },
+  "preprocessing": {
+    "method": "standardize",
+    "mean": [
+      0.0,
+      0.0
+    ],
+    "scale": [
+      1.0,
+      1.0
+    ],
+    "selected_indices": null
+  },
+  "metrics": {
+    "f1": 0.75,
+    "threshold": 0.4
+  },
+  "uncertainty": {
+    "conformal_source": "dedicated_calibration",
+    "conformal_alpha": 0.1,
+    "conformal_quantile": 0.35,
+    "conformal_target_coverage": 0.9,
+    "conformal_coverage": 1.0,
+    "conformal_calibration_count": 8,
+    "conformal_evaluation_count": 8,
+    "conformal_singleton_rate": 0.75
+  },
+  "feature_ablation_diagnostics": {
+    "base": {
+      "f1": 0.75
+    },
+    "summary": {
+      "top_feature": "x1",
+      "max_f1_drop": 0.25,
+      "max_label_flip_rate": 0.2,
+      "high_reliance_count": 1,
+      "label_proxy_count": 1
+    },
+    "features": [
+      {
+        "feature_index": 0,
+        "f1_drop": 0.25,
+        "permutation_f1_drop": 0.2,
+        "label_flip_rate": 0.2,
+        "permutation_label_flip_rate": 0.1,
+        "label_correlation": 0.9,
+        "risk_flags": [
+          "label_proxy"
+        ]
+      }
+    ]
+  },
+  "decision_curve_diagnostics": {
+    "prevalence": 0.5,
+    "summary": {
+      "best_threshold": 0.4,
+      "best_net_benefit": 0.25,
+      "max_delta_vs_best_default": 0.2,
+      "useful_threshold_ranges": [
+        [
+          0.2,
+          0.6
+        ]
+      ],
+      "warning": null
+    },
+    "current": {
+      "threshold": 0.4,
+      "net_benefit_model": 0.25,
+      "delta_vs_best_default": 0.2
+    },
+    "points": [
+      {
+        "threshold": 0.4,
+        "net_benefit_model": 0.25,
+        "net_benefit_treat_all": 0.1,
+        "net_benefit_treat_none": 0.0,
+        "delta_vs_best_default": 0.15
+      }
+    ]
+  },
+  "posthoc_conformal_diagnostics": {
+    "split": {
+      "source": "posthoc_stratified_split",
+      "calibration_count": 4,
+      "evaluation_count": 4
+    },
+    "summary": {
+      "recommended_alpha": 0.1,
+      "recommended_target_coverage": 0.9,
+      "recommended_empirical_coverage": 1.0,
+      "recommended_mean_set_size": 1.25,
+      "recommended_singleton_rate": 0.75,
+      "recommended_ambiguous_rate": 0.25,
+      "warning": null
+    },
+    "points": [
+      {
+        "alpha": 0.1,
+        "target_coverage": 0.9,
+        "empirical_coverage": 1.0,
+        "coverage_gap": 0.1,
+        "mean_set_size": 1.25,
+        "singleton_accuracy": 1.0
+      }
+    ]
+  },
+  "posthoc_calibration_repair_diagnostics": {
+    "split": {
+      "source": "posthoc_stratified_split",
+      "calibration_count": 4,
+      "evaluation_count": 4
+    },
+    "summary": {
+      "recommended_method": "platt",
+      "recommended_brier_score": 0.1,
+      "recommended_ece": 0.05,
+      "recommended_log_loss": 0.4,
+      "best_brier_improvement": 0.08,
+      "best_ece_improvement": 0.03,
+      "warning": null
+    },
+    "methods": [
+      {
+        "method": "raw",
+        "brier_score": 0.18,
+        "ece": 0.08,
+        "log_loss": 0.5,
+        "brier_improvement": 0.0
+      },
+      {
+        "method": "platt",
+        "brier_score": 0.1,
+        "ece": 0.05,
+        "log_loss": 0.4,
+        "brier_improvement": 0.08
+      }
+    ]
+  },
+  "selective_prediction_diagnostics": {
+    "base": {
+      "error_rate": 0.5
+    },
+    "summary": {
+      "min_selective_risk": 0.0,
+      "recommended_cutoff": 0.2,
+      "best_selective_accuracy": 1.0,
+      "best_selective_coverage": 0.5,
+      "max_error_reduction": 0.5,
+      "coverage_at_10pct_risk": 0.5,
+      "area_under_risk_coverage": 0.1,
+      "warning": null
+    },
+    "ranked_cutoffs": [
+      {
+        "confidence_cutoff": 0.2,
+        "coverage": 0.5,
+        "error_rate": 0.0,
+        "accuracy": 1.0,
+        "f1": 1.0
+      }
+    ]
+  },
+  "sample_review": {
+    "summary": {
+      "label_issue_count": 1,
+      "disagreement_count": 2,
+      "ambiguous_count": 1,
+      "mean_loss": 0.3,
+      "max_loss": 1.2
+    },
+    "label_issues": [
+      {
+        "row_index": 2,
+        "label": 0,
+        "predicted_label": 1,
+        "probability": 0.95,
+        "loss": 2.9
+      }
+    ],
+    "hard_examples": [],
+    "ambiguous_examples": []
+  },
+  "threshold_diagnostics": {
+    "current_threshold": 0.4,
+    "summary": {
+      "best_f1_threshold": 0.3,
+      "best_balanced_accuracy_threshold": 0.35,
+      "min_cost_threshold": 0.25,
+      "current_cost": 0.5,
+      "min_cost": 0.25
+    },
+    "best_f1": {
+      "threshold": 0.3,
+      "f1": 0.8,
+      "precision": 0.75,
+      "recall": 0.85,
+      "cost": 0.3
+    },
+    "best_balanced_accuracy": {
+      "threshold": 0.35,
+      "f1": 0.75,
+      "precision": 0.7,
+      "recall": 0.8,
+      "cost": 0.4
+    },
+    "min_cost": {
+      "threshold": 0.25,
+      "f1": 0.7,
+      "precision": 0.65,
+      "recall": 0.9,
+      "cost": 0.25
+    }
+  },
+  "model_response_diagnostics": {
+    "summary": {
+      "top_feature": 0,
+      "top_response_range": 0.5,
+      "top_direction": "increasing",
+      "nonmonotonic_feature_count": 1,
+      "high_impact_feature_count": 2,
+      "warning": null
+    },
+    "features": [
+      {
+        "feature_index": 0,
+        "response_range": 0.5,
+        "signed_change": 0.45,
+        "direction": "increasing",
+        "min_response_value": -1.0,
+        "max_response_value": 1.0,
+        "risk_flags": [
+          "high_impact"
+        ]
+      }
+    ]
+  },
+  "pairwise_interaction_diagnostics": {
+    "summary": {
+      "evaluated_pair_count": 1,
+      "top_pair": [
+        0,
+        1
+      ],
+      "top_interaction_strength": 0.55,
+      "top_max_abs_interaction": 0.22,
+      "strong_pair_count": 1,
+      "threshold_crossing_pair_count": 1,
+      "warning": null
+    },
+    "pairs": [
+      {
+        "feature_i": 0,
+        "feature_j": 1,
+        "interaction_strength": 0.55,
+        "max_abs_interaction": 0.22,
+        "mean_abs_interaction": 0.1,
+        "threshold_crossings": 2,
+        "risk_flags": [
+          "strong_interaction"
+        ]
+      }
+    ]
+  },
+  "slice_diagnostics": {
+    "base": {
+      "f1": 0.75
+    },
+    "summary": {
+      "slice_count": 1,
+      "worst_slice": "x1[0, 1]",
+      "worst_f1_delta": -0.25,
+      "worst_accuracy_delta": -0.25
+    },
+    "slices": [
+      {
+        "feature_index": 0,
+        "left": 0.0,
+        "right": 1.0,
+        "count": 2,
+        "f1": 0.5,
+        "f1_delta": -0.25
+      }
+    ]
+  },
+  "subgroup_disparity_diagnostics": {
+    "summary": {
+      "evaluated_feature_count": 1,
+      "evaluated_subgroup_count": 2,
+      "worst_feature": 1,
+      "worst_subgroup": "x2=1",
+      "worst_metric": "false_negative_rate_gap",
+      "max_disparity": 0.6,
+      "max_false_negative_rate_gap": 0.6,
+      "max_false_positive_rate_gap": 0.2,
+      "max_predicted_positive_rate_gap": 0.3,
+      "warning": "Numeric feature slices are proxy subgroup diagnostics."
+    },
+    "subgroups": [
+      {
+        "label": "x2=1",
+        "count": 4,
+        "coverage": 0.5,
+        "risk_score": 0.6,
+        "worst_metric": "false_negative_rate_gap",
+        "risk_flags": [
+          "fnr_gap"
+        ]
+      }
+    ]
+  },
+  "stress_lab": {
+    "base": {
+      "f1": 0.75
+    },
+    "summary": {
+      "worst_f1": 0.5,
+      "stress_f1_ratio": 0.6667,
+      "max_label_flip_rate": 0.25,
+      "worst_case": "feature_dropout@0.25"
+    },
+    "perturbations": [
+      {
+        "kind": "feature_dropout",
+        "level": 0.25,
+        "f1": 0.5,
+        "label_flip_rate": 0.25
+      }
+    ]
+  },
+  "posthoc_permutation_null_diagnostics": {
+    "permutation_count": 80,
+    "seed": 42,
+    "summary": {
+      "observed_f1": 0.9,
+      "null_mean_f1": 0.45,
+      "f1_gap": 0.45,
+      "f1_z_score": 3.1,
+      "f1_p_value": 0.01,
+      "accuracy_p_value": 0.02,
+      "verdict": "strong_signal",
+      "warning": null
+    },
+    "observed": {
+      "f1": 0.9,
+      "accuracy": 0.85,
+      "balanced_accuracy": 0.84
+    },
+    "p_values": {
+      "f1": 0.01,
+      "accuracy": 0.02,
+      "balanced_accuracy": 0.03
+    },
+    "null_distribution": {
+      "f1": {
+        "mean": 0.45,
+        "p95": 0.7
+      },
+      "accuracy": {
+        "mean": 0.5,
+        "p95": 0.75
+      },
+      "balanced_accuracy": {
+        "mean": 0.5,
+        "p95": 0.74
+      }
+    }
+  },
+  "population_drift_diagnostics": {
+    "split_source": "row_order_first_reference_then_current",
+    "reference_count": 2,
+    "current_count": 2,
+    "summary": {
+      "top_feature": 1,
+      "max_psi": 0.4,
+      "max_ks_statistic": 0.5,
+      "max_mean_shift_std": 1.2,
+      "max_outside_reference_rate": 0.25,
+      "drifted_feature_count": 1,
+      "warning": null
+    },
+    "label_shift": {
+      "prevalence_shift": 0.25
+    },
+    "features": [
+      {
+        "feature_index": 1,
+        "psi": 0.4,
+        "ks_statistic": 0.5,
+        "mean_shift_std": 1.2,
+        "outside_reference_rate": 0.25,
+        "risk_flags": [
+          "major_psi_shift"
+        ]
+      }
+    ]
+  },
+  "adversarial_validation_diagnostics": {
+    "split_source": "row_order_domain_classifier",
+    "reference_count": 2,
+    "current_count": 2,
+    "validation_samples": 2,
+    "summary": {
+      "domain_auc": 0.88,
+      "domain_accuracy": 0.8,
+      "detectability": 0.88,
+      "top_feature": 1,
+      "important_feature_count": 1,
+      "verdict": "strong_multivariate_shift",
+      "warning": null
+    },
+    "domain_metrics": {
+      "roc_auc": 0.88,
+      "accuracy": 0.8
+    },
+    "label_shift": {
+      "prevalence_shift": 0.25
+    },
+    "features": [
+      {
+        "feature_index": 1,
+        "auc_drop": 0.2,
+        "accuracy_drop": 0.15,
+        "mean_probability_shift": 0.12,
+        "risk_flags": [
+          "domain_auc_driver"
+        ]
+      }
+    ]
+  },
+  "chronological_holdout_diagnostics": {
+    "split_source": "row_order_reference_then_current",
+    "reference_count": 3,
+    "reference_evaluation_count": 1,
+    "current_count": 2,
+    "feature_map": "linear",
+    "reference_metrics": {
+      "f1": 0.9,
+      "accuracy": 0.9
+    },
+    "current_metrics": {
+      "f1": 0.5,
+      "accuracy": 0.6
+    },
+    "metric_deltas": {
+      "f1_delta": -0.4,
+      "accuracy_delta": -0.3,
+      "brier_score_delta": 0.15,
+      "log_loss_delta": 0.4
+    },
+    "current_probability_diagnostics": {
+      "mean_probability_delta": 0.2
+    },
+    "label_shift": {
+      "prevalence_shift": 0.25
+    },
+    "summary": {
+      "top_current_reliance_feature": 1,
+      "current_baseline_f1_gain": 0.2,
+      "verdict": "severe_temporal_degradation_current_relearns",
+      "warning": null
+    },
+    "current_baseline": {
+      "available": true,
+      "current_train_count": 4,
+      "current_evaluation_count": 2,
+      "current_model_metrics": {
+        "f1": 0.7
+      },
+      "metric_deltas_vs_reference_model": {
+        "f1_delta": 0.2
+      }
+    },
+    "permutation_reliance": [
+      {
+        "feature_index": 1,
+        "f1_drop": 0.2,
+        "log_loss_increase": 0.1,
+        "mean_probability_shift": 0.15,
+        "risk_flags": [
+          "current_f1_driver"
+        ]
+      }
+    ]
+  },
+  "dataset_cartography": {
+    "sample_count": 4,
+    "threshold": 0.4,
+    "median_confidence": 0.75,
+    "median_variability": 0.05,
+    "region_counts": {
+      "easy_to_learn": 2,
+      "ambiguous": 1,
+      "hard_to_learn": 1,
+      "overconfident_wrong": 0
+    },
+    "regions": {
+      "ambiguous": [
+        {
+          "row_index": 1,
+          "label": 0,
+          "predicted_label": 1,
+          "confidence": 0.45,
+          "variability": 0.2
+        }
+      ]
+    }
+  },
+  "ood_sentinel": {
+    "sample_count": 4,
+    "input_dim": 2,
+    "threshold": 0.4,
+    "model_used": true,
+    "summary": {
+      "top_row_index": 3,
+      "max_ood_score": 3.2,
+      "max_abs_robust_z": 4.1,
+      "max_nearest_neighbor_distance": 2.5,
+      "flagged_row_count": 1,
+      "warning": null
+    },
+    "rows": [
+      {
+        "row_index": 3,
+        "ood_score": 3.2,
+        "max_abs_robust_z": 4.1,
+        "nearest_neighbor_distance": 2.5,
+        "loss": 1.1,
+        "probability": 0.9,
+        "risk_flags": [
+          "robust_outlier"
+        ]
+      }
+    ]
+  },
+  "bootstrap_stability_diagnostics": {
+    "sample_count": 4,
+    "input_dim": 2,
+    "model_count": 8,
+    "feature_map": "linear",
+    "threshold": 0.4,
+    "ensemble_metrics": {
+      "f1": 0.8,
+      "accuracy": 0.75,
+      "brier_score": 0.2
+    },
+    "summary": {
+      "top_row_index": 2,
+      "mean_probability_std": 0.08,
+      "max_probability_std": 0.22,
+      "max_disagreement_rate": 0.5,
+      "unstable_row_count": 1,
+      "warning": null
+    },
+    "rows": [
+      {
+        "row_index": 2,
+        "instability_score": 0.7,
+        "probability_std": 0.22,
+        "disagreement_rate": 0.5,
+        "mean_probability": 0.48,
+        "risk_flags": [
+          "committee_disagreement"
+        ]
+      }
+    ]
+  },
+  "prototype_audit": {
+    "sample_count": 4,
+    "input_dim": 2,
+    "k": 3,
+    "summary": {
+      "prototype_count": 2,
+      "boundary_row_count": 1,
+      "isolated_row_count": 1,
+      "label_contradiction_count": 1,
+      "top_boundary_row": 2,
+      "top_label_contradiction_row": 2,
+      "warning": null
+    },
+    "prototypes": [
+      {
+        "row_index": 0,
+        "label": 0,
+        "prototype_score": 0.8,
+        "local_opposite_fraction": 0.0,
+        "risk_flags": [
+          "class_prototype"
+        ]
+      }
+    ],
+    "boundary_rows": [
+      {
+        "row_index": 2,
+        "label": 1,
+        "boundary_score": 0.6,
+        "label_contradiction_score": 0.7,
+        "risk_flags": [
+          "class_boundary",
+          "possible_label_contradiction"
+        ]
+      }
+    ]
+  },
+  "feature_separability": {
+    "sample_count": 4,
+    "input_dim": 2,
+    "summary": {
+      "top_feature": 1,
+      "top_auc": 0.95,
+      "top_balanced_accuracy": 0.9,
+      "near_perfect_feature_count": 1,
+      "weak_feature_count": 1,
+      "redundant_pair_count": 1,
+      "warning": null
+    },
+    "features": [
+      {
+        "feature_index": 1,
+        "auc": 0.95,
+        "best_balanced_accuracy": 0.9,
+        "standardized_mean_difference": 2.4,
+        "direction": "positive_high",
+        "risk_flags": [
+          "strong_single_feature"
+        ]
+      }
+    ],
+    "redundant_pairs": [
+      {
+        "left_feature_index": 0,
+        "right_feature_index": 1,
+        "correlation": 0.97,
+        "risk_flags": [
+          "redundant_features"
+        ]
+      }
+    ]
+  },
+  "neighborhood_hardness": {
+    "sample_count": 4,
+    "input_dim": 2,
+    "k": 3,
+    "summary": {
+      "loo_accuracy": 0.75,
+      "hard_row_count": 1,
+      "ambiguous_row_count": 1,
+      "label_issue_candidate_count": 1,
+      "locally_easy_count": 2,
+      "top_hard_row": 2,
+      "warning": null
+    },
+    "rows": [
+      {
+        "row_index": 2,
+        "label": 0,
+        "predicted_label": 1,
+        "hardness_score": 0.8,
+        "opposite_vote_rate": 1.0,
+        "vote_entropy": 0.0,
+        "risk_flags": [
+          "label_issue_candidate"
+        ]
+      }
+    ]
+  },
+  "mps_bond_sweep": {
+    "input_dim": 2,
+    "physical_dim": 4,
+    "validation_samples": 2,
+    "bond_dims_tested": [
+      4,
+      8
+    ],
+    "recommended_bond_dim": 8,
+    "recommended_f1": 0.8,
+    "results": [
+      {
+        "bond_dim": 8,
+        "f1": 0.8,
+        "accuracy": 0.75,
+        "brier_score": 0.2,
+        "ece": 0.1
+      }
+    ]
+  },
+  "feature_importances": [
+    {
+      "feature_index": 0,
+      "importance": 0.25
+    }
+  ],
+  "trial_history": [
+    {
+      "config": {
+        "feature_map": "rff"
+      },
+      "metrics": {
+        "f1": 0.75,
+        "brier_score": 0.1,
+        "log_loss": 0.3
+      }
+    }
+  ]
+}

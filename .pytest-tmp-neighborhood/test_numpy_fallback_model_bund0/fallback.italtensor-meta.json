@@ -1,0 +1,180 @@
+{
+  "model_format_version": 1,
+  "model_backend": "numpy-logistic",
+  "model_feature_map": "linear",
+  "input_dim": 2,
+  "label_schema": {
+    "negative": 0,
+    "positive": 1
+  },
+  "best_config": {
+    "hidden_layers": [
+      32
+    ],
+    "learning_rate": 0.001,
+    "batch_size": 16,
+    "max_epochs": 5,
+    "patience": 5,
+    "random_seed": 42,
+    "feature_map": "linear",
+    "rff_components": 64,
+    "rff_gamma": 1.0,
+    "l1_penalty": 0.0,
+    "feature_selection_k": null,
+    "lr_schedule": "constant",
+    "gradient_clip": 0.0,
+    "backend": "auto",
+    "mps_bond_dim": 8,
+    "mps_physical_dim": 4
+  },
+  "validation_metrics": {
+    "f1": 0.8
+  },
+  "uncertainty": {
+    "conformal_quantile": 0.33,
+    "conformal_coverage": 0.9
+  },
+  "feature_ablation_diagnostics": {
+    "summary": {
+      "top_feature": "x1"
+    }
+  },
+  "decision_curve_diagnostics": {
+    "summary": {
+      "best_threshold": 0.4
+    }
+  },
+  "posthoc_conformal_diagnostics": {
+    "summary": {
+      "recommended_alpha": 0.1
+    }
+  },
+  "posthoc_calibration_repair_diagnostics": {
+    "summary": {
+      "recommended_method": "platt"
+    }
+  },
+  "selective_prediction_diagnostics": {
+    "summary": {
+      "recommended_cutoff": 0.2
+    }
+  },
+  "sample_review": {
+    "summary": {
+      "label_issue_count": 1
+    }
+  },
+  "threshold_diagnostics": {
+    "summary": {
+      "best_f1_threshold": 0.3
+    }
+  },
+  "model_response_diagnostics": {
+    "summary": {
+      "top_feature": 0
+    }
+  },
+  "pairwise_interaction_diagnostics": {
+    "summary": {
+      "top_pair": [
+        0,
+        1
+      ]
+    }
+  },
+  "slice_diagnostics": {
+    "summary": {
+      "worst_slice": "x1[0, 1]"
+    }
+  },
+  "subgroup_disparity_diagnostics": {
+    "summary": {
+      "max_disparity": 0.6
+    }
+  },
+  "stress_lab": {
+    "summary": {
+      "worst_f1": 0.7
+    }
+  },
+  "posthoc_permutation_null_diagnostics": {
+    "summary": {
+      "verdict": "signal"
+    }
+  },
+  "population_drift_diagnostics": {
+    "summary": {
+      "top_feature": 1
+    }
+  },
+  "adversarial_validation_diagnostics": {
+    "summary": {
+      "verdict": "strong_multivariate_shift"
+    }
+  },
+  "chronological_holdout_diagnostics": {
+    "summary": {
+      "verdict": "severe_temporal_degradation"
+    }
+  },
+  "dataset_cartography": {
+    "region_counts": {
+      "ambiguous": 1
+    }
+  },
+  "ood_sentinel": {
+    "summary": {
+      "top_row_index": 2
+    }
+  },
+  "bootstrap_stability_diagnostics": {
+    "summary": {
+      "top_row_index": 4
+    }
+  },
+  "prototype_audit": {
+    "summary": {
+      "top_boundary_row": 5
+    }
+  },
+  "feature_separability": {
+    "summary": {
+      "top_feature": 1
+    }
+  },
+  "neighborhood_hardness": {
+    "summary": {
+      "top_hard_row": 6
+    }
+  },
+  "mps_bond_sweep": {
+    "recommended_bond_dim": 8
+  },
+  "threshold": 0.4,
+  "preprocessing": {
+    "method": "standardize",
+    "mean": [
+      0.0,
+      0.0
+    ],
+    "scale": [
+      1.0,
+      1.0
+    ],
+    "selected_indices": null
+  },
+  "feature_importances": [
+    {
+      "feature_index": 0,
+      "importance": 0.5
+    }
+  ],
+  "trial_history": [
+    {
+      "metrics": {
+        "f1": 0.8
+      }
+    }
+  ],
+  "timestamp": "2026-05-26T18:43:59.647142+00:00"
+}

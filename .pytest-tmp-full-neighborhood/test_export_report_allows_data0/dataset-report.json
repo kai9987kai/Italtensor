@@ -1,0 +1,94 @@
+{
+  "generated_at": "2026-05-26T18:44:16.109547+00:00",
+  "dataset": {
+    "available": true,
+    "sample_count": 2,
+    "input_dim": 2,
+    "class_counts": {
+      "0": 1,
+      "1": 1
+    },
+    "audit": {
+      "sample_count": 2,
+      "input_dim": 2,
+      "class_counts": {
+        "0": 1,
+        "1": 1
+      },
+      "class_balance": {
+        "majority_label": 0,
+        "minority_label": 0,
+        "majority_count": 1,
+        "minority_count": 1,
+        "minority_fraction": 0.5,
+        "majority_to_minority_ratio": 1.0
+      },
+      "minority_class_count": 1,
+      "majority_class_count": 1,
+      "imbalance_ratio": 1.0,
+      "duplicate_rows": {
+        "duplicate_group_count": 0,
+        "duplicate_row_count": 0,
+        "groups": []
+      },
+      "duplicate_row_count": 0,
+      "label_conflicts": {
+        "conflict_group_count": 0,
+        "conflicting_row_count": 0,
+        "groups": []
+      },
+      "label_conflict_count": 0,
+      "conflicting_row_count": 0,
+      "constant_features": [],
+      "constant_feature_details": [],
+      "high_correlations": [],
+      "warnings": [
+        "very small dataset"
+      ]
+    }
+  },
+  "model": {
+    "config": null,
+    "threshold": 0.5
+  },
+  "preprocessing": null,
+  "metrics": {},
+  "uncertainty": null,
+  "feature_ablation_diagnostics": null,
+  "decision_curve_diagnostics": null,
+  "posthoc_conformal_diagnostics": null,
+  "posthoc_calibration_repair_diagnostics": null,
+  "selective_prediction_diagnostics": null,
+  "sample_review": null,
+  "threshold_diagnostics": null,
+  "model_response_diagnostics": null,
+  "pairwise_interaction_diagnostics": null,
+  "slice_diagnostics": null,
+  "subgroup_disparity_diagnostics": null,
+  "stress_lab": null,
+  "posthoc_permutation_null_diagnostics": null,
+  "population_drift_diagnostics": null,
+  "adversarial_validation_diagnostics": null,
+  "chronological_holdout_diagnostics": null,
+  "dataset_cartography": null,
+  "ood_sentinel": null,
+  "bootstrap_stability_diagnostics": null,
+  "prototype_audit": {
+    "summary": {
+      "top_boundary_row": 0
+    }
+  },
+  "feature_separability": {
+    "summary": {
+      "top_feature": 1
+    }
+  },
+  "neighborhood_hardness": {
+    "summary": {
+      "top_hard_row": 1
+    }
+  },
+  "mps_bond_sweep": null,
+  "feature_importances": [],
+  "trial_history": []
+}

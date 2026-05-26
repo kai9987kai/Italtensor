@@ -1,0 +1,68 @@
+{
+  "kind": "italtensor.dataset_preset",
+  "schema_version": 1,
+  "name": "Demo",
+  "description": "Reusable demo",
+  "training_defaults": {
+    "epochs": 44,
+    "batch_size": 8,
+    "trials": 6,
+    "feature_map": "quadratic",
+    "backend": "numpy",
+    "gradient_clip": 0.5,
+    "l1_penalty": 0.001,
+    "feature_selection_k": 2
+  },
+  "recommended_feature_map": "quadratic",
+  "feature_names": [
+    "left",
+    "right"
+  ],
+  "label_names": {
+    "0": "reject",
+    "1": "accept"
+  },
+  "prediction_examples": [
+    {
+      "name": "Review row",
+      "features": [
+        0.4,
+        0.5
+      ],
+      "expected_label": null
+    }
+  ],
+  "dataset": {
+    "input_dim": 2,
+    "samples": [
+      {
+        "features": [
+          0.10000000149011612,
+          0.20000000298023224
+        ],
+        "label": 0
+      },
+      {
+        "features": [
+          0.800000011920929,
+          0.8999999761581421
+        ],
+        "label": 1
+      },
+      {
+        "features": [
+          0.20000000298023224,
+          0.10000000149011612
+        ],
+        "label": 0
+      },
+      {
+        "features": [
+          0.8999999761581421,
+          0.699999988079071
+        ],
+        "label": 1
+      }
+    ]
+  }
+}

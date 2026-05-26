@@ -91,6 +91,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         latest_bootstrap_stability_report={"summary": {"top_row_index": 4}},
         latest_prototype_audit_report={"summary": {"top_boundary_row": 5}},
         latest_feature_separability_report={"summary": {"top_feature": 2}},
+        latest_neighborhood_hardness_report={"summary": {"top_hard_row": 6}},
         latest_mps_sweep_report={"recommended_bond_dim": 4},
     )
 
@@ -128,6 +129,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
     assert state.latest_bootstrap_stability_report is None
     assert state.latest_prototype_audit_report is None
     assert state.latest_feature_separability_report is None
+    assert state.latest_neighborhood_hardness_report is None
     assert state.latest_mps_sweep_report is None
 
 
@@ -175,6 +177,7 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
         input_dim=2,
         latest_feature_separability_report={"summary": {"top_feature": 1}},
         latest_prototype_audit_report={"summary": {"top_boundary_row": 0}},
+        latest_neighborhood_hardness_report={"summary": {"top_hard_row": 1}},
     )
     path = tmp_path / "dataset-report.json"
 
@@ -186,6 +189,7 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
     assert payload["metrics"] == {}
     assert payload["feature_separability"]["summary"]["top_feature"] == 1
     assert payload["prototype_audit"]["summary"]["top_boundary_row"] == 0
+    assert payload["neighborhood_hardness"]["summary"]["top_hard_row"] == 1
     assert "Exported report" in window["-LOG-"].value
 
 
@@ -202,6 +206,7 @@ def test_training_preserves_dataset_only_diagnostics():
     state = AppState(
         latest_feature_separability_report={"summary": {"top_feature": 1}},
         latest_prototype_audit_report={"summary": {"top_boundary_row": 0}},
+        latest_neighborhood_hardness_report={"summary": {"top_hard_row": 2}},
         busy=True,
     )
     training_result = SimpleNamespace(
@@ -219,6 +224,7 @@ def test_training_preserves_dataset_only_diagnostics():
 
     assert state.latest_feature_separability_report == {"summary": {"top_feature": 1}}
     assert state.latest_prototype_audit_report == {"summary": {"top_boundary_row": 0}}
+    assert state.latest_neighborhood_hardness_report == {"summary": {"top_hard_row": 2}}
     assert state.latest_metrics == {"f1": 0.5}
 
 
@@ -712,6 +718,40 @@ def test_handle_worker_done_stores_feature_separability_without_mutating_model()
     assert state.latest_feature_separability_report == report
     assert state.busy is False
     assert "Feature separability" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_neighborhood_hardness_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
+    model = state.model
+    report = {
+        "k": 3,
+        "summary": {
+            "loo_accuracy": 0.75,
+            "hard_row_count": 2,
+            "ambiguous_row_count": 1,
+            "label_issue_candidate_count": 1,
+            "top_hard_row": 4,
+        },
+        "rows": [
+            {
+                "row_index": 4,
+                "label": 0,
+                "predicted_label": 1,
+                "hardness_score": 0.9,
+                "opposite_vote_rate": 1.0,
+                "risk_flags": ["label_issue_candidate", "hard_row"],
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("neighborhood_hardness", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_neighborhood_hardness_report == report
+    assert state.busy is False
+    assert "Neighborhood hardness" in window["-LOG-"].value
 
 
 def test_handle_worker_done_stores_slice_report_without_mutating_model():

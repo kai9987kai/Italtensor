@@ -490,6 +490,22 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="neighborhood_hardness_lab",
+        name="Neighborhood hardness lab",
+        description="Easy cores, ambiguous boundary rows, and mislabeled islands for local hardness scans.",
+        default_samples=220,
+        input_dim=4,
+        recommended_feature_map="linear",
+        feature_names=("local_signal", "support_signal", "ambiguity_band", "island_marker"),
+        training_defaults={"epochs": 70, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Locally easy negative", "features": [-1.2, -0.6, -0.8, 0.0], "expected_label": 0},
+            {"name": "Ambiguous boundary", "features": [0.0, 0.0, 1.0, 0.0], "expected_label": None},
+            {"name": "Hard island review", "features": [1.2, 0.6, -0.8, 1.6], "expected_label": None},
+            {"name": "Locally easy positive", "features": [1.2, 0.6, -0.8, 0.0], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
         key="proxy_leakage_lab",
         name="Proxy leakage lab",
         description="A label-correlated proxy feature that makes ablation and reliance diagnostics visible.",
@@ -592,6 +608,8 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _prototype_coverage_lab(total, rng)
     elif preset.key == "separability_lens_lab":
         features, labels = _separability_lens_lab(total, rng)
+    elif preset.key == "neighborhood_hardness_lab":
+        features, labels = _neighborhood_hardness_lab(total, rng)
     elif preset.key == "proxy_leakage_lab":
         features, labels = _proxy_leakage_lab(total, rng)
     else:
@@ -1330,6 +1348,36 @@ def _separability_lens_lab(total: int, rng: np.random.Generator) -> tuple[np.nda
         [strong_signal, weak_signal, overlap_noise, shortcut_code, redundant_signal]
     ).astype(np.float32)
     return _shuffle(features, labels, rng)
+
+
+def _neighborhood_hardness_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    labels = _balanced_labels(total)
+    negative_count = int(np.sum(labels == 0))
+    positive_count = int(np.sum(labels == 1))
+    boundary_count = max(12, total // 5)
+    island_count = max(6, total // 12)
+    boundary_negative = min(negative_count - 4, boundary_count // 2)
+    boundary_positive = min(positive_count - 4, boundary_count - boundary_negative)
+    island_negative = min(negative_count - boundary_negative - 2, island_count // 2)
+    island_positive = min(positive_count - boundary_positive - 2, island_count - island_negative)
+    core_negative = negative_count - boundary_negative - island_negative
+    core_positive = positive_count - boundary_positive - island_positive
+
+    negative_core = rng.normal(loc=(-1.2, -0.6, -0.8, 0.0), scale=(0.22, 0.24, 0.20, 0.20), size=(core_negative, 4))
+    positive_core = rng.normal(loc=(1.2, 0.6, -0.8, 0.0), scale=(0.22, 0.24, 0.20, 0.20), size=(core_positive, 4))
+    negative_boundary = rng.normal(loc=(-0.08, 0.02, 1.0, 0.0), scale=(0.25, 0.32, 0.14, 0.20), size=(boundary_negative, 4))
+    positive_boundary = rng.normal(loc=(0.08, -0.02, 1.0, 0.0), scale=(0.25, 0.32, 0.14, 0.20), size=(boundary_positive, 4))
+    negative_island = rng.normal(loc=(1.1, 0.6, -0.8, 1.6), scale=(0.16, 0.18, 0.14, 0.12), size=(island_negative, 4))
+    positive_island = rng.normal(loc=(-1.1, -0.6, -0.8, -1.6), scale=(0.16, 0.18, 0.14, 0.12), size=(island_positive, 4))
+    features = np.vstack(
+        [negative_core, negative_boundary, negative_island, positive_core, positive_boundary, positive_island]
+    ).astype(np.float32)
+    output_labels = np.asarray(
+        [0] * (core_negative + boundary_negative + island_negative)
+        + [1] * (core_positive + boundary_positive + island_positive),
+        dtype=np.int32,
+    )
+    return _shuffle(features, output_labels, rng)
 
 
 def _proxy_leakage_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:

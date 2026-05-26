@@ -1,0 +1,4 @@
+x1,x2,italtensor_probability,italtensor_label,italtensor_review_label
+0.2,0.3,0.4,0,1
+0.4,0.5,0.6,1,
+0.6,0.7,0.8,1,0

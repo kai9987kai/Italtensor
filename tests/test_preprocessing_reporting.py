@@ -558,6 +558,31 @@ def test_report_export_json_and_markdown(tmp_path):
                 }
             ],
         },
+        neighborhood_hardness_report={
+            "sample_count": 4,
+            "input_dim": 2,
+            "k": 3,
+            "summary": {
+                "loo_accuracy": 0.75,
+                "hard_row_count": 1,
+                "ambiguous_row_count": 1,
+                "label_issue_candidate_count": 1,
+                "locally_easy_count": 2,
+                "top_hard_row": 2,
+                "warning": None,
+            },
+            "rows": [
+                {
+                    "row_index": 2,
+                    "label": 0,
+                    "predicted_label": 1,
+                    "hardness_score": 0.8,
+                    "opposite_vote_rate": 1.0,
+                    "vote_entropy": 0.0,
+                    "risk_flags": ["label_issue_candidate"],
+                }
+            ],
+        },
         mps_sweep_report={
             "input_dim": 2,
             "physical_dim": 4,
@@ -604,6 +629,7 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["bootstrap_stability_diagnostics"]["summary"]["top_row_index"] == 2
     assert saved_json["prototype_audit"]["summary"]["top_boundary_row"] == 2
     assert saved_json["feature_separability"]["summary"]["top_feature"] == 1
+    assert saved_json["neighborhood_hardness"]["summary"]["top_hard_row"] == 2
     assert saved_json["mps_bond_sweep"]["recommended_bond_dim"] == 8
     assert saved_json["trial_history"][0]["config"]["feature_map"] == "rff"
     assert "Feature 0" in saved_markdown
@@ -647,6 +673,8 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "Ambiguous rows" in saved_markdown
     assert "## Feature Separability Lens" in saved_markdown
     assert "Near-perfect features" in saved_markdown
+    assert "## Neighborhood Hardness" in saved_markdown
+    assert "Leave-one-out accuracy" in saved_markdown
     assert "## OOD Sentinel" in saved_markdown
     assert "Max OOD score" in saved_markdown
     assert "## Bootstrap Stability Diagnostics" in saved_markdown

@@ -1,0 +1,57 @@
+{
+  "kind": "italtensor.dataset_preset",
+  "schema_version": 1,
+  "name": "Custom useful preset",
+  "description": "Keeps GUI defaults",
+  "training_defaults": {
+    "epochs": 77,
+    "batch_size": 11,
+    "trials": 5,
+    "feature_map": "quadratic",
+    "backend": "numpy",
+    "lr_schedule": "cosine",
+    "gradient_clip": 0.25,
+    "l1_penalty": 0.002,
+    "mps_bond_dim": 7,
+    "mps_physical_dim": 3,
+    "feature_selection_k": 2
+  },
+  "recommended_feature_map": "quadratic",
+  "feature_names": [
+    "x1",
+    "x2"
+  ],
+  "label_names": {
+    "0": "negative",
+    "1": "positive"
+  },
+  "prediction_examples": [
+    {
+      "name": "Saved prediction vector",
+      "features": [
+        0.3,
+        0.4
+      ],
+      "expected_label": null
+    }
+  ],
+  "dataset": {
+    "input_dim": 2,
+    "samples": [
+      {
+        "features": [
+          0.10000000149011612,
+          0.20000000298023224
+        ],
+        "label": 0
+      },
+      {
+        "features": [
+          0.800000011920929,
+          0.8999999761581421
+        ],
+        "label": 1
+      }
+    ]
+  }
+}

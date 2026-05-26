@@ -46,6 +46,7 @@ def build_experiment_report(
     bootstrap_stability_report: dict[str, Any] | None = None,
     prototype_audit_report: dict[str, Any] | None = None,
     feature_separability_report: dict[str, Any] | None = None,
+    neighborhood_hardness_report: dict[str, Any] | None = None,
     mps_sweep_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     label_array = np.asarray(labels, dtype=np.int32)
@@ -95,6 +96,7 @@ def build_experiment_report(
         "bootstrap_stability_diagnostics": bootstrap_stability_report or None,
         "prototype_audit": prototype_audit_report or None,
         "feature_separability": feature_separability_report or None,
+        "neighborhood_hardness": neighborhood_hardness_report or None,
         "mps_bond_sweep": mps_sweep_report or None,
         "feature_importances": feature_importances,
         "trial_history": trial_history or [],
@@ -138,6 +140,7 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     bootstrap_stability = report.get("bootstrap_stability_diagnostics") or {}
     prototype_audit = report.get("prototype_audit") or {}
     feature_separability = report.get("feature_separability") or {}
+    neighborhood_hardness = report.get("neighborhood_hardness") or {}
     mps_sweep = report.get("mps_bond_sweep") or {}
     audit = dataset.get("audit") or {}
 
@@ -759,6 +762,37 @@ def format_markdown_report(report: dict[str, Any]) -> str:
                     f"conf={_format_value(item.get('confidence', '-'))}, "
                     f"var={_format_value(item.get('variability', '-'))}"
                 )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Neighborhood Hardness"])
+    if neighborhood_hardness:
+        summary = neighborhood_hardness.get("summary", {})
+        top_row = summary.get("top_hard_row")
+        lines.extend(
+            [
+                f"- Rows scanned: {neighborhood_hardness.get('sample_count', '-')}",
+                f"- k: {neighborhood_hardness.get('k', '-')}",
+                f"- Leave-one-out accuracy: {_format_value(summary.get('loo_accuracy', '-'))}",
+                f"- Hard rows: {summary.get('hard_row_count', '-')}",
+                f"- Ambiguous rows: {summary.get('ambiguous_row_count', '-')}",
+                f"- Label issue candidates: {summary.get('label_issue_candidate_count', '-')}",
+                f"- Locally easy rows: {summary.get('locally_easy_count', '-')}",
+                f"- Top hard row: {top_row if top_row is not None else '-'}",
+                f"- Warning: {summary.get('warning') or 'none'}",
+            ]
+        )
+        for item in neighborhood_hardness.get("rows", [])[:8]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            lines.append(
+                f"- row {item.get('row_index', '-')}: "
+                f"label={item.get('label', '-')}, "
+                f"vote={item.get('predicted_label', '-')}, "
+                f"hardness={_format_value(item.get('hardness_score', '-'))}, "
+                f"opp_vote={_format_value(item.get('opposite_vote_rate', '-'))}, "
+                f"entropy={_format_value(item.get('vote_entropy', '-'))}, "
+                f"flags={flags}"
+            )
     else:
         lines.append("- None")
 
