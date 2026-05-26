@@ -67,6 +67,7 @@ from .bootstrap_stability import (
     format_bootstrap_stability_summary,
     run_bootstrap_stability_diagnostics,
 )
+from .prototype_audit import format_prototype_audit_summary, run_prototype_audit
 from .trials_io import export_trial_history_csv
 from . import __version__
 
@@ -103,6 +104,7 @@ class AppState:
     latest_cartography_report: dict[str, Any] | None = None
     latest_ood_sentinel_report: dict[str, Any] | None = None
     latest_bootstrap_stability_report: dict[str, Any] | None = None
+    latest_prototype_audit_report: dict[str, Any] | None = None
     latest_mps_sweep_report: dict[str, Any] | None = None
     busy: bool = False
     status_message: str = "Ready"
@@ -204,6 +206,8 @@ def run_app() -> None:
                 _start_ood_sentinel(window, state)
             elif event == "-BOOTSTRAP_STABILITY-":
                 _start_bootstrap_stability(window, state, values)
+            elif event == "-PROTOTYPE_AUDIT-":
+                _start_prototype_audit(window, state)
             elif event == "-RELIABILITY-":
                 _run_reliability_diagram(window, state)
             elif event == "-MPS_BOND_SWEEP-":
@@ -505,6 +509,7 @@ def _layout(sg):
             sg.Button("Reliability diagram", key="-RELIABILITY-", expand_x=True),
             sg.Button("OOD sentinel", key="-OOD_SENTINEL-", expand_x=True),
             sg.Button("Bootstrap stability", key="-BOOTSTRAP_STABILITY-", expand_x=True),
+            sg.Button("Prototype audit", key="-PROTOTYPE_AUDIT-", expand_x=True),
             sg.Button("MPS bond sweep", key="-MPS_BOND_SWEEP-", expand_x=True),
         ],
         [
@@ -1021,6 +1026,7 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         cartography_report=state.latest_cartography_report,
         ood_sentinel_report=state.latest_ood_sentinel_report,
         bootstrap_stability_report=state.latest_bootstrap_stability_report,
+        prototype_audit_report=state.latest_prototype_audit_report,
         mps_sweep_report=state.latest_mps_sweep_report,
     )
     window["-MODEL_PATH-"].update(str(model_path))
@@ -1077,6 +1083,7 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     cartography_report = metadata.get("dataset_cartography")
     ood_sentinel_report = metadata.get("ood_sentinel")
     bootstrap_stability_report = metadata.get("bootstrap_stability_diagnostics")
+    prototype_audit_report = metadata.get("prototype_audit")
     mps_sweep_report = metadata.get("mps_bond_sweep")
     state.latest_ablation_report = ablation_report if isinstance(ablation_report, dict) else None
     state.latest_decision_curve_report = decision_curve_report if isinstance(decision_curve_report, dict) else None
@@ -1113,6 +1120,7 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_bootstrap_stability_report = (
         bootstrap_stability_report if isinstance(bootstrap_stability_report, dict) else None
     )
+    state.latest_prototype_audit_report = prototype_audit_report if isinstance(prototype_audit_report, dict) else None
     state.latest_mps_sweep_report = mps_sweep_report if isinstance(mps_sweep_report, dict) else None
     _log(window, f"Loaded model expecting {state.input_dim} features.")
 
@@ -1151,6 +1159,7 @@ def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
         cartography_report=state.latest_cartography_report,
         ood_sentinel_report=state.latest_ood_sentinel_report,
         bootstrap_stability_report=state.latest_bootstrap_stability_report,
+        prototype_audit_report=state.latest_prototype_audit_report,
         mps_sweep_report=state.latest_mps_sweep_report,
     )
     path = export_experiment_report(_required_path(values["-REPORT_PATH-"], "report path"), report)
@@ -1254,6 +1263,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
+        state.latest_prototype_audit_report = None
         state.latest_mps_sweep_report = None
         _log(window, f"Training complete: {_format_metrics(training_result.metrics)}")
         _log(window, _format_calibration(training_result.metrics))
@@ -1289,6 +1299,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
+        state.latest_prototype_audit_report = None
         state.latest_mps_sweep_report = None
         _log(window, f"Best config: {_format_config(best.config)}")
         _log(window, f"Best metrics: {_format_metrics(best.metrics)}")
@@ -1500,6 +1511,25 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                 f"mean_p={float(item['mean_probability']):.4f}, "
                 f"flags={flags}",
             )
+    elif kind == "prototype_audit":
+        state.latest_prototype_audit_report = result
+        _log(window, format_prototype_audit_summary(result))
+        for item in result.get("prototypes", [])[:4]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            _log(
+                window,
+                f"  prototype row={int(item['row_index'])}: "
+                f"label={int(item['label'])}, score={float(item['prototype_score']):.4f}, "
+                f"opp_frac={float(item['local_opposite_fraction']):.4f}, flags={flags}",
+            )
+        for item in result.get("boundary_rows", [])[:4]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            _log(
+                window,
+                f"  boundary row={int(item['row_index'])}: "
+                f"label={int(item['label'])}, score={float(item['boundary_score']):.4f}, "
+                f"opp_frac={float(item['local_opposite_fraction']):.4f}, flags={flags}",
+            )
     elif kind == "mps_sweep":
         state.latest_mps_sweep_report = result
         _log(window, format_mps_sweep_summary(result))
@@ -1629,6 +1659,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
+        state.latest_prototype_audit_report = None
         state.latest_mps_sweep_report = None
         for item in result:
             slot = ModelSlot(
@@ -1673,6 +1704,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
+        state.latest_prototype_audit_report = None
         state.latest_mps_sweep_report = None
         
         # Auto-store in slots
@@ -1775,6 +1807,7 @@ def _invalidate_model_artifacts(state: AppState) -> None:
     state.latest_cartography_report = None
     state.latest_ood_sentinel_report = None
     state.latest_bootstrap_stability_report = None
+    state.latest_prototype_audit_report = None
     state.latest_mps_sweep_report = None
 
 
@@ -1839,6 +1872,7 @@ def _set_busy(window, busy: bool) -> None:
         "-CARTOGRAPHY-",
         "-OOD_SENTINEL-",
         "-BOOTSTRAP_STABILITY-",
+        "-PROTOTYPE_AUDIT-",
         "-RELIABILITY-",
         "-MPS_BOND_SWEEP-",
         "-EXPORT_TRIALS-",
@@ -2147,6 +2181,7 @@ def _activate_model_slot(window, state: AppState, values: dict[str, Any]) -> Non
     state.latest_cartography_report = None
     state.latest_ood_sentinel_report = None
     state.latest_bootstrap_stability_report = None
+    state.latest_prototype_audit_report = None
     state.latest_mps_sweep_report = None
     _log(window, f"Activated slot '{slot.name}'. Predictions and weight analysis will now run on this model.")
     _update_slots_listbox(window, state)
@@ -2250,6 +2285,7 @@ def _load_registry(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
+        state.latest_prototype_audit_report = None
         state.latest_mps_sweep_report = None
     _update_slots_listbox(window, state)
     _log(window, f"Loaded {len(slots)} slot(s) from registry.")
@@ -2288,6 +2324,7 @@ def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_cartography_report = None
     state.latest_ood_sentinel_report = None
     state.latest_bootstrap_stability_report = None
+    state.latest_prototype_audit_report = None
     state.latest_mps_sweep_report = None
     
     state.latest_config = ModelConfig(
@@ -2364,6 +2401,7 @@ def _build_stacked_ensemble(window, state: AppState, values: dict[str, Any]) -> 
     state.latest_cartography_report = None
     state.latest_ood_sentinel_report = None
     state.latest_bootstrap_stability_report = None
+    state.latest_prototype_audit_report = None
     state.latest_mps_sweep_report = None
     probs = ensemble.predict(dataset.features).reshape(-1)
     metrics = evaluate_predictions(dataset.labels, probs, threshold=0.5)
@@ -2460,6 +2498,17 @@ def _start_bootstrap_stability(window, state: AppState, values: dict[str, Any]) 
         return "bootstrap_stability", report
 
     _start_worker(window, state, "Running bootstrap stability committee...", task)
+
+
+def _start_prototype_audit(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    dataset = validate_dataset(state.features, state.labels, min_samples=6, require_two_classes=True)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_prototype_audit(dataset.features, dataset.labels)
+        return "prototype_audit", report
+
+    _start_worker(window, state, "Running nearest-neighbor prototype audit...", task)
 
 
 def _run_reliability_diagram(window, state: AppState) -> None:
@@ -2655,6 +2704,7 @@ def _merge_slots(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
+        state.latest_prototype_audit_report = None
         state.latest_mps_sweep_report = None
         state.latest_config = ModelConfig(
             lr_schedule="constant",

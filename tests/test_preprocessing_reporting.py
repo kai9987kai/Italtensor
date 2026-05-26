@@ -495,6 +495,38 @@ def test_report_export_json_and_markdown(tmp_path):
                 }
             ],
         },
+        prototype_audit_report={
+            "sample_count": 4,
+            "input_dim": 2,
+            "k": 3,
+            "summary": {
+                "prototype_count": 2,
+                "boundary_row_count": 1,
+                "isolated_row_count": 1,
+                "label_contradiction_count": 1,
+                "top_boundary_row": 2,
+                "top_label_contradiction_row": 2,
+                "warning": None,
+            },
+            "prototypes": [
+                {
+                    "row_index": 0,
+                    "label": 0,
+                    "prototype_score": 0.8,
+                    "local_opposite_fraction": 0.0,
+                    "risk_flags": ["class_prototype"],
+                }
+            ],
+            "boundary_rows": [
+                {
+                    "row_index": 2,
+                    "label": 1,
+                    "boundary_score": 0.6,
+                    "label_contradiction_score": 0.7,
+                    "risk_flags": ["class_boundary", "possible_label_contradiction"],
+                }
+            ],
+        },
         mps_sweep_report={
             "input_dim": 2,
             "physical_dim": 4,
@@ -539,6 +571,7 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["dataset_cartography"]["region_counts"]["ambiguous"] == 1
     assert saved_json["ood_sentinel"]["summary"]["top_row_index"] == 3
     assert saved_json["bootstrap_stability_diagnostics"]["summary"]["top_row_index"] == 2
+    assert saved_json["prototype_audit"]["summary"]["top_boundary_row"] == 2
     assert saved_json["mps_bond_sweep"]["recommended_bond_dim"] == 8
     assert saved_json["trial_history"][0]["config"]["feature_map"] == "rff"
     assert "Feature 0" in saved_markdown
@@ -584,6 +617,8 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "Max OOD score" in saved_markdown
     assert "## Bootstrap Stability Diagnostics" in saved_markdown
     assert "Mean probability std" in saved_markdown
+    assert "## Prototype Audit" in saved_markdown
+    assert "Possible label contradictions" in saved_markdown
     assert "## MPS Bond Sweep" in saved_markdown
     assert "Recommended chi" in saved_markdown
 

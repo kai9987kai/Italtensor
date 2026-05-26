@@ -44,6 +44,7 @@ def build_experiment_report(
     cartography_report: dict[str, Any] | None = None,
     ood_sentinel_report: dict[str, Any] | None = None,
     bootstrap_stability_report: dict[str, Any] | None = None,
+    prototype_audit_report: dict[str, Any] | None = None,
     mps_sweep_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     label_array = np.asarray(labels, dtype=np.int32)
@@ -91,6 +92,7 @@ def build_experiment_report(
         "dataset_cartography": cartography_report or None,
         "ood_sentinel": ood_sentinel_report or None,
         "bootstrap_stability_diagnostics": bootstrap_stability_report or None,
+        "prototype_audit": prototype_audit_report or None,
         "mps_bond_sweep": mps_sweep_report or None,
         "feature_importances": feature_importances,
         "trial_history": trial_history or [],
@@ -132,6 +134,7 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     cartography = report.get("dataset_cartography") or {}
     ood_sentinel = report.get("ood_sentinel") or {}
     bootstrap_stability = report.get("bootstrap_stability_diagnostics") or {}
+    prototype_audit = report.get("prototype_audit") or {}
     mps_sweep = report.get("mps_bond_sweep") or {}
     audit = dataset.get("audit") or {}
 
@@ -753,6 +756,43 @@ def format_markdown_report(report: dict[str, Any]) -> str:
                     f"conf={_format_value(item.get('confidence', '-'))}, "
                     f"var={_format_value(item.get('variability', '-'))}"
                 )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Prototype Audit"])
+    if prototype_audit:
+        summary = prototype_audit.get("summary", {})
+        lines.extend(
+            [
+                f"- Rows scanned: {prototype_audit.get('sample_count', '-')}",
+                f"- k: {prototype_audit.get('k', '-')}",
+                f"- Prototypes: {summary.get('prototype_count', '-')}",
+                f"- Boundary rows: {summary.get('boundary_row_count', '-')}",
+                f"- Isolated rows: {summary.get('isolated_row_count', '-')}",
+                f"- Possible label contradictions: {summary.get('label_contradiction_count', '-')}",
+                f"- Top boundary row: {summary.get('top_boundary_row', '-')}",
+                f"- Top contradiction row: {summary.get('top_label_contradiction_row', '-')}",
+                f"- Warning: {summary.get('warning') or 'none'}",
+            ]
+        )
+        for item in prototype_audit.get("prototypes", [])[:6]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            lines.append(
+                f"- prototype row {item.get('row_index', '-')}: "
+                f"label={item.get('label', '-')}, "
+                f"score={_format_value(item.get('prototype_score', '-'))}, "
+                f"opp_frac={_format_value(item.get('local_opposite_fraction', '-'))}, "
+                f"flags={flags}"
+            )
+        for item in prototype_audit.get("boundary_rows", [])[:6]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            lines.append(
+                f"- boundary row {item.get('row_index', '-')}: "
+                f"label={item.get('label', '-')}, "
+                f"boundary={_format_value(item.get('boundary_score', '-'))}, "
+                f"contradiction={_format_value(item.get('label_contradiction_score', '-'))}, "
+                f"flags={flags}"
+            )
     else:
         lines.append("- None")
 

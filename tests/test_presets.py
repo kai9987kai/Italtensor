@@ -104,6 +104,7 @@ def test_experimental_builtin_presets_are_available():
         "Label audit traps",
         "OOD sentinel lab",
         "Bootstrap stability lab",
+        "Prototype coverage lab",
         "Proxy leakage lab",
     }.issubset(names)
 
@@ -313,6 +314,18 @@ def test_bootstrap_stability_lab_preset_has_boundary_band():
     assert metadata["feature_names"] == ["stable_margin", "support_signal", "boundary_band", "decoy_noise"]
     assert any(example["name"] == "Unstable boundary" for example in metadata["prediction_examples"])
     assert int(np.sum(dataset.features[:, 2] > 0.8)) >= 12
+
+
+def test_prototype_coverage_lab_preset_has_boundary_and_island_markers():
+    metadata = preset_metadata("Prototype coverage lab")
+    dataset = generate_builtin_preset("Prototype coverage lab", sample_count=120, seed=10)
+
+    assert metadata["input_dim"] == 4
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == ["coverage_axis", "class_axis", "boundary_bridge", "island_marker"]
+    assert any(example["name"] == "Sparse island review" for example in metadata["prediction_examples"])
+    assert int(np.sum(dataset.features[:, 2] > 0.7)) >= 12
+    assert float(np.max(np.abs(dataset.features[:, 3]))) > 1.5
 
 
 def test_label_audit_traps_preset_has_suspicious_example():

@@ -142,6 +142,7 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
         cartography_report={"region_counts": {"ambiguous": 1}},
         ood_sentinel_report={"summary": {"top_row_index": 2}},
         bootstrap_stability_report={"summary": {"top_row_index": 4}},
+        prototype_audit_report={"summary": {"top_boundary_row": 5}},
         mps_sweep_report={"recommended_bond_dim": 8},
     )
     loaded, metadata = load_model_bundle(model_path)
@@ -176,6 +177,7 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
     assert metadata["dataset_cartography"]["region_counts"]["ambiguous"] == 1
     assert metadata["ood_sentinel"]["summary"]["top_row_index"] == 2
     assert metadata["bootstrap_stability_diagnostics"]["summary"]["top_row_index"] == 4
+    assert metadata["prototype_audit"]["summary"]["top_boundary_row"] == 5
     assert metadata["mps_bond_sweep"]["recommended_bond_dim"] == 8
     assert probabilities.shape == (1,)
 

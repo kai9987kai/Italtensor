@@ -84,6 +84,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         latest_cartography_report={"region_counts": {"easy_to_learn": 1}},
         latest_ood_sentinel_report={"summary": {"top_row_index": 3}},
         latest_bootstrap_stability_report={"summary": {"top_row_index": 4}},
+        latest_prototype_audit_report={"summary": {"top_boundary_row": 5}},
         latest_mps_sweep_report={"recommended_bond_dim": 4},
     )
 
@@ -119,6 +120,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
     assert state.latest_cartography_report is None
     assert state.latest_ood_sentinel_report is None
     assert state.latest_bootstrap_stability_report is None
+    assert state.latest_prototype_audit_report is None
     assert state.latest_mps_sweep_report is None
 
 
@@ -564,6 +566,49 @@ def test_handle_worker_done_stores_bootstrap_stability_without_mutating_model():
     assert state.latest_bootstrap_stability_report == report
     assert state.busy is False
     assert "Bootstrap stability" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_prototype_audit_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
+    model = state.model
+    report = {
+        "k": 3,
+        "summary": {
+            "prototype_count": 2,
+            "boundary_row_count": 1,
+            "isolated_row_count": 1,
+            "label_contradiction_count": 1,
+            "top_boundary_row": 3,
+            "top_label_contradiction_row": 3,
+        },
+        "prototypes": [
+            {
+                "row_index": 0,
+                "label": 0,
+                "prototype_score": 0.8,
+                "local_opposite_fraction": 0.0,
+                "risk_flags": ["class_prototype"],
+            }
+        ],
+        "boundary_rows": [
+            {
+                "row_index": 3,
+                "label": 1,
+                "boundary_score": 0.6,
+                "local_opposite_fraction": 0.67,
+                "risk_flags": ["class_boundary"],
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("prototype_audit", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_prototype_audit_report == report
+    assert state.busy is False
+    assert "Prototype audit" in window["-LOG-"].value
 
 
 def test_handle_worker_done_stores_slice_report_without_mutating_model():

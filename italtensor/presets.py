@@ -459,6 +459,22 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="prototype_coverage_lab",
+        name="Prototype coverage lab",
+        description="Dense class cores, boundary bridges, and sparse islands for nearest-neighbor prototype audits.",
+        default_samples=220,
+        input_dim=4,
+        recommended_feature_map="linear",
+        feature_names=("coverage_axis", "class_axis", "boundary_bridge", "island_marker"),
+        training_defaults={"epochs": 70, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Class 0 prototype", "features": [-1.2, -0.8, -0.8, 0.0], "expected_label": 0},
+            {"name": "Boundary bridge", "features": [0.0, 0.0, 1.0, 0.0], "expected_label": None},
+            {"name": "Sparse island review", "features": [2.4, -2.2, 0.0, 2.0], "expected_label": None},
+            {"name": "Class 1 prototype", "features": [1.2, 0.8, -0.8, 0.0], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
         key="proxy_leakage_lab",
         name="Proxy leakage lab",
         description="A label-correlated proxy feature that makes ablation and reliance diagnostics visible.",
@@ -557,6 +573,8 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _ood_sentinel_lab(total, rng)
     elif preset.key == "bootstrap_stability_lab":
         features, labels = _bootstrap_stability_lab(total, rng)
+    elif preset.key == "prototype_coverage_lab":
+        features, labels = _prototype_coverage_lab(total, rng)
     elif preset.key == "proxy_leakage_lab":
         features, labels = _proxy_leakage_lab(total, rng)
     else:
@@ -1120,6 +1138,65 @@ def _bootstrap_stability_lab(total: int, rng: np.random.Generator) -> tuple[np.n
         flip_indices = rng.choice(flip_candidates, size=flip_count, replace=False)
         output_labels[flip_indices] = 1 - output_labels[flip_indices]
     return _shuffle(features, output_labels, rng)
+
+
+def _prototype_coverage_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    boundary_count = max(12, total // 5)
+    island_count = max(6, total // 10)
+    core_count = max(4, total - boundary_count - island_count)
+    negative_core_count = core_count // 2
+    positive_core_count = core_count - negative_core_count
+    negative_boundary_count = boundary_count // 2
+    positive_boundary_count = boundary_count - negative_boundary_count
+    negative_island_count = island_count // 2
+    positive_island_count = island_count - negative_island_count
+
+    negative_core = rng.normal(
+        loc=(-1.2, -0.75, -0.8, 0.0),
+        scale=(0.22, 0.24, 0.18, 0.18),
+        size=(negative_core_count, 4),
+    )
+    positive_core = rng.normal(
+        loc=(1.2, 0.75, -0.8, 0.0),
+        scale=(0.22, 0.24, 0.18, 0.18),
+        size=(positive_core_count, 4),
+    )
+    negative_boundary = rng.normal(
+        loc=(-0.08, 0.05, 1.0, 0.0),
+        scale=(0.20, 0.28, 0.12, 0.18),
+        size=(negative_boundary_count, 4),
+    )
+    positive_boundary = rng.normal(
+        loc=(0.08, -0.05, 1.0, 0.0),
+        scale=(0.20, 0.28, 0.12, 0.18),
+        size=(positive_boundary_count, 4),
+    )
+    negative_island = rng.normal(
+        loc=(2.4, -2.2, 0.0, 2.0),
+        scale=(0.18, 0.20, 0.18, 0.16),
+        size=(negative_island_count, 4),
+    )
+    positive_island = rng.normal(
+        loc=(-2.4, 2.2, 0.0, -2.0),
+        scale=(0.18, 0.20, 0.18, 0.16),
+        size=(positive_island_count, 4),
+    )
+    features = np.vstack(
+        [
+            negative_core,
+            negative_boundary,
+            negative_island,
+            positive_core,
+            positive_boundary,
+            positive_island,
+        ]
+    ).astype(np.float32)
+    labels = np.asarray(
+        [0] * (negative_core_count + negative_boundary_count + negative_island_count)
+        + [1] * (positive_core_count + positive_boundary_count + positive_island_count),
+        dtype=np.int32,
+    )
+    return _shuffle(features, labels, rng)
 
 
 def _proxy_leakage_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
