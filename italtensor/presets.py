@@ -506,6 +506,30 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="dataset_triage_lab",
+        name="Dataset triage lab",
+        description="A compact data-quality gauntlet with conflicts, redundant features, tails, and hard neighborhoods.",
+        default_samples=240,
+        min_samples=24,
+        input_dim=6,
+        recommended_feature_map="linear",
+        feature_names=(
+            "real_margin",
+            "shortcut_code",
+            "redundant_margin",
+            "background_noise",
+            "constant_code",
+            "tail_marker",
+        ),
+        training_defaults={"epochs": 70, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Clean negative", "features": [-1.1, -1.0, -1.05, 0.0, 1.0, 0.0], "expected_label": 0},
+            {"name": "Boundary review", "features": [0.0, 1.0, 0.0, 0.0, 1.0, 0.0], "expected_label": None},
+            {"name": "Tail review", "features": [0.4, 1.0, 0.42, 0.0, 1.0, 5.5], "expected_label": None},
+            {"name": "Clean positive", "features": [1.1, 1.0, 1.05, 0.0, 1.0, 0.0], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
         key="proxy_leakage_lab",
         name="Proxy leakage lab",
         description="A label-correlated proxy feature that makes ablation and reliance diagnostics visible.",
@@ -610,6 +634,8 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _separability_lens_lab(total, rng)
     elif preset.key == "neighborhood_hardness_lab":
         features, labels = _neighborhood_hardness_lab(total, rng)
+    elif preset.key == "dataset_triage_lab":
+        features, labels = _dataset_triage_lab(total, rng)
     elif preset.key == "proxy_leakage_lab":
         features, labels = _proxy_leakage_lab(total, rng)
     else:
@@ -1378,6 +1404,42 @@ def _neighborhood_hardness_lab(total: int, rng: np.random.Generator) -> tuple[np
         dtype=np.int32,
     )
     return _shuffle(features, output_labels, rng)
+
+
+def _dataset_triage_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    labels = _balanced_labels(total)
+    margin = rng.normal(0.0, 1.0, size=total)
+    support = rng.normal(0.0, 0.55, size=total)
+    latent = 1.25 * margin + 0.35 * support + rng.normal(0.0, 0.28, size=total)
+    labels = (latent > np.median(latent)).astype(np.int32)
+    signed = np.where(labels == 1, 1.0, -1.0)
+    shortcut_code = signed + rng.normal(0.0, 0.04, size=total)
+    conflict_count = max(4, total // 18)
+    conflict_indices = rng.choice(total, size=conflict_count, replace=False)
+    shortcut_code[conflict_indices] *= -1.0
+    redundant_margin = margin + rng.normal(0.0, 0.04, size=total)
+    background_noise = rng.normal(0.0, 1.0, size=total)
+    constant_code = np.ones(total, dtype=np.float64)
+    tail_marker = rng.normal(0.0, 0.18, size=total)
+
+    tail_count = max(4, total // 16)
+    remaining = np.setdiff1d(np.arange(total), conflict_indices, assume_unique=False)
+    tail_indices = rng.choice(remaining, size=tail_count, replace=False)
+    tail_marker[tail_indices] += rng.choice([-1.0, 1.0], size=tail_count) * rng.uniform(4.0, 6.0, size=tail_count)
+
+    features = np.column_stack(
+        [margin, shortcut_code, redundant_margin, background_noise, constant_code, tail_marker]
+    ).astype(np.float32)
+    if total >= 24:
+        features[0] = np.asarray([0.18, -1.0, 0.2, 0.0, 1.0, 0.0], dtype=np.float32)
+        features[1] = features[0]
+        labels[0] = 0
+        labels[1] = 1
+        features[2] = np.asarray([-0.12, 1.0, -0.1, 0.05, 1.0, 0.0], dtype=np.float32)
+        features[3] = features[2]
+        labels[2] = 1
+        labels[3] = 0
+    return _shuffle(features, labels, rng)
 
 
 def _proxy_leakage_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:

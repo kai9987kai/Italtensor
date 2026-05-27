@@ -63,6 +63,7 @@ from .thresholds import format_threshold_summary, run_threshold_diagnostics
 from .cartography import format_cartography_summary, run_dataset_cartography
 from .mps_diagnostics import format_mps_sweep_summary, run_mps_bond_sweep
 from .ood_sentinel import format_ood_sentinel_summary, run_ood_sentinel
+from .dataset_triage import format_dataset_triage_summary, run_dataset_triage
 from .bootstrap_stability import (
     format_bootstrap_stability_summary,
     run_bootstrap_stability_diagnostics,
@@ -115,6 +116,7 @@ class AppState:
     latest_prototype_audit_report: dict[str, Any] | None = None
     latest_feature_separability_report: dict[str, Any] | None = None
     latest_neighborhood_hardness_report: dict[str, Any] | None = None
+    latest_dataset_triage_report: dict[str, Any] | None = None
     latest_mps_sweep_report: dict[str, Any] | None = None
     busy: bool = False
     status_message: str = "Ready"
@@ -212,6 +214,8 @@ def run_app() -> None:
                 _start_permutation_null(window, state)
             elif event == "-CARTOGRAPHY-":
                 _start_cartography(window, state)
+            elif event == "-DATASET_TRIAGE-":
+                _start_dataset_triage(window, state)
             elif event == "-OOD_SENTINEL-":
                 _start_ood_sentinel(window, state)
             elif event == "-BOOTSTRAP_STABILITY-":
@@ -490,6 +494,9 @@ def _layout(sg):
         ],
         [sg.HorizontalSeparator()],
         [sg.Text("Automated Model & Dataset Diagnostics")],
+        [
+            sg.Button("Dataset triage", key="-DATASET_TRIAGE-", expand_x=True),
+        ],
         [
             sg.Button("Audit dataset", key="-AUDIT_DATASET-", expand_x=True),
             sg.Button("Population drift", key="-POPULATION_DRIFT-", expand_x=True),
@@ -1078,6 +1085,7 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         prototype_audit_report=state.latest_prototype_audit_report,
         feature_separability_report=state.latest_feature_separability_report,
         neighborhood_hardness_report=state.latest_neighborhood_hardness_report,
+        dataset_triage_report=state.latest_dataset_triage_report,
         mps_sweep_report=state.latest_mps_sweep_report,
     )
     window["-MODEL_PATH-"].update(str(model_path))
@@ -1137,6 +1145,7 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     prototype_audit_report = metadata.get("prototype_audit")
     feature_separability_report = metadata.get("feature_separability")
     neighborhood_hardness_report = metadata.get("neighborhood_hardness")
+    dataset_triage_report = metadata.get("dataset_triage")
     mps_sweep_report = metadata.get("mps_bond_sweep")
     state.latest_ablation_report = ablation_report if isinstance(ablation_report, dict) else None
     state.latest_decision_curve_report = decision_curve_report if isinstance(decision_curve_report, dict) else None
@@ -1180,6 +1189,20 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_neighborhood_hardness_report = (
         neighborhood_hardness_report if isinstance(neighborhood_hardness_report, dict) else None
     )
+    state.latest_dataset_triage_report = dataset_triage_report if isinstance(dataset_triage_report, dict) else None
+    if state.latest_dataset_triage_report is not None:
+        state.latest_feature_separability_report = state.latest_feature_separability_report or _dict_or_none(
+            state.latest_dataset_triage_report.get("feature_separability")
+        )
+        state.latest_prototype_audit_report = state.latest_prototype_audit_report or _dict_or_none(
+            state.latest_dataset_triage_report.get("prototype_audit")
+        )
+        state.latest_neighborhood_hardness_report = state.latest_neighborhood_hardness_report or _dict_or_none(
+            state.latest_dataset_triage_report.get("neighborhood_hardness")
+        )
+        state.latest_ood_sentinel_report = state.latest_ood_sentinel_report or _dict_or_none(
+            state.latest_dataset_triage_report.get("ood_sentinel")
+        )
     state.latest_mps_sweep_report = mps_sweep_report if isinstance(mps_sweep_report, dict) else None
     _log(window, f"Loaded model expecting {state.input_dim} features.")
 
@@ -1221,6 +1244,7 @@ def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
         prototype_audit_report=state.latest_prototype_audit_report,
         feature_separability_report=state.latest_feature_separability_report,
         neighborhood_hardness_report=state.latest_neighborhood_hardness_report,
+        dataset_triage_report=state.latest_dataset_triage_report,
         mps_sweep_report=state.latest_mps_sweep_report,
     )
     path = export_experiment_report(_required_path(values["-REPORT_PATH-"], "report path"), report)
@@ -1621,6 +1645,23 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                 f"hardness={float(item['hardness_score']):.4f}, "
                 f"opp_vote={float(item['opposite_vote_rate']):.4f}, flags={flags}",
             )
+    elif kind == "dataset_triage":
+        state.latest_dataset_triage_report = result
+        state.latest_feature_separability_report = result.get("feature_separability")
+        state.latest_prototype_audit_report = result.get("prototype_audit")
+        state.latest_neighborhood_hardness_report = result.get("neighborhood_hardness")
+        state.latest_ood_sentinel_report = result.get("ood_sentinel")
+        _log(window, format_dataset_triage_summary(result))
+        for action in result.get("summary", {}).get("top_actions", [])[:5]:
+            _log(window, f"  action: {action}")
+        if isinstance(state.latest_feature_separability_report, dict):
+            _log(window, "  " + format_feature_separability_summary(state.latest_feature_separability_report))
+        if isinstance(state.latest_prototype_audit_report, dict):
+            _log(window, "  " + format_prototype_audit_summary(state.latest_prototype_audit_report))
+        if isinstance(state.latest_neighborhood_hardness_report, dict):
+            _log(window, "  " + format_neighborhood_hardness_summary(state.latest_neighborhood_hardness_report))
+        if isinstance(state.latest_ood_sentinel_report, dict):
+            _log(window, "  " + format_ood_sentinel_summary(state.latest_ood_sentinel_report))
     elif kind == "mps_sweep":
         state.latest_mps_sweep_report = result
         _log(window, format_mps_sweep_summary(result))
@@ -1909,6 +1950,7 @@ def _invalidate_model_artifacts(state: AppState) -> None:
     state.latest_prototype_audit_report = None
     state.latest_feature_separability_report = None
     state.latest_neighborhood_hardness_report = None
+    state.latest_dataset_triage_report = None
     state.latest_mps_sweep_report = None
 
 
@@ -1971,6 +2013,7 @@ def _set_busy(window, busy: bool) -> None:
         "-SAMPLE_REVIEW-",
         "-PERMUTATION_NULL-",
         "-CARTOGRAPHY-",
+        "-DATASET_TRIAGE-",
         "-OOD_SENTINEL-",
         "-BOOTSTRAP_STABILITY-",
         "-PROTOTYPE_AUDIT-",
@@ -1996,6 +2039,10 @@ def _required_path(path: str, label: str) -> str:
     if not path or not path.strip():
         raise ValueError(f"Choose a {label}.")
     return path.strip()
+
+
+def _dict_or_none(value: Any) -> dict[str, Any] | None:
+    return value if isinstance(value, dict) else None
 
 
 def _positive_int(raw_value: str, label: str) -> int:
@@ -2652,6 +2699,17 @@ def _start_neighborhood_hardness(window, state: AppState) -> None:
         return "neighborhood_hardness", report
 
     _start_worker(window, state, "Running neighborhood hardness scan...", task)
+
+
+def _start_dataset_triage(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    dataset = validate_dataset(state.features, state.labels, min_samples=6, require_two_classes=True)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_dataset_triage(dataset.features, dataset.labels)
+        return "dataset_triage", report
+
+    _start_worker(window, state, "Running dataset triage workflow...", task)
 
 
 def _run_reliability_diagram(window, state: AppState) -> None:

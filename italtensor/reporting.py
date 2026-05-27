@@ -47,6 +47,7 @@ def build_experiment_report(
     prototype_audit_report: dict[str, Any] | None = None,
     feature_separability_report: dict[str, Any] | None = None,
     neighborhood_hardness_report: dict[str, Any] | None = None,
+    dataset_triage_report: dict[str, Any] | None = None,
     mps_sweep_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     label_array = np.asarray(labels, dtype=np.int32)
@@ -97,6 +98,7 @@ def build_experiment_report(
         "prototype_audit": prototype_audit_report or None,
         "feature_separability": feature_separability_report or None,
         "neighborhood_hardness": neighborhood_hardness_report or None,
+        "dataset_triage": dataset_triage_report or None,
         "mps_bond_sweep": mps_sweep_report or None,
         "feature_importances": feature_importances,
         "trial_history": trial_history or [],
@@ -141,6 +143,7 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     prototype_audit = report.get("prototype_audit") or {}
     feature_separability = report.get("feature_separability") or {}
     neighborhood_hardness = report.get("neighborhood_hardness") or {}
+    dataset_triage = report.get("dataset_triage") or {}
     mps_sweep = report.get("mps_bond_sweep") or {}
     audit = dataset.get("audit") or {}
 
@@ -171,6 +174,24 @@ def format_markdown_report(report: dict[str, Any]) -> str:
         )
     else:
         lines.append("- None")
+
+    lines.extend(["", "## Dataset Triage"])
+    if dataset_triage:
+        summary = dataset_triage.get("summary", {})
+        lines.extend(
+            [
+                f"- Readiness score: {_format_value(summary.get('readiness_score', '-'))}/100",
+                f"- Risk level: {summary.get('risk_level', '-')}",
+                f"- Blocking issues: {summary.get('blocking_issue_count', '-')}",
+                f"- Penalty points: {_format_value(summary.get('penalty_points', '-'))}",
+                f"- Warning: {summary.get('warning') or 'none'}",
+            ]
+        )
+        for action in summary.get("top_actions", [])[:6]:
+            lines.append(f"- Action: {action}")
+    else:
+        lines.append("- None")
+
     lines.extend([
         "",
         "## Model",

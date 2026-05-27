@@ -152,6 +152,7 @@ def test_experimental_builtin_presets_are_available():
         "Prototype coverage lab",
         "Separability lens lab",
         "Neighborhood hardness lab",
+        "Dataset triage lab",
         "Proxy leakage lab",
     }.issubset(names)
 
@@ -404,6 +405,26 @@ def test_neighborhood_hardness_lab_preset_has_boundary_and_hard_islands():
     assert any(example["name"] == "Hard island review" for example in metadata["prediction_examples"])
     assert int(np.sum(dataset.features[:, 2] > 0.7)) >= 12
     assert float(np.max(np.abs(dataset.features[:, 3]))) > 1.3
+
+
+def test_dataset_triage_lab_preset_has_conflicts_redundancy_and_tails():
+    metadata = preset_metadata("Dataset triage lab")
+    dataset = generate_builtin_preset("Dataset triage lab", sample_count=120, seed=10)
+
+    assert metadata["input_dim"] == 6
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == [
+        "real_margin",
+        "shortcut_code",
+        "redundant_margin",
+        "background_noise",
+        "constant_code",
+        "tail_marker",
+    ]
+    assert any(example["name"] == "Tail review" for example in metadata["prediction_examples"])
+    assert float(np.std(dataset.features[:, 4])) == pytest.approx(0.0)
+    assert float(np.corrcoef(dataset.features[:, 0], dataset.features[:, 2])[0, 1]) > 0.95
+    assert float(np.max(np.abs(dataset.features[:, 5]))) > 4.0
 
 
 def test_label_audit_traps_preset_has_suspicious_example():

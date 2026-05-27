@@ -189,11 +189,17 @@ def _redundant_pairs(x: np.ndarray, feature_rows: list[dict[str, Any]]) -> list[
     pairs: list[dict[str, Any]] = []
     if x.shape[1] < 2:
         return pairs
-    corr = np.corrcoef(x, rowvar=False)
+    std = np.std(x, axis=0)
+    variable_indices = [index for index, value in enumerate(std) if float(value) > EPSILON]
+    if len(variable_indices) < 2:
+        return pairs
+    corr = np.corrcoef(x[:, variable_indices], rowvar=False)
     corr = np.asarray(corr, dtype=np.float64)
-    for left in range(x.shape[1]):
-        for right in range(left + 1, x.shape[1]):
-            value = float(corr[left, right]) if np.isfinite(corr[left, right]) else 0.0
+    for left_position, left in enumerate(variable_indices):
+        for right_position in range(left_position + 1, len(variable_indices)):
+            right = variable_indices[right_position]
+            raw_value = corr[left_position, right_position]
+            value = float(raw_value) if np.isfinite(raw_value) else 0.0
             abs_value = abs(value)
             if abs_value < 0.92:
                 continue

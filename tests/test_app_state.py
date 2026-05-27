@@ -92,6 +92,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         latest_prototype_audit_report={"summary": {"top_boundary_row": 5}},
         latest_feature_separability_report={"summary": {"top_feature": 2}},
         latest_neighborhood_hardness_report={"summary": {"top_hard_row": 6}},
+        latest_dataset_triage_report={"summary": {"readiness_score": 61.0}},
         latest_mps_sweep_report={"recommended_bond_dim": 4},
     )
 
@@ -130,6 +131,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
     assert state.latest_prototype_audit_report is None
     assert state.latest_feature_separability_report is None
     assert state.latest_neighborhood_hardness_report is None
+    assert state.latest_dataset_triage_report is None
     assert state.latest_mps_sweep_report is None
 
 
@@ -178,6 +180,7 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
         latest_feature_separability_report={"summary": {"top_feature": 1}},
         latest_prototype_audit_report={"summary": {"top_boundary_row": 0}},
         latest_neighborhood_hardness_report={"summary": {"top_hard_row": 1}},
+        latest_dataset_triage_report={"summary": {"readiness_score": 72.0}},
     )
     path = tmp_path / "dataset-report.json"
 
@@ -190,6 +193,7 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
     assert payload["feature_separability"]["summary"]["top_feature"] == 1
     assert payload["prototype_audit"]["summary"]["top_boundary_row"] == 0
     assert payload["neighborhood_hardness"]["summary"]["top_hard_row"] == 1
+    assert payload["dataset_triage"]["summary"]["readiness_score"] == 72.0
     assert "Exported report" in window["-LOG-"].value
 
 
@@ -207,6 +211,7 @@ def test_training_preserves_dataset_only_diagnostics():
         latest_feature_separability_report={"summary": {"top_feature": 1}},
         latest_prototype_audit_report={"summary": {"top_boundary_row": 0}},
         latest_neighborhood_hardness_report={"summary": {"top_hard_row": 2}},
+        latest_dataset_triage_report={"summary": {"readiness_score": 77.0}},
         busy=True,
     )
     training_result = SimpleNamespace(
@@ -225,6 +230,7 @@ def test_training_preserves_dataset_only_diagnostics():
     assert state.latest_feature_separability_report == {"summary": {"top_feature": 1}}
     assert state.latest_prototype_audit_report == {"summary": {"top_boundary_row": 0}}
     assert state.latest_neighborhood_hardness_report == {"summary": {"top_hard_row": 2}}
+    assert state.latest_dataset_triage_report == {"summary": {"readiness_score": 77.0}}
     assert state.latest_metrics == {"f1": 0.5}
 
 
@@ -752,6 +758,77 @@ def test_handle_worker_done_stores_neighborhood_hardness_without_mutating_model(
     assert state.latest_neighborhood_hardness_report == report
     assert state.busy is False
     assert "Neighborhood hardness" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_dataset_triage_components_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
+    model = state.model
+    report = {
+        "summary": {
+            "readiness_score": 65.0,
+            "risk_level": "medium",
+            "blocking_issue_count": 1,
+            "top_actions": ["Review same-feature rows with conflicting labels."],
+        },
+        "feature_separability": {
+            "summary": {
+                "top_feature": 0,
+                "top_auc": 0.9,
+                "top_balanced_accuracy": 0.85,
+                "near_perfect_feature_count": 0,
+                "weak_feature_count": 0,
+                "redundant_pair_count": 1,
+            },
+            "features": [],
+            "redundant_pairs": [],
+        },
+        "prototype_audit": {
+            "k": 3,
+            "summary": {
+                "prototype_count": 2,
+                "boundary_row_count": 1,
+                "isolated_row_count": 0,
+                "label_contradiction_count": 1,
+            },
+            "prototypes": [],
+            "boundary_rows": [],
+        },
+        "neighborhood_hardness": {
+            "k": 3,
+            "summary": {
+                "loo_accuracy": 0.75,
+                "hard_row_count": 1,
+                "ambiguous_row_count": 1,
+                "label_issue_candidate_count": 1,
+            },
+            "rows": [],
+        },
+        "ood_sentinel": {
+            "model_used": False,
+            "summary": {
+                "top_row_index": 2,
+                "max_ood_score": 0.8,
+                "flagged_count": 1,
+                "max_abs_robust_z": 3.0,
+                "max_nearest_neighbor_distance": 2.0,
+            },
+            "rows": [],
+        },
+    }
+
+    _handle_worker_done(window, state, ("dataset_triage", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_dataset_triage_report == report
+    assert state.latest_feature_separability_report == report["feature_separability"]
+    assert state.latest_prototype_audit_report == report["prototype_audit"]
+    assert state.latest_neighborhood_hardness_report == report["neighborhood_hardness"]
+    assert state.latest_ood_sentinel_report == report["ood_sentinel"]
+    assert state.busy is False
+    assert "Dataset triage" in window["-LOG-"].value
+    assert "Review same-feature rows" in window["-LOG-"].value
 
 
 def test_handle_worker_done_stores_slice_report_without_mutating_model():
