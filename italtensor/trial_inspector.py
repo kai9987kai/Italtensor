@@ -124,7 +124,9 @@ def _trial_row(index: int, trial: Mapping[str, Any]) -> dict[str, Any] | None:
     metrics = trial.get("metrics")
     if not isinstance(config, Mapping) or not isinstance(metrics, Mapping):
         return None
-    f1 = _metric(metrics, "f1", "val_f1", default=0.0)
+    f1 = _metric_optional(metrics, "f1", "val_f1")
+    if f1 is None:
+        return None
     accuracy = _metric(metrics, "accuracy", "val_accuracy", "balanced_accuracy", default=0.0)
     validation_loss = _metric(metrics, "validation_loss", "val_loss", "log_loss", "loss", default=float("inf"))
     if not isfinite(f1) or not isfinite(accuracy):
@@ -440,11 +442,16 @@ def _recommendation(
 
 
 def _metric(metrics: Mapping[str, Any], *keys: str, default: float) -> float:
+    value = _metric_optional(metrics, *keys)
+    return value if value is not None else default
+
+
+def _metric_optional(metrics: Mapping[str, Any], *keys: str) -> float | None:
     for key in keys:
         value = _optional_float(metrics.get(key))
         if value is not None:
             return value
-    return default
+    return None
 
 
 def _optional_float(value: Any) -> float | None:
