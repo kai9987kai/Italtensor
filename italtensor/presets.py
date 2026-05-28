@@ -293,6 +293,22 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="reliability_atlas_lab",
+        name="Reliability atlas lab",
+        description="Probability bands with overconfident and underconfident regions for calibration-bin inspection.",
+        default_samples=220,
+        input_dim=4,
+        recommended_feature_map="linear",
+        feature_names=("raw_score", "overconfidence_band", "underconfidence_band", "background_noise"),
+        training_defaults={"epochs": 80, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Low-confidence negative", "features": [-0.45, -1.0, 0.0, 0.0], "expected_label": 0},
+            {"name": "Overconfident review", "features": [1.25, 1.0, 0.0, 0.0], "expected_label": None},
+            {"name": "Underconfident review", "features": [0.20, 0.0, 1.0, 0.0], "expected_label": None},
+            {"name": "Confident positive", "features": [1.35, 0.0, 0.0, 0.0], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
         key="permutation_null_lab",
         name="Permutation null lab",
         description="A real margin signal with weak support and decoys for shuffled-label significance checks.",
@@ -661,6 +677,8 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _interaction_surface_lab(total, rng)
     elif preset.key == "calibration_repair_lab":
         features, labels = _calibration_repair_lab(total, rng)
+    elif preset.key == "reliability_atlas_lab":
+        features, labels = _reliability_atlas_lab(total, rng)
     elif preset.key == "permutation_null_lab":
         features, labels = _permutation_null_lab(total, rng)
     elif preset.key == "population_drift_lab":
@@ -1088,6 +1106,24 @@ def _calibration_repair_lab(total: int, rng: np.random.Generator) -> tuple[np.nd
     noisy_probability = np.where(shoulder, 0.35 + 0.3 * base_probability, base_probability)
     labels = (rng.random(total) < noisy_probability).astype(np.int32)
     features = np.column_stack([margin_score, confidence_trap, background_noise]).astype(np.float32)
+    return _shuffle(features, labels, rng)
+
+
+def _reliability_atlas_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    raw_score = rng.normal(0.0, 1.0, size=total)
+    overconfidence_band = (raw_score > 0.75).astype(np.float64)
+    underconfidence_band = (np.abs(raw_score) < 0.35).astype(np.float64)
+    background_noise = rng.normal(0.0, 1.0, size=total)
+    base_probability = 1.0 / (1.0 + np.exp(-(1.25 * raw_score + 0.20 * background_noise)))
+    calibrated_probability = base_probability.copy()
+    over_mask = overconfidence_band > 0.5
+    under_mask = underconfidence_band > 0.5
+    calibrated_probability[over_mask] = 0.55 + 0.25 * base_probability[over_mask]
+    calibrated_probability[under_mask] = 0.25 + 0.50 * base_probability[under_mask]
+    labels = (rng.random(total) < np.clip(calibrated_probability, 0.02, 0.98)).astype(np.int32)
+    features = np.column_stack(
+        [raw_score, overconfidence_band, underconfidence_band, background_noise]
+    ).astype(np.float32)
     return _shuffle(features, labels, rng)
 
 

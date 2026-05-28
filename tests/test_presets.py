@@ -138,6 +138,7 @@ def test_experimental_builtin_presets_are_available():
         "Response curve lab",
         "Interaction surface lab",
         "Calibration repair lab",
+        "Reliability atlas lab",
         "Permutation null lab",
         "Population drift lab",
         "Adversarial validation lab",
@@ -251,6 +252,23 @@ def test_calibration_repair_lab_preset_has_confidence_trap():
     assert metadata["recommended_feature_map"] == "linear"
     assert metadata["feature_names"] == ["margin_score", "confidence_trap", "background_noise"]
     assert any(example["name"] == "Miscalibrated shoulder" for example in metadata["prediction_examples"])
+
+
+def test_reliability_atlas_lab_preset_has_calibration_bands():
+    metadata = preset_metadata("Reliability atlas lab")
+    dataset = generate_builtin_preset("Reliability atlas lab", sample_count=120, seed=10)
+
+    assert metadata["input_dim"] == 4
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == [
+        "raw_score",
+        "overconfidence_band",
+        "underconfidence_band",
+        "background_noise",
+    ]
+    assert any(example["name"] == "Overconfident review" for example in metadata["prediction_examples"])
+    assert int(np.sum(dataset.features[:, 1] > 0.5)) >= 15
+    assert int(np.sum(dataset.features[:, 2] > 0.5)) >= 15
 
 
 def test_permutation_null_lab_preset_has_decoy_and_boundary_example():

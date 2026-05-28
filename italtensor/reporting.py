@@ -32,6 +32,7 @@ def build_experiment_report(
     selective_risk_report: dict[str, Any] | None = None,
     sample_review_report: dict[str, Any] | None = None,
     error_atlas_report: dict[str, Any] | None = None,
+    reliability_atlas_report: dict[str, Any] | None = None,
     threshold_report: dict[str, Any] | None = None,
     model_response_report: dict[str, Any] | None = None,
     pairwise_interaction_report: dict[str, Any] | None = None,
@@ -87,6 +88,7 @@ def build_experiment_report(
         "selective_prediction_diagnostics": selective_risk_report or None,
         "sample_review": sample_review_report or None,
         "error_atlas": error_atlas_report or None,
+        "reliability_atlas": reliability_atlas_report or None,
         "threshold_diagnostics": threshold_report or None,
         "model_response_diagnostics": model_response_report or None,
         "pairwise_interaction_diagnostics": pairwise_interaction_report or None,
@@ -136,6 +138,7 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     selective_risk = report.get("selective_prediction_diagnostics") or {}
     sample_review = report.get("sample_review") or {}
     error_atlas = report.get("error_atlas") or {}
+    reliability_atlas = report.get("reliability_atlas") or {}
     threshold_diagnostics = report.get("threshold_diagnostics") or {}
     model_response = report.get("model_response_diagnostics") or {}
     pairwise_interactions = report.get("pairwise_interaction_diagnostics") or {}
@@ -301,6 +304,33 @@ def format_markdown_report(report: dict[str, Any]) -> str:
         for key in ["brier_score", "ece"]:
             if key in metrics:
                 lines.append(f"- {key}: {_format_value(metrics[key])}")
+
+    lines.extend(["", "## Reliability Atlas"])
+    if reliability_atlas:
+        summary = reliability_atlas.get("summary", {})
+        lines.extend(
+            [
+                f"- Risk level: {summary.get('risk_level', '-')}",
+                f"- Brier score: {_format_value(summary.get('brier_score', '-'))}",
+                f"- Log loss: {_format_value(summary.get('log_loss', '-'))}",
+                f"- ECE: {_format_value(summary.get('expected_calibration_error', '-'))}",
+                f"- Max bin error: {_format_value(summary.get('max_calibration_error', '-'))}",
+                f"- Bins: {summary.get('bin_count', '-')}",
+                f"- Sparse bins: {summary.get('sparse_bin_count', '-')}",
+                f"- Recommendation: {summary.get('recommendation') or 'none'}",
+            ]
+        )
+        for item in reliability_atlas.get("worst_bins", [])[:6]:
+            lines.append(
+                f"- Bin [{_format_value(item.get('left', '-'))}, {_format_value(item.get('right', '-'))}): "
+                f"n={item.get('count', '-')}, "
+                f"conf={_format_value(item.get('confidence', '-'))}, "
+                f"acc={_format_value(item.get('accuracy', '-'))}, "
+                f"err={_format_value(item.get('absolute_error', '-'))}, "
+                f"dir={item.get('calibration_direction', '-')}"
+            )
+    else:
+        lines.append("- None")
 
     # Cross-validation section
     cv_keys = sorted(k for k in metrics if k.startswith("cv_"))

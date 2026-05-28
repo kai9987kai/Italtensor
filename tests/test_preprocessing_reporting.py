@@ -120,6 +120,29 @@ def test_report_export_json_and_markdown(tmp_path):
                 {"feature_index": 0, "standardized_shift": 1.2, "error_mean": 1.0, "correct_mean": 0.0}
             ],
         },
+        reliability_atlas_report={
+            "summary": {
+                "risk_level": "medium",
+                "brier_score": 0.18,
+                "log_loss": 0.5,
+                "expected_calibration_error": 0.09,
+                "max_calibration_error": 0.25,
+                "bin_count": 3,
+                "sparse_bin_count": 1,
+                "recommendation": "Run Calibration repair.",
+            },
+            "worst_bins": [
+                {
+                    "left": 0.8,
+                    "right": 1.0,
+                    "count": 4,
+                    "confidence": 0.9,
+                    "accuracy": 0.5,
+                    "absolute_error": 0.4,
+                    "calibration_direction": "overconfident",
+                }
+            ],
+        },
         threshold_report={
             "current_threshold": 0.4,
             "summary": {
@@ -719,6 +742,7 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["feature_ablation_diagnostics"]["summary"]["top_feature"] == "x1"
     assert saved_json["sample_review"]["summary"]["label_issue_count"] == 1
     assert saved_json["error_atlas"]["summary"]["error_count"] == 2
+    assert saved_json["reliability_atlas"]["summary"]["risk_level"] == "medium"
     assert saved_json["threshold_diagnostics"]["summary"]["best_f1_threshold"] == 0.3
     assert saved_json["decision_curve_diagnostics"]["summary"]["best_threshold"] == 0.4
     assert saved_json["posthoc_conformal_diagnostics"]["summary"]["recommended_alpha"] == 0.1
@@ -756,6 +780,8 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "label_issue row 2" in saved_markdown
     assert "## Error Atlas" in saved_markdown
     assert "high-confidence error row 2" in saved_markdown
+    assert "## Reliability Atlas" in saved_markdown
+    assert "Run Calibration repair" in saved_markdown
     assert "## Threshold Tradeoffs" in saved_markdown
     assert "Best F1 threshold" in saved_markdown
     assert "## Decision Curve / Utility" in saved_markdown

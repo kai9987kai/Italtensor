@@ -77,6 +77,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         latest_selective_risk_report={"summary": {"recommended_cutoff": 0.2}},
         latest_sample_review_report={"summary": {"label_issue_count": 1}},
         latest_error_atlas_report={"summary": {"error_count": 1}},
+        latest_reliability_atlas_report={"summary": {"risk_level": "medium"}},
         latest_threshold_report={"summary": {"best_f1": 1.0}},
         latest_model_response_report={"summary": {"top_feature": 0}},
         latest_pairwise_interaction_report={"summary": {"top_pair": [0, 1]}},
@@ -120,6 +121,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
     assert state.latest_selective_risk_report is None
     assert state.latest_sample_review_report is None
     assert state.latest_error_atlas_report is None
+    assert state.latest_reliability_atlas_report is None
     assert state.latest_threshold_report is None
     assert state.latest_model_response_report is None
     assert state.latest_pairwise_interaction_report is None
@@ -190,6 +192,7 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
         latest_neighborhood_hardness_report={"summary": {"top_hard_row": 1}},
         latest_dataset_triage_report={"summary": {"readiness_score": 72.0}},
         latest_error_atlas_report={"summary": {"error_count": 2}},
+        latest_reliability_atlas_report={"summary": {"risk_level": "medium"}},
         latest_experiment_advisor_report={"summary": {"recommended_next_step": "Run auto experiments"}},
         latest_trial_inspector_report={"summary": {"best_trial_index": 2}},
         latest_promotion_gate_report={"summary": {"verdict": "needs_review"}},
@@ -207,6 +210,7 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
     assert payload["neighborhood_hardness"]["summary"]["top_hard_row"] == 1
     assert payload["dataset_triage"]["summary"]["readiness_score"] == 72.0
     assert payload["error_atlas"]["summary"]["error_count"] == 2
+    assert payload["reliability_atlas"]["summary"]["risk_level"] == "medium"
     assert payload["experiment_advisor"]["summary"]["recommended_next_step"] == "Run auto experiments"
     assert payload["trial_inspector"]["summary"]["best_trial_index"] == 2
     assert payload["promotion_gate"]["summary"]["verdict"] == "needs_review"
@@ -229,6 +233,7 @@ def test_training_preserves_dataset_only_diagnostics():
         latest_neighborhood_hardness_report={"summary": {"top_hard_row": 2}},
         latest_dataset_triage_report={"summary": {"readiness_score": 77.0}},
         latest_error_atlas_report={"summary": {"error_count": 1}},
+        latest_reliability_atlas_report={"summary": {"risk_level": "medium"}},
         latest_experiment_advisor_report={"summary": {"recommended_next_step": "Old advice"}},
         latest_trial_inspector_report={"summary": {"best_trial_index": 1}},
         latest_promotion_gate_report={"summary": {"verdict": "old"}},
@@ -252,6 +257,7 @@ def test_training_preserves_dataset_only_diagnostics():
     assert state.latest_neighborhood_hardness_report == {"summary": {"top_hard_row": 2}}
     assert state.latest_dataset_triage_report == {"summary": {"readiness_score": 77.0}}
     assert state.latest_error_atlas_report is None
+    assert state.latest_reliability_atlas_report is None
     assert state.latest_experiment_advisor_report is None
     assert state.latest_trial_inspector_report is None
     assert state.latest_promotion_gate_report is None
@@ -1191,6 +1197,52 @@ def test_handle_worker_done_stores_error_atlas_without_mutating_model():
     assert state.busy is False
     assert "Error atlas" in window["-LOG-"].value
     assert "high-confidence error row=2" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_reliability_atlas_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
+    model = state.model
+    report = {
+        "summary": {
+            "risk_level": "medium",
+            "expected_calibration_error": 0.09,
+            "max_calibration_error": 0.25,
+            "brier_score": 0.18,
+            "bin_count": 3,
+            "recommendation": "Run Calibration repair.",
+        },
+        "worst_bins": [
+            {
+                "left": 0.8,
+                "right": 1.0,
+                "count": 4,
+                "confidence": 0.9,
+                "accuracy": 0.5,
+                "absolute_error": 0.4,
+                "calibration_direction": "overconfident",
+            }
+        ],
+        "recommendations": [
+            {
+                "rank": 1,
+                "priority": "medium",
+                "category": "calibration",
+                "title": "Run repair",
+                "action": "Run Calibration repair.",
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("reliability_atlas", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_reliability_atlas_report == report
+    assert state.latest_threshold == 0.4
+    assert state.busy is False
+    assert "Reliability atlas" in window["-LOG-"].value
+    assert "Run Calibration repair" in window["-LOG-"].value
 
 
 def test_import_reviewed_labels_appends_rows_and_invalidates_model(tmp_path):

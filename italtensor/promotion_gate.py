@@ -19,6 +19,7 @@ def build_promotion_gate(
     experiment_advisor_report: dict[str, Any] | None = None,
     trial_inspector_report: dict[str, Any] | None = None,
     error_atlas_report: dict[str, Any] | None = None,
+    reliability_atlas_report: dict[str, Any] | None = None,
     threshold_report: dict[str, Any] | None = None,
     calibration_repair_report: dict[str, Any] | None = None,
     stress_report: dict[str, Any] | None = None,
@@ -199,6 +200,7 @@ def build_promotion_gate(
         calibration_repair_report=calibration_repair_report,
         stress_report=stress_report,
         error_atlas_report=error_atlas_report,
+        reliability_atlas_report=reliability_atlas_report,
         permutation_null_report=permutation_null_report,
         population_drift_report=population_drift_report,
         adversarial_validation_report=adversarial_validation_report,
@@ -355,6 +357,7 @@ def _add_repair_and_robustness_checks(
     calibration_repair_report: dict[str, Any] | None,
     stress_report: dict[str, Any] | None,
     error_atlas_report: dict[str, Any] | None,
+    reliability_atlas_report: dict[str, Any] | None,
     permutation_null_report: dict[str, Any] | None,
     population_drift_report: dict[str, Any] | None,
     adversarial_validation_report: dict[str, Any] | None,
@@ -420,6 +423,31 @@ def _add_repair_and_robustness_checks(
                 status="review",
                 evidence=f"Loaded-dataset error rate is {error_rate:.3f}.",
                 action="Inspect false-positive and false-negative buckets before promotion.",
+                penalty=7.0,
+            )
+    if reliability_atlas_report:
+        summary = reliability_atlas_report.get("summary", {})
+        risk = str(summary.get("risk_level", "low"))
+        ece = float(summary.get("expected_calibration_error", 0.0) or 0.0)
+        max_error = float(summary.get("max_calibration_error", 0.0) or 0.0)
+        if risk == "high":
+            add(
+                severity="blocker",
+                category="calibration",
+                title="Reliability atlas reports high calibration risk",
+                status="fail",
+                evidence=f"ECE={ece:.3f}, max_bin_error={max_error:.3f}.",
+                action="Run Calibration repair or avoid promoting probability outputs.",
+                penalty=18.0,
+            )
+        elif risk == "medium":
+            add(
+                severity="caution",
+                category="calibration",
+                title="Reliability atlas needs calibration review",
+                status="review",
+                evidence=f"ECE={ece:.3f}, max_bin_error={max_error:.3f}.",
+                action="Review worst reliability bins before promotion.",
                 penalty=7.0,
             )
     if permutation_null_report:

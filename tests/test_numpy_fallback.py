@@ -130,6 +130,7 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
         selective_risk_report={"summary": {"recommended_cutoff": 0.2}},
         sample_review_report={"summary": {"label_issue_count": 1}},
         error_atlas_report={"summary": {"error_count": 2}},
+        reliability_atlas_report={"summary": {"risk_level": "medium", "expected_calibration_error": 0.09}},
         threshold_report={"summary": {"best_f1_threshold": 0.3}},
         model_response_report={"summary": {"top_feature": 0}},
         pairwise_interaction_report={"summary": {"top_pair": [0, 1]}},
@@ -172,6 +173,7 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
     assert metadata["selective_prediction_diagnostics"]["summary"]["recommended_cutoff"] == 0.2
     assert metadata["sample_review"]["summary"]["label_issue_count"] == 1
     assert metadata["error_atlas"]["summary"]["error_count"] == 2
+    assert metadata["reliability_atlas"]["summary"]["risk_level"] == "medium"
     assert metadata["threshold_diagnostics"]["summary"]["best_f1_threshold"] == 0.3
     assert metadata["model_response_diagnostics"]["summary"]["top_feature"] == 0
     assert metadata["pairwise_interaction_diagnostics"]["summary"]["top_pair"] == [0, 1]
