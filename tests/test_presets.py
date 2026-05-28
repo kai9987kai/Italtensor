@@ -155,6 +155,7 @@ def test_experimental_builtin_presets_are_available():
         "Dataset triage lab",
         "Experiment advisor lab",
         "Proxy leakage lab",
+        "Promotion gate lab",
     }.issubset(names)
 
 
@@ -456,6 +457,27 @@ def test_proxy_leakage_lab_preset_supports_ablation_diagnostics():
     assert metadata["recommended_feature_map"] == "linear"
     assert metadata["feature_names"] == ["real_signal", "weak_signal", "proxy_code", "background_noise"]
     assert any(example["name"] == "Proxy conflict" for example in metadata["prediction_examples"])
+
+
+def test_promotion_gate_lab_preset_has_review_risks():
+    metadata = preset_metadata("Promotion gate lab")
+    dataset = generate_builtin_preset("Promotion gate lab", sample_count=160, seed=12)
+    positive_rate = float(np.mean(dataset.labels == 1))
+
+    assert metadata["input_dim"] == 5
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["training_defaults"]["trials"] == 16
+    assert metadata["feature_names"] == [
+        "primary_margin",
+        "support_signal",
+        "shortcut_proxy",
+        "tail_shift",
+        "review_band",
+    ]
+    assert any(example["name"] == "Boundary promotion review" for example in metadata["prediction_examples"])
+    assert 0.25 <= positive_rate <= 0.45
+    assert float(np.max(np.abs(dataset.features[:, 3]))) > 4.0
+    assert int(np.sum(np.abs(dataset.features[:, 4]) < 0.10)) >= 6
 
 
 def test_save_as_preset_uses_existing_dataset_json_shape(tmp_path):

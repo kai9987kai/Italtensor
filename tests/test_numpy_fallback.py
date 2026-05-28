@@ -148,6 +148,7 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
         dataset_triage_report={"summary": {"readiness_score": 68.0, "risk_level": "medium"}},
         experiment_advisor_report={"summary": {"recommended_next_step": "Run auto experiments"}},
         trial_inspector_report={"summary": {"best_trial_index": 1, "best_f1": 0.8}},
+        promotion_gate_report={"summary": {"verdict": "needs_review", "promotion_score": 74.0}},
         mps_sweep_report={"recommended_bond_dim": 8},
     )
     loaded, metadata = load_model_bundle(model_path)
@@ -188,6 +189,7 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
     assert metadata["dataset_triage"]["summary"]["readiness_score"] == 68.0
     assert metadata["experiment_advisor"]["summary"]["recommended_next_step"] == "Run auto experiments"
     assert metadata["trial_inspector"]["summary"]["best_trial_index"] == 1
+    assert metadata["promotion_gate"]["summary"]["verdict"] == "needs_review"
     assert metadata["mps_bond_sweep"]["recommended_bond_dim"] == 8
     assert probabilities.shape == (1,)
 

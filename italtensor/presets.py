@@ -566,6 +566,23 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
             {"name": "Proxy conflict", "features": [0.8, 0.2, -1.3, 0.0], "expected_label": None},
         ),
     ),
+    PresetInfo(
+        key="promotion_gate_lab",
+        name="Promotion gate lab",
+        description="A promotion-readiness dataset with imbalance, shortcut conflicts, tails, and boundary rows.",
+        default_samples=220,
+        min_samples=24,
+        input_dim=5,
+        recommended_feature_map="linear",
+        feature_names=("primary_margin", "support_signal", "shortcut_proxy", "tail_shift", "review_band"),
+        training_defaults={"epochs": 80, "batch_size": 16, "trials": 16, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Likely negative", "features": [-1.1, -0.4, -1.1, 0.0, 0.6], "expected_label": 0},
+            {"name": "Boundary promotion review", "features": [0.05, 0.0, 1.1, 0.0, 0.0], "expected_label": None},
+            {"name": "Tail promotion review", "features": [0.6, 0.1, 1.1, 4.5, 0.2], "expected_label": None},
+            {"name": "Likely positive", "features": [1.1, 0.4, 1.1, 0.0, 0.6], "expected_label": 1},
+        ),
+    ),
 )
 
 
@@ -662,6 +679,8 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _experiment_advisor_lab(total, rng)
     elif preset.key == "proxy_leakage_lab":
         features, labels = _proxy_leakage_lab(total, rng)
+    elif preset.key == "promotion_gate_lab":
+        features, labels = _promotion_gate_lab(total, rng)
     else:
         raise ValueError(f"Unsupported preset: {preset.key}")
     return validate_dataset(features.tolist(), labels.astype(int).tolist(), min_samples=preset.min_samples, require_two_classes=True)
@@ -1500,6 +1519,48 @@ def _proxy_leakage_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray
     proxy_code[conflict_indices] *= -1.0
     background_noise = rng.normal(0.0, 1.0, size=total)
     features = np.column_stack([real_signal, weak_signal, proxy_code, background_noise]).astype(np.float32)
+    return _shuffle(features, labels, rng)
+
+
+def _promotion_gate_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    primary_margin = rng.normal(0.0, 1.0, size=total)
+    support_signal = rng.normal(0.0, 0.75, size=total)
+    latent = 1.05 * primary_margin + 0.35 * support_signal + rng.normal(0.0, 0.42, size=total)
+    threshold = float(np.quantile(latent, 0.64))
+    labels = (latent > threshold).astype(np.int32)
+    signed = np.where(labels == 1, 1.0, -1.0)
+    shortcut_proxy = signed * 1.15 + rng.normal(0.0, 0.10, size=total)
+    conflict_count = max(4, total // 14)
+    conflict_indices = rng.choice(total, size=conflict_count, replace=False)
+    shortcut_proxy[conflict_indices] *= -1.0
+    tail_shift = rng.normal(0.0, 0.20, size=total)
+    tail_count = max(4, total // 18)
+    tail_pool = np.setdiff1d(np.arange(total), conflict_indices, assume_unique=False)
+    tail_indices = rng.choice(tail_pool, size=min(tail_count, tail_pool.size), replace=False)
+    tail_shift[tail_indices] += rng.choice([-1.0, 1.0], size=tail_indices.size) * rng.uniform(3.4, 5.2, size=tail_indices.size)
+    review_band = np.abs(latent - threshold) + rng.normal(0.0, 0.04, size=total)
+    boundary_count = max(4, total // 16)
+    boundary_indices = np.argsort(np.abs(latent - threshold))[:boundary_count]
+    review_band[boundary_indices] = rng.normal(0.0, 0.04, size=boundary_count)
+    if total >= 24:
+        features_override = np.asarray(
+            [
+                [0.08, 0.0, 1.15, 0.0, 0.0],
+                [0.10, 0.0, -1.15, 0.0, 0.0],
+                [0.60, 0.2, 1.15, 4.6, 0.2],
+                [-0.60, -0.2, -1.15, -4.6, 0.2],
+            ],
+            dtype=np.float32,
+        )
+        primary_margin[:4] = features_override[:, 0]
+        support_signal[:4] = features_override[:, 1]
+        shortcut_proxy[:4] = features_override[:, 2]
+        tail_shift[:4] = features_override[:, 3]
+        review_band[:4] = features_override[:, 4]
+        labels[:4] = np.asarray([1, 0, 1, 0], dtype=np.int32)
+    features = np.column_stack(
+        [primary_margin, support_signal, shortcut_proxy, tail_shift, review_band]
+    ).astype(np.float32)
     return _shuffle(features, labels, rng)
 
 

@@ -61,6 +61,7 @@ def save_model_bundle(
     dataset_triage_report: dict[str, Any] | None = None,
     experiment_advisor_report: dict[str, Any] | None = None,
     trial_inspector_report: dict[str, Any] | None = None,
+    promotion_gate_report: dict[str, Any] | None = None,
     mps_sweep_report: dict[str, Any] | None = None,
 ) -> tuple[Path, Path]:
     model_path = Path(path)
@@ -137,6 +138,7 @@ def save_model_bundle(
         "dataset_triage": dataset_triage_report or None,
         "experiment_advisor": experiment_advisor_report or None,
         "trial_inspector": trial_inspector_report or None,
+        "promotion_gate": promotion_gate_report or None,
         "mps_bond_sweep": mps_sweep_report or None,
         "threshold": float(threshold),
         "preprocessing": resolved_preprocessor.to_dict(),

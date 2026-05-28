@@ -66,6 +66,7 @@ from .ood_sentinel import format_ood_sentinel_summary, run_ood_sentinel
 from .dataset_triage import format_dataset_triage_summary, run_dataset_triage
 from .experiment_advisor import build_experiment_advisor, format_experiment_advisor_summary
 from .trial_inspector import inspect_trial_history, format_trial_inspector_summary
+from .promotion_gate import build_promotion_gate, format_promotion_gate_summary
 from .bootstrap_stability import (
     format_bootstrap_stability_summary,
     run_bootstrap_stability_diagnostics,
@@ -121,6 +122,7 @@ class AppState:
     latest_dataset_triage_report: dict[str, Any] | None = None
     latest_experiment_advisor_report: dict[str, Any] | None = None
     latest_trial_inspector_report: dict[str, Any] | None = None
+    latest_promotion_gate_report: dict[str, Any] | None = None
     latest_mps_sweep_report: dict[str, Any] | None = None
     busy: bool = False
     status_message: str = "Ready"
@@ -224,6 +226,8 @@ def run_app() -> None:
                 _start_experiment_advisor(window, state)
             elif event == "-TRIAL_INSPECTOR-":
                 _start_trial_inspector(window, state)
+            elif event == "-PROMOTION_GATE-":
+                _start_promotion_gate(window, state)
             elif event == "-OOD_SENTINEL-":
                 _start_ood_sentinel(window, state)
             elif event == "-BOOTSTRAP_STABILITY-":
@@ -506,6 +510,7 @@ def _layout(sg):
             sg.Button("Dataset triage", key="-DATASET_TRIAGE-", expand_x=True),
             sg.Button("Experiment advisor", key="-EXPERIMENT_ADVISOR-", expand_x=True),
             sg.Button("Trial inspector", key="-TRIAL_INSPECTOR-", expand_x=True),
+            sg.Button("Promotion gate", key="-PROMOTION_GATE-", expand_x=True),
         ],
         [
             sg.Button("Audit dataset", key="-AUDIT_DATASET-", expand_x=True),
@@ -1098,6 +1103,7 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         dataset_triage_report=state.latest_dataset_triage_report,
         experiment_advisor_report=state.latest_experiment_advisor_report,
         trial_inspector_report=state.latest_trial_inspector_report,
+        promotion_gate_report=state.latest_promotion_gate_report,
         mps_sweep_report=state.latest_mps_sweep_report,
     )
     window["-MODEL_PATH-"].update(str(model_path))
@@ -1160,6 +1166,7 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     dataset_triage_report = metadata.get("dataset_triage")
     experiment_advisor_report = metadata.get("experiment_advisor")
     trial_inspector_report = metadata.get("trial_inspector")
+    promotion_gate_report = metadata.get("promotion_gate")
     mps_sweep_report = metadata.get("mps_bond_sweep")
     state.latest_ablation_report = ablation_report if isinstance(ablation_report, dict) else None
     state.latest_decision_curve_report = decision_curve_report if isinstance(decision_curve_report, dict) else None
@@ -1221,6 +1228,7 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
         experiment_advisor_report if isinstance(experiment_advisor_report, dict) else None
     )
     state.latest_trial_inspector_report = trial_inspector_report if isinstance(trial_inspector_report, dict) else None
+    state.latest_promotion_gate_report = promotion_gate_report if isinstance(promotion_gate_report, dict) else None
     state.latest_mps_sweep_report = mps_sweep_report if isinstance(mps_sweep_report, dict) else None
     _log(window, f"Loaded model expecting {state.input_dim} features.")
 
@@ -1265,6 +1273,7 @@ def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
         dataset_triage_report=state.latest_dataset_triage_report,
         experiment_advisor_report=state.latest_experiment_advisor_report,
         trial_inspector_report=state.latest_trial_inspector_report,
+        promotion_gate_report=state.latest_promotion_gate_report,
         mps_sweep_report=state.latest_mps_sweep_report,
     )
     path = export_experiment_report(_required_path(values["-REPORT_PATH-"], "report path"), report)
@@ -1370,6 +1379,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_bootstrap_stability_report = None
         state.latest_experiment_advisor_report = None
         state.latest_trial_inspector_report = None
+        state.latest_promotion_gate_report = None
         state.latest_mps_sweep_report = None
         _log(window, f"Training complete: {_format_metrics(training_result.metrics)}")
         _log(window, _format_calibration(training_result.metrics))
@@ -1407,6 +1417,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_bootstrap_stability_report = None
         state.latest_experiment_advisor_report = None
         state.latest_trial_inspector_report = None
+        state.latest_promotion_gate_report = None
         state.latest_mps_sweep_report = None
         _log(window, f"Best config: {_format_config(best.config)}")
         _log(window, f"Best metrics: {_format_metrics(best.metrics)}")
@@ -1715,6 +1726,16 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                 f"[{item.get('priority', '-')}/{item.get('category', '-')}] "
                 f"{item.get('title', '-')}: {item.get('action', '-')}",
             )
+    elif kind == "promotion_gate":
+        state.latest_promotion_gate_report = result
+        _log(window, format_promotion_gate_summary(result))
+        for item in result.get("checks", [])[:6]:
+            _log(
+                window,
+                f"  {int(item.get('rank', 0))}. "
+                f"[{item.get('severity', '-')}/{item.get('category', '-')}] "
+                f"{item.get('title', '-')}: {item.get('action', '-')}",
+            )
     elif kind == "mps_sweep":
         state.latest_mps_sweep_report = result
         _log(window, format_mps_sweep_summary(result))
@@ -1846,6 +1867,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_bootstrap_stability_report = None
         state.latest_experiment_advisor_report = None
         state.latest_trial_inspector_report = None
+        state.latest_promotion_gate_report = None
         state.latest_mps_sweep_report = None
         for item in result:
             slot = ModelSlot(
@@ -1892,6 +1914,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_bootstrap_stability_report = None
         state.latest_experiment_advisor_report = None
         state.latest_trial_inspector_report = None
+        state.latest_promotion_gate_report = None
         state.latest_mps_sweep_report = None
         
         # Auto-store in slots
@@ -2010,6 +2033,7 @@ def _invalidate_model_artifacts(state: AppState) -> None:
     state.latest_dataset_triage_report = None
     state.latest_experiment_advisor_report = None
     state.latest_trial_inspector_report = None
+    state.latest_promotion_gate_report = None
     state.latest_mps_sweep_report = None
 
 
@@ -2075,6 +2099,7 @@ def _set_busy(window, busy: bool) -> None:
         "-DATASET_TRIAGE-",
         "-EXPERIMENT_ADVISOR-",
         "-TRIAL_INSPECTOR-",
+        "-PROMOTION_GATE-",
         "-OOD_SENTINEL-",
         "-BOOTSTRAP_STABILITY-",
         "-PROTOTYPE_AUDIT-",
@@ -2416,6 +2441,7 @@ def _activate_model_slot(window, state: AppState, values: dict[str, Any]) -> Non
     state.latest_neighborhood_hardness_report = None
     state.latest_experiment_advisor_report = None
     state.latest_trial_inspector_report = None
+    state.latest_promotion_gate_report = None
     state.latest_mps_sweep_report = None
     _log(window, f"Activated slot '{slot.name}'. Predictions and weight analysis will now run on this model.")
     _update_slots_listbox(window, state)
@@ -2524,6 +2550,7 @@ def _load_registry(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_neighborhood_hardness_report = None
         state.latest_experiment_advisor_report = None
         state.latest_trial_inspector_report = None
+        state.latest_promotion_gate_report = None
         state.latest_mps_sweep_report = None
     _update_slots_listbox(window, state)
     _log(window, f"Loaded {len(slots)} slot(s) from registry.")
@@ -2567,6 +2594,7 @@ def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_neighborhood_hardness_report = None
     state.latest_experiment_advisor_report = None
     state.latest_trial_inspector_report = None
+    state.latest_promotion_gate_report = None
     state.latest_mps_sweep_report = None
     
     state.latest_config = ModelConfig(
@@ -2648,6 +2676,7 @@ def _build_stacked_ensemble(window, state: AppState, values: dict[str, Any]) -> 
     state.latest_neighborhood_hardness_report = None
     state.latest_experiment_advisor_report = None
     state.latest_trial_inspector_report = None
+    state.latest_promotion_gate_report = None
     state.latest_mps_sweep_report = None
     probs = ensemble.predict(dataset.features).reshape(-1)
     metrics = evaluate_predictions(dataset.labels, probs, threshold=0.5)
@@ -2829,6 +2858,34 @@ def _start_trial_inspector(window, state: AppState) -> None:
         return "trial_inspector", report
 
     _start_worker(window, state, "Inspecting trial history...", task)
+
+
+def _start_promotion_gate(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = build_promotion_gate(
+            sample_count=len(state.labels),
+            input_dim=state.input_dim,
+            labels=state.labels,
+            config=state.latest_config,
+            metrics=state.latest_metrics,
+            trial_history=state.trial_history,
+            dataset_triage_report=state.latest_dataset_triage_report,
+            experiment_advisor_report=state.latest_experiment_advisor_report,
+            trial_inspector_report=state.latest_trial_inspector_report,
+            threshold_report=state.latest_threshold_report,
+            calibration_repair_report=state.latest_calibration_repair_report,
+            stress_report=state.latest_stress_report,
+            permutation_null_report=state.latest_permutation_null_report,
+            population_drift_report=state.latest_population_drift_report,
+            adversarial_validation_report=state.latest_adversarial_validation_report,
+            chronological_holdout_report=state.latest_chronological_holdout_report,
+            selective_risk_report=state.latest_selective_risk_report,
+        )
+        return "promotion_gate", report
+
+    _start_worker(window, state, "Building promotion gate...", task)
 
 
 def _run_reliability_diagram(window, state: AppState) -> None:
@@ -3029,6 +3086,7 @@ def _merge_slots(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_neighborhood_hardness_report = None
         state.latest_experiment_advisor_report = None
         state.latest_trial_inspector_report = None
+        state.latest_promotion_gate_report = None
         state.latest_mps_sweep_report = None
         state.latest_config = ModelConfig(
             lr_schedule="constant",

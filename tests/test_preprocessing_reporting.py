@@ -650,6 +650,26 @@ def test_report_export_json_and_markdown(tmp_path):
                 }
             ],
         },
+        promotion_gate_report={
+            "summary": {
+                "verdict": "needs_review",
+                "promotion_score": 74.0,
+                "blocker_count": 0,
+                "caution_count": 2,
+                "required_next_step": "Run Trial inspector.",
+                "warning": "Review 2 caution(s) before relying on this model.",
+            },
+            "checks": [
+                {
+                    "rank": 1,
+                    "severity": "caution",
+                    "category": "model_selection",
+                    "title": "Trial inspector has not been run",
+                    "action": "Run Trial inspector.",
+                }
+            ],
+            "release_note": {"recommended_use": "guarded_local_use", "must_include": ["validation metrics"]},
+        },
         mps_sweep_report={
             "input_dim": 2,
             "physical_dim": 4,
@@ -700,6 +720,7 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["dataset_triage"]["summary"]["readiness_score"] == 71.0
     assert saved_json["experiment_advisor"]["summary"]["recommended_next_step"] == "Promote threshold tuning"
     assert saved_json["trial_inspector"]["summary"]["best_trial_index"] == 1
+    assert saved_json["promotion_gate"]["summary"]["verdict"] == "needs_review"
     assert saved_json["mps_bond_sweep"]["recommended_bond_dim"] == 8
     assert saved_json["trial_history"][0]["config"]["feature_map"] == "rff"
     assert "Feature 0" in saved_markdown
@@ -751,6 +772,8 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "Promote threshold tuning" in saved_markdown
     assert "## Trial Inspector" in saved_markdown
     assert "Rank 1: trial 1" in saved_markdown
+    assert "## Promotion Gate" in saved_markdown
+    assert "Trial inspector has not been run" in saved_markdown
     assert "## OOD Sentinel" in saved_markdown
     assert "Max OOD score" in saved_markdown
     assert "## Bootstrap Stability Diagnostics" in saved_markdown

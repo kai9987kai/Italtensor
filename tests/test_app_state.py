@@ -95,6 +95,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         latest_dataset_triage_report={"summary": {"readiness_score": 61.0}},
         latest_experiment_advisor_report={"summary": {"recommended_next_step": "Run triage"}},
         latest_trial_inspector_report={"summary": {"best_trial_index": 1}},
+        latest_promotion_gate_report={"summary": {"verdict": "needs_review"}},
         latest_mps_sweep_report={"recommended_bond_dim": 4},
     )
 
@@ -136,6 +137,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
     assert state.latest_dataset_triage_report is None
     assert state.latest_experiment_advisor_report is None
     assert state.latest_trial_inspector_report is None
+    assert state.latest_promotion_gate_report is None
     assert state.latest_mps_sweep_report is None
 
 
@@ -187,6 +189,7 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
         latest_dataset_triage_report={"summary": {"readiness_score": 72.0}},
         latest_experiment_advisor_report={"summary": {"recommended_next_step": "Run auto experiments"}},
         latest_trial_inspector_report={"summary": {"best_trial_index": 2}},
+        latest_promotion_gate_report={"summary": {"verdict": "needs_review"}},
     )
     path = tmp_path / "dataset-report.json"
 
@@ -202,6 +205,7 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
     assert payload["dataset_triage"]["summary"]["readiness_score"] == 72.0
     assert payload["experiment_advisor"]["summary"]["recommended_next_step"] == "Run auto experiments"
     assert payload["trial_inspector"]["summary"]["best_trial_index"] == 2
+    assert payload["promotion_gate"]["summary"]["verdict"] == "needs_review"
     assert "Exported report" in window["-LOG-"].value
 
 
@@ -222,6 +226,7 @@ def test_training_preserves_dataset_only_diagnostics():
         latest_dataset_triage_report={"summary": {"readiness_score": 77.0}},
         latest_experiment_advisor_report={"summary": {"recommended_next_step": "Old advice"}},
         latest_trial_inspector_report={"summary": {"best_trial_index": 1}},
+        latest_promotion_gate_report={"summary": {"verdict": "old"}},
         busy=True,
     )
     training_result = SimpleNamespace(
@@ -243,6 +248,7 @@ def test_training_preserves_dataset_only_diagnostics():
     assert state.latest_dataset_triage_report == {"summary": {"readiness_score": 77.0}}
     assert state.latest_experiment_advisor_report is None
     assert state.latest_trial_inspector_report is None
+    assert state.latest_promotion_gate_report is None
     assert state.latest_metrics == {"f1": 0.5}
 
 
@@ -921,6 +927,39 @@ def test_handle_worker_done_stores_trial_inspector_without_mutating_model():
     assert state.busy is False
     assert "Trial inspector" in window["-LOG-"].value
     assert "Focus the next sweep" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_promotion_gate_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.82}, latest_threshold=0.4, busy=True)
+    model = state.model
+    report = {
+        "summary": {
+            "verdict": "needs_review",
+            "promotion_score": 74.0,
+            "blocker_count": 0,
+            "caution_count": 2,
+            "required_next_step": "Run Trial inspector.",
+        },
+        "checks": [
+            {
+                "rank": 1,
+                "severity": "caution",
+                "category": "model_selection",
+                "title": "Trial inspector has not been run",
+                "action": "Run Trial inspector.",
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("promotion_gate", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.82}
+    assert state.latest_promotion_gate_report == report
+    assert state.busy is False
+    assert "Promotion gate" in window["-LOG-"].value
+    assert "Run Trial inspector" in window["-LOG-"].value
 
 
 def test_handle_worker_done_stores_slice_report_without_mutating_model():

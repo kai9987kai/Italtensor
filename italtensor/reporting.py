@@ -50,6 +50,7 @@ def build_experiment_report(
     dataset_triage_report: dict[str, Any] | None = None,
     experiment_advisor_report: dict[str, Any] | None = None,
     trial_inspector_report: dict[str, Any] | None = None,
+    promotion_gate_report: dict[str, Any] | None = None,
     mps_sweep_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     label_array = np.asarray(labels, dtype=np.int32)
@@ -103,6 +104,7 @@ def build_experiment_report(
         "dataset_triage": dataset_triage_report or None,
         "experiment_advisor": experiment_advisor_report or None,
         "trial_inspector": trial_inspector_report or None,
+        "promotion_gate": promotion_gate_report or None,
         "mps_bond_sweep": mps_sweep_report or None,
         "feature_importances": feature_importances,
         "trial_history": trial_history or [],
@@ -150,6 +152,7 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     dataset_triage = report.get("dataset_triage") or {}
     experiment_advisor = report.get("experiment_advisor") or {}
     trial_inspector = report.get("trial_inspector") or {}
+    promotion_gate = report.get("promotion_gate") or {}
     mps_sweep = report.get("mps_bond_sweep") or {}
     audit = dataset.get("audit") or {}
 
@@ -246,6 +249,31 @@ def format_markdown_report(report: dict[str, Any]) -> str:
                 f"best_F1={_format_value(group.get('best_f1', '-'))} "
                 f"avg_F1={_format_value(group.get('avg_f1', '-'))}"
             )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Promotion Gate"])
+    if promotion_gate:
+        summary = promotion_gate.get("summary", {})
+        lines.extend(
+            [
+                f"- Verdict: {summary.get('verdict', '-')}",
+                f"- Promotion score: {_format_value(summary.get('promotion_score', '-'))}/100",
+                f"- Blockers: {summary.get('blocker_count', '-')}",
+                f"- Cautions: {summary.get('caution_count', '-')}",
+                f"- Required next step: {summary.get('required_next_step') or 'none'}",
+                f"- Warning: {summary.get('warning') or 'none'}",
+            ]
+        )
+        for item in promotion_gate.get("checks", [])[:8]:
+            lines.append(
+                f"- {item.get('rank', '-')}. [{item.get('severity', '-')}/{item.get('category', '-')}] "
+                f"{item.get('title', '-')}: {item.get('action', '-')}"
+            )
+        release_note = promotion_gate.get("release_note", {})
+        if release_note:
+            lines.append(f"- Recommended use: {release_note.get('recommended_use', '-')}")
+            lines.append(f"- Must include: {release_note.get('must_include', [])}")
     else:
         lines.append("- None")
 
