@@ -94,6 +94,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         latest_neighborhood_hardness_report={"summary": {"top_hard_row": 6}},
         latest_dataset_triage_report={"summary": {"readiness_score": 61.0}},
         latest_experiment_advisor_report={"summary": {"recommended_next_step": "Run triage"}},
+        latest_trial_inspector_report={"summary": {"best_trial_index": 1}},
         latest_mps_sweep_report={"recommended_bond_dim": 4},
     )
 
@@ -134,6 +135,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
     assert state.latest_neighborhood_hardness_report is None
     assert state.latest_dataset_triage_report is None
     assert state.latest_experiment_advisor_report is None
+    assert state.latest_trial_inspector_report is None
     assert state.latest_mps_sweep_report is None
 
 
@@ -184,6 +186,7 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
         latest_neighborhood_hardness_report={"summary": {"top_hard_row": 1}},
         latest_dataset_triage_report={"summary": {"readiness_score": 72.0}},
         latest_experiment_advisor_report={"summary": {"recommended_next_step": "Run auto experiments"}},
+        latest_trial_inspector_report={"summary": {"best_trial_index": 2}},
     )
     path = tmp_path / "dataset-report.json"
 
@@ -198,6 +201,7 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
     assert payload["neighborhood_hardness"]["summary"]["top_hard_row"] == 1
     assert payload["dataset_triage"]["summary"]["readiness_score"] == 72.0
     assert payload["experiment_advisor"]["summary"]["recommended_next_step"] == "Run auto experiments"
+    assert payload["trial_inspector"]["summary"]["best_trial_index"] == 2
     assert "Exported report" in window["-LOG-"].value
 
 
@@ -217,6 +221,7 @@ def test_training_preserves_dataset_only_diagnostics():
         latest_neighborhood_hardness_report={"summary": {"top_hard_row": 2}},
         latest_dataset_triage_report={"summary": {"readiness_score": 77.0}},
         latest_experiment_advisor_report={"summary": {"recommended_next_step": "Old advice"}},
+        latest_trial_inspector_report={"summary": {"best_trial_index": 1}},
         busy=True,
     )
     training_result = SimpleNamespace(
@@ -237,6 +242,7 @@ def test_training_preserves_dataset_only_diagnostics():
     assert state.latest_neighborhood_hardness_report == {"summary": {"top_hard_row": 2}}
     assert state.latest_dataset_triage_report == {"summary": {"readiness_score": 77.0}}
     assert state.latest_experiment_advisor_report is None
+    assert state.latest_trial_inspector_report is None
     assert state.latest_metrics == {"f1": 0.5}
 
 
@@ -868,6 +874,53 @@ def test_handle_worker_done_stores_experiment_advisor_without_mutating_model():
     assert state.busy is False
     assert "Experiment advisor" in window["-LOG-"].value
     assert "Promote threshold tuning" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_trial_inspector_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.7}, latest_threshold=0.4, busy=True)
+    model = state.model
+    report = {
+        "valid_trial_count": 2,
+        "trial_count": 2,
+        "summary": {
+            "best_trial_index": 2,
+            "best_backend": "numpy",
+            "best_feature_map": "rff",
+            "best_f1": 0.81,
+            "leader_margin_f1": 0.04,
+            "recommendation": "Focus the next sweep around numpy/rff.",
+        },
+        "leaderboard": [
+            {
+                "rank": 1,
+                "trial_index": 2,
+                "backend": "numpy",
+                "feature_map": "rff",
+                "f1": 0.81,
+                "accuracy": 0.8,
+                "validation_loss": 0.3,
+            }
+        ],
+        "recommendations": [
+            {
+                "rank": 1,
+                "priority": "medium",
+                "category": "exploit",
+                "title": "Focus the next sweep",
+                "action": "Keep numpy/rff fixed and vary regularization.",
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("trial_inspector", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.7}
+    assert state.latest_trial_inspector_report == report
+    assert state.busy is False
+    assert "Trial inspector" in window["-LOG-"].value
+    assert "Focus the next sweep" in window["-LOG-"].value
 
 
 def test_handle_worker_done_stores_slice_report_without_mutating_model():

@@ -49,6 +49,7 @@ def build_experiment_report(
     neighborhood_hardness_report: dict[str, Any] | None = None,
     dataset_triage_report: dict[str, Any] | None = None,
     experiment_advisor_report: dict[str, Any] | None = None,
+    trial_inspector_report: dict[str, Any] | None = None,
     mps_sweep_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     label_array = np.asarray(labels, dtype=np.int32)
@@ -101,6 +102,7 @@ def build_experiment_report(
         "neighborhood_hardness": neighborhood_hardness_report or None,
         "dataset_triage": dataset_triage_report or None,
         "experiment_advisor": experiment_advisor_report or None,
+        "trial_inspector": trial_inspector_report or None,
         "mps_bond_sweep": mps_sweep_report or None,
         "feature_importances": feature_importances,
         "trial_history": trial_history or [],
@@ -147,6 +149,7 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     neighborhood_hardness = report.get("neighborhood_hardness") or {}
     dataset_triage = report.get("dataset_triage") or {}
     experiment_advisor = report.get("experiment_advisor") or {}
+    trial_inspector = report.get("trial_inspector") or {}
     mps_sweep = report.get("mps_bond_sweep") or {}
     audit = dataset.get("audit") or {}
 
@@ -211,6 +214,37 @@ def format_markdown_report(report: dict[str, Any]) -> str:
             lines.append(
                 f"- {item.get('rank', '-')}. [{item.get('priority', '-')}/{item.get('category', '-')}] "
                 f"{item.get('title', '-')}: {item.get('action', '-')}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Trial Inspector"])
+    if trial_inspector:
+        summary = trial_inspector.get("summary", {})
+        lines.extend(
+            [
+                f"- Valid trials: {trial_inspector.get('valid_trial_count', '-')}/{trial_inspector.get('trial_count', '-')}",
+                f"- Best trial: {summary.get('best_trial_index', '-')}",
+                f"- Best backend/map: {summary.get('best_backend', '-')}/{summary.get('best_feature_map', '-')}",
+                f"- Best F1: {_format_value(summary.get('best_f1', '-'))}",
+                f"- Leader margin F1: {_format_value(summary.get('leader_margin_f1', '-'))}",
+                f"- Recommendation: {summary.get('recommendation') or 'none'}",
+                f"- Warning: {summary.get('warning') or 'none'}",
+            ]
+        )
+        for item in trial_inspector.get("leaderboard", [])[:5]:
+            lines.append(
+                f"- Rank {item.get('rank', '-')}: trial {item.get('trial_index', '-')} "
+                f"{item.get('backend', '-')}/{item.get('feature_map', '-')} "
+                f"F1={_format_value(item.get('f1', '-'))} "
+                f"accuracy={_format_value(item.get('accuracy', '-'))} "
+                f"loss={_format_value(item.get('validation_loss', '-'))}"
+            )
+        for group in trial_inspector.get("groups", [])[:4]:
+            lines.append(
+                f"- Group {group.get('group', '-')}: count={group.get('count', '-')} "
+                f"best_F1={_format_value(group.get('best_f1', '-'))} "
+                f"avg_F1={_format_value(group.get('avg_f1', '-'))}"
             )
     else:
         lines.append("- None")

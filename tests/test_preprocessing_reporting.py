@@ -617,6 +617,39 @@ def test_report_export_json_and_markdown(tmp_path):
                 }
             ],
         },
+        trial_inspector_report={
+            "trial_count": 2,
+            "valid_trial_count": 2,
+            "invalid_trial_count": 0,
+            "summary": {
+                "best_trial_index": 1,
+                "best_backend": "numpy",
+                "best_feature_map": "rff",
+                "best_f1": 0.75,
+                "leader_margin_f1": 0.05,
+                "recommendation": "Run another bounded auto-experiment sweep.",
+                "warning": None,
+            },
+            "leaderboard": [
+                {
+                    "rank": 1,
+                    "trial_index": 1,
+                    "backend": "numpy",
+                    "feature_map": "rff",
+                    "f1": 0.75,
+                    "accuracy": 0.75,
+                    "validation_loss": 0.3,
+                }
+            ],
+            "groups": [
+                {
+                    "group": "numpy/rff",
+                    "count": 2,
+                    "best_f1": 0.75,
+                    "avg_f1": 0.72,
+                }
+            ],
+        },
         mps_sweep_report={
             "input_dim": 2,
             "physical_dim": 4,
@@ -666,6 +699,7 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["neighborhood_hardness"]["summary"]["top_hard_row"] == 2
     assert saved_json["dataset_triage"]["summary"]["readiness_score"] == 71.0
     assert saved_json["experiment_advisor"]["summary"]["recommended_next_step"] == "Promote threshold tuning"
+    assert saved_json["trial_inspector"]["summary"]["best_trial_index"] == 1
     assert saved_json["mps_bond_sweep"]["recommended_bond_dim"] == 8
     assert saved_json["trial_history"][0]["config"]["feature_map"] == "rff"
     assert "Feature 0" in saved_markdown
@@ -715,6 +749,8 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "Readiness score" in saved_markdown
     assert "## Experiment Advisor" in saved_markdown
     assert "Promote threshold tuning" in saved_markdown
+    assert "## Trial Inspector" in saved_markdown
+    assert "Rank 1: trial 1" in saved_markdown
     assert "## OOD Sentinel" in saved_markdown
     assert "Max OOD score" in saved_markdown
     assert "## Bootstrap Stability Diagnostics" in saved_markdown
