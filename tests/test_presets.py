@@ -147,6 +147,7 @@ def test_experimental_builtin_presets_are_available():
         "Selective abstention triage",
         "Conformal coverage lab",
         "Label audit traps",
+        "Error atlas lab",
         "OOD sentinel lab",
         "Bootstrap stability lab",
         "Prototype coverage lab",
@@ -448,6 +449,18 @@ def test_label_audit_traps_preset_has_suspicious_example():
 
     assert metadata["recommended_feature_map"] == "linear"
     assert any(example["name"] == "Suspicious positive-shaped negative" for example in metadata["prediction_examples"])
+
+
+def test_error_atlas_lab_preset_has_asymmetric_error_pockets():
+    metadata = preset_metadata("Error atlas lab")
+    dataset = generate_builtin_preset("Error atlas lab", sample_count=120, seed=10)
+
+    assert metadata["input_dim"] == 4
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == ["margin_score", "support_signal", "false_alarm_pocket", "miss_pocket"]
+    assert any(example["name"] == "False-alarm review pocket" for example in metadata["prediction_examples"])
+    assert int(np.sum(dataset.features[:, 2] > 1.0)) >= 4
+    assert int(np.sum(dataset.features[:, 3] > 1.0)) >= 4
 
 
 def test_proxy_leakage_lab_preset_supports_ablation_diagnostics():

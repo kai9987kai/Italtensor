@@ -74,10 +74,12 @@ def test_promotion_gate_needs_review_for_thin_or_unstable_search():
         trial_history=[{"metrics": {"f1": 0.82}}, {"metrics": {"f1": 0.81}}],
         dataset_triage_report={"summary": {"risk_level": "low", "readiness_score": 88.0, "blocking_issue_count": 0}},
         trial_inspector_report={"valid_trial_count": 2, "summary": {"leader_margin_f1": 0.01}},
+        error_atlas_report={"summary": {"high_confidence_error_count": 1, "error_rate": 0.10}},
     )
 
     assert report["summary"]["verdict"] == "needs_review"
     assert any(item["title"] == "Leaderboard winner is unstable" for item in report["checks"])
+    assert any(item["category"] == "error_analysis" for item in report["checks"])
     summary = format_promotion_gate_summary(report)
     assert summary.startswith("Promotion gate:")
     assert "verdict=needs_review" in summary

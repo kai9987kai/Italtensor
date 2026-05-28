@@ -99,6 +99,27 @@ def test_report_export_json_and_markdown(tmp_path):
             "hard_examples": [],
             "ambiguous_examples": [],
         },
+        error_atlas_report={
+            "sample_count": 4,
+            "summary": {
+                "error_count": 2,
+                "error_rate": 0.5,
+                "high_confidence_error_count": 1,
+                "near_threshold_count": 1,
+                "dominant_error_type": "balanced_errors",
+                "recommendation": "Review high-confidence errors first.",
+            },
+            "confusion": {"false_positive": 1, "false_negative": 1},
+            "high_confidence_errors": [
+                {"row_index": 2, "label": 0, "predicted_label": 1, "probability": 0.95, "loss": 2.9, "margin": 0.55}
+            ],
+            "near_threshold_rows": [
+                {"row_index": 1, "label": 1, "predicted_label": 1, "probability": 0.51, "loss": 0.67, "margin": 0.01}
+            ],
+            "feature_error_shifts": [
+                {"feature_index": 0, "standardized_shift": 1.2, "error_mean": 1.0, "correct_mean": 0.0}
+            ],
+        },
         threshold_report={
             "current_threshold": 0.4,
             "summary": {
@@ -697,6 +718,7 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["uncertainty"]["conformal_calibration_count"] == 8
     assert saved_json["feature_ablation_diagnostics"]["summary"]["top_feature"] == "x1"
     assert saved_json["sample_review"]["summary"]["label_issue_count"] == 1
+    assert saved_json["error_atlas"]["summary"]["error_count"] == 2
     assert saved_json["threshold_diagnostics"]["summary"]["best_f1_threshold"] == 0.3
     assert saved_json["decision_curve_diagnostics"]["summary"]["best_threshold"] == 0.4
     assert saved_json["posthoc_conformal_diagnostics"]["summary"]["recommended_alpha"] == 0.1
@@ -732,6 +754,8 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "Label-proxy flags" in saved_markdown
     assert "## Sample Review" in saved_markdown
     assert "label_issue row 2" in saved_markdown
+    assert "## Error Atlas" in saved_markdown
+    assert "high-confidence error row 2" in saved_markdown
     assert "## Threshold Tradeoffs" in saved_markdown
     assert "Best F1 threshold" in saved_markdown
     assert "## Decision Curve / Utility" in saved_markdown

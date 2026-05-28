@@ -36,6 +36,7 @@ The full `requirements.txt` install includes TensorFlow. The app code still has 
   - Selective abstention triage
   - Conformal coverage lab
   - Label audit traps
+  - Error atlas lab
   - OOD sentinel lab
   - Bootstrap stability lab
   - Prototype coverage lab
@@ -51,6 +52,7 @@ The full `requirements.txt` install includes TensorFlow. The app code still has 
 - Reviewed-label import from scored batch CSV files for closed-loop active learning.
 - Counterfactual recourse: ask what small numeric changes would flip the current prediction.
 - Sample review diagnostics for likely label issues, hard rows, and ambiguous rows.
+- Error atlas diagnostics for false-positive/false-negative buckets, high-confidence errors, near-threshold rows, and error-shifted features.
 - Feature ablation diagnostics for model reliance, proxy-feature risk, and feature-selection sanity checks.
 - Model response diagnostics for partial-dependence-style feature sweeps, sensitivity, and monotonicity checks.
 - Pairwise interaction diagnostics for two-feature partial-dependence surfaces and non-additivity checks.
@@ -208,7 +210,7 @@ Feature maps are used by the NumPy fallback backend. If TensorFlow is installed 
 
 Auto experiments search model settings and feature maps, then rank runs by validation F1, accuracy, and validation loss.
 
-Experiment reports can be exported before training when a dataset is loaded, so model-free audits are easy to archive. Reports include dataset availability, class counts when a dataset is loaded, the selected threshold, fixed-`0.5` baseline metrics, calibration diagnostics, post-hoc calibration repair diagnostics, post-hoc permutation-null diagnostics, population drift diagnostics, adversarial validation diagnostics, chronological holdout diagnostics, conformal-style uncertainty diagnostics, post-hoc conformal prediction-set diagnostics, feature importance, feature ablation diagnostics, model response diagnostics, pairwise interaction diagnostics, subgroup disparity diagnostics, decision-curve utility diagnostics, selective prediction risk-coverage diagnostics, dataset cartography, dataset triage, experiment-advisor recommendations, trial-inspector search summaries, promotion-gate verdicts, neighborhood hardness diagnostics, feature separability diagnostics, prototype audit diagnostics, OOD sentinel rows, bootstrap stability diagnostics, MPS bond sweeps, and trial history for auto experiments.
+Experiment reports can be exported before training when a dataset is loaded, so model-free audits are easy to archive. Reports include dataset availability, class counts when a dataset is loaded, the selected threshold, fixed-`0.5` baseline metrics, calibration diagnostics, post-hoc calibration repair diagnostics, post-hoc permutation-null diagnostics, population drift diagnostics, adversarial validation diagnostics, chronological holdout diagnostics, conformal-style uncertainty diagnostics, post-hoc conformal prediction-set diagnostics, feature importance, feature ablation diagnostics, model response diagnostics, pairwise interaction diagnostics, subgroup disparity diagnostics, decision-curve utility diagnostics, selective prediction risk-coverage diagnostics, error-atlas buckets, dataset cartography, dataset triage, experiment-advisor recommendations, trial-inspector search summaries, promotion-gate verdicts, neighborhood hardness diagnostics, feature separability diagnostics, prototype audit diagnostics, OOD sentinel rows, bootstrap stability diagnostics, MPS bond sweeps, and trial history for auto experiments.
 
 The uncertainty output is intended as an experimental local diagnostic. When each class has enough samples, Italtensor uses a separate calibration split to estimate a split-conformal-style quantile, then evaluates coverage on the validation split. Prediction displays a label set such as `{0}`, `{1}`, `{0,1}`, or `abstain`. Tiny datasets fall back to validation-reused uncertainty and mark that source in model metadata and reports.
 
@@ -229,6 +231,8 @@ After reviewing a scored batch file, fill `italtensor_review_label` with `0` or 
 Counterfactual recourse is available next to `Predict`. It runs a small model-agnostic search over the raw numeric input and reports the nearest found feature changes that cross the current decision threshold. This is useful for local debugging: it shows whether a prediction flips because of one dominant feature, many small feature moves, or no nearby move in the search budget.
 
 Sample review diagnostics run the active model over the loaded dataset and rank rows for manual inspection: confident disagreements that may be label issues, high-loss hard examples, and near-threshold ambiguous rows. The `Label audit traps` preset is built to exercise this workflow. These diagnostics are model-assisted review cues, not automatic relabeling.
+
+Error atlas diagnostics run the active model over the loaded dataset and split rows into true positive, true negative, false positive, and false negative buckets. The report highlights high-confidence errors, near-threshold rows, feature regions where error rows differ from correct rows, and concrete follow-up actions for thresholding, label review, active learning, or feature cleanup. The `Error atlas lab` preset has clean cores plus false-alarm and missed-positive pockets for this workflow.
 
 Feature ablation diagnostics run the active model on the loaded dataset, then neutralize and permute one raw feature at a time. The output ranks features by F1 drop, label-flip rate, probability movement, and label correlation. The `Proxy leakage lab` preset is built for this workflow: it makes a shortcut-like proxy easy to spot without claiming causal proof.
 
@@ -297,6 +301,7 @@ TensorFlow-specific tests skip when TensorFlow is not installed.
 - Post-hoc conformal diagnostics are strongest on held-out or newly reviewed data. If you run them on the same rows used to train the model, treat coverage as a local sanity check rather than a finite-sample guarantee.
 - Selective prediction can hide weak subgroup performance if abstention falls unevenly across groups. Pair it with slice diagnostics when coverage fairness matters.
 - Sample review can surface genuine label mistakes, ambiguous cases, or model blind spots. Treat flagged rows as a review queue, not ground truth.
+- Error atlas uses the loaded labeled rows and active threshold. It is a local error map, not a deployment confusion matrix unless those rows are a representative holdout.
 - Dataset triage is a heuristic prioritizer built from simpler diagnostics. It helps decide what to inspect first, but it is not a formal data-quality certificate.
 - Experiment advisor is a rule-based planner over available evidence. It is intentionally transparent, but it can only recommend from diagnostics already run or metrics already available.
 - Trial inspector summarizes recorded runs; it does not prove the top configuration will generalize. Narrow leaderboard margins still need reruns, cross-validation, or fresh validation rows.
@@ -345,6 +350,7 @@ TensorFlow-specific tests skip when TensorFlow is not installed.
 - Prototype audit uses standardized k-nearest-neighbor neighborhoods, following the same locality principle documented in scikit-learn's [Nearest Neighbors guide](https://scikit-learn.org/stable/modules/neighbors.html). Its prototype/criticism split is inspired by Kim, Khanna, and Koyejo's [Examples are not enough, learn to criticize!](https://experts.illinois.edu/en/publications/examples-are-not-enough-learn-to-criticize-criticism-for-interpre), but the desktop version stays dependency-free and uses transparent local label-neighborhood scores instead of MMD optimization.
 - Reviewed-label import closes the pool-based active-learning loop: score an unlabeled pool, label the most useful rows, merge them into the training set, and retrain. This mirrors human-in-the-loop active-learning workflows summarized in recent HITL surveys such as [Human-in-the-loop machine learning: a state of the art](https://link.springer.com/article/10.1007/s10462-022-10246-w).
 - Sample review is inspired by confident-learning style label-audit workflows such as Northcutt, Jiang, and Chuang's [Confident Learning](https://arxiv.org/abs/1911.00068) and dataset cartography ideas that use model behavior to find hard or ambiguous examples ([Dataset Cartography](https://arxiv.org/abs/2009.10795)). Italtensor uses a lightweight probability/loss heuristic rather than a full Cleanlab implementation.
+- Error atlas follows classic error-analysis and model-card practice: separate false positives from false negatives, inspect confident mistakes first, and connect error pockets to thresholding, active learning, or feature-quality actions before promotion.
 - Feature ablation/reliance diagnostics follow model-agnostic inspection ideas in scikit-learn's [permutation importance](https://scikit-learn.org/stable/modules/permutation_importance.html) guidance and Fisher, Rudin, and Dominici's model-reliance framing ([arXiv](https://arxiv.org/abs/1801.01489)).
 - Model response diagnostics follow partial-dependence and ICE-style inspection described in scikit-learn's [PDP/ICE documentation](https://scikit-learn.org/stable/modules/partial_dependence.html), with the usual caution from accumulated-local-effects work that correlated features make naive PDP grids less realistic.
 - Pairwise interaction diagnostics use a lightweight version of the partial-dependence interaction idea associated with Friedman's H-statistic: compare a joint two-feature response surface with additive one-feature effects and rank large residual surfaces.

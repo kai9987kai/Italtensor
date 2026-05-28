@@ -78,11 +78,12 @@ def run_error_atlas(
     near_threshold_rows = _rank_rows(row_items, np.where(near_threshold_mask)[0], threshold=threshold, limit=max_items, near=True)
     feature_shifts = _feature_error_shifts(x, error_mask, correct_mask)
     error_count = int(np.sum(error_mask))
+    high_confidence_error_count = int(np.sum(high_conf_error_mask))
     dominant_error_type = _dominant_error_type(confusion)
     recommendations = _recommendations(
         confusion=confusion,
         error_count=error_count,
-        high_confidence_error_count=len(high_confidence_errors),
+        high_confidence_error_count=high_confidence_error_count,
         near_threshold_count=int(np.sum(near_threshold_mask)),
         feature_shifts=feature_shifts,
     )
@@ -95,7 +96,7 @@ def run_error_atlas(
         "summary": {
             "error_count": error_count,
             "error_rate": float(error_count / x.shape[0]),
-            "high_confidence_error_count": len(high_confidence_errors),
+            "high_confidence_error_count": high_confidence_error_count,
             "near_threshold_count": int(np.sum(near_threshold_mask)),
             "mean_loss": float(np.mean(losses)),
             "max_loss": float(np.max(losses)),
