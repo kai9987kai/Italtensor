@@ -37,6 +37,10 @@ def run_error_atlas(
 
     prepared = preprocessor.transform(x) if preprocessor is not None else x
     probabilities = predict_probability(model, prepared).reshape(-1).astype(np.float64)
+    if probabilities.shape[0] != x.shape[0]:
+        raise ValueError("Model returned a different number of probabilities than input rows.")
+    if not np.all(np.isfinite(probabilities)):
+        raise ValueError("Model probabilities must be finite.")
     predicted = (probabilities >= threshold).astype(np.int32)
     losses = _binary_log_loss(y, probabilities)
     margins = np.abs(probabilities - threshold)

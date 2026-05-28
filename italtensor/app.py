@@ -52,6 +52,7 @@ from .presets import generate_builtin_preset, load_preset_file, preset_labels, p
 from .reporting import build_experiment_report, export_experiment_report
 from .registry import ModelSlot
 from .sample_review import format_sample_review_summary, run_sample_review
+from .error_atlas import format_error_atlas_summary, run_error_atlas
 from .scoring import load_reviewed_prediction_csv, score_prediction_csv
 from .selective_risk import format_selective_risk_summary, run_selective_risk_diagnostics
 from .subgroup_disparity import format_subgroup_disparity_summary, run_subgroup_disparity_diagnostics
@@ -102,6 +103,7 @@ class AppState:
     latest_conformal_set_report: dict[str, Any] | None = None
     latest_selective_risk_report: dict[str, Any] | None = None
     latest_sample_review_report: dict[str, Any] | None = None
+    latest_error_atlas_report: dict[str, Any] | None = None
     latest_threshold_report: dict[str, Any] | None = None
     latest_calibration_repair_report: dict[str, Any] | None = None
     latest_model_response_report: dict[str, Any] | None = None
@@ -216,6 +218,8 @@ def run_app() -> None:
                 _start_threshold_diagnostics(window, state)
             elif event == "-SAMPLE_REVIEW-":
                 _start_sample_review(window, state)
+            elif event == "-ERROR_ATLAS-":
+                _start_error_atlas(window, state)
             elif event == "-PERMUTATION_NULL-":
                 _start_permutation_null(window, state)
             elif event == "-CARTOGRAPHY-":
@@ -559,6 +563,7 @@ def _layout(sg):
         ],
         [
             sg.Button("Sample review", key="-SAMPLE_REVIEW-", expand_x=True),
+            sg.Button("Error atlas", key="-ERROR_ATLAS-", expand_x=True),
             sg.Button("Permutation null", key="-PERMUTATION_NULL-", expand_x=True),
             sg.Button("Dataset cartography", key="-CARTOGRAPHY-", expand_x=True),
         ],
@@ -946,6 +951,25 @@ def _start_sample_review(window, state: AppState) -> None:
     _start_worker(window, state, "Running sample review...", task)
 
 
+def _start_error_atlas(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    if state.model is None:
+        raise ValueError("Train or load a model before running the error atlas.")
+    dataset = validate_dataset(state.features, state.labels, min_samples=1, require_two_classes=False)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_error_atlas(
+            state.model,
+            dataset.features,
+            dataset.labels,
+            preprocessor=state.preprocessor,
+            threshold=state.latest_threshold,
+        )
+        return "error_atlas", report
+
+    _start_worker(window, state, "Building error atlas...", task)
+
+
 def _start_population_drift(window, state: AppState) -> None:
     _ensure_not_busy(state)
     dataset = validate_dataset(state.features, state.labels, min_samples=6, require_two_classes=False)
@@ -1109,6 +1133,7 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         calibration_repair_report=state.latest_calibration_repair_report,
         selective_risk_report=state.latest_selective_risk_report,
         sample_review_report=state.latest_sample_review_report,
+        error_atlas_report=state.latest_error_atlas_report,
         threshold_report=state.latest_threshold_report,
         model_response_report=state.latest_model_response_report,
         pairwise_interaction_report=state.latest_pairwise_interaction_report,
@@ -1172,6 +1197,7 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     calibration_repair_report = metadata.get("posthoc_calibration_repair_diagnostics")
     selective_risk_report = metadata.get("selective_prediction_diagnostics")
     sample_review_report = metadata.get("sample_review")
+    error_atlas_report = metadata.get("error_atlas")
     threshold_report = metadata.get("threshold_diagnostics")
     model_response_report = metadata.get("model_response_diagnostics")
     pairwise_interaction_report = metadata.get("pairwise_interaction_diagnostics")
@@ -1201,6 +1227,7 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     )
     state.latest_selective_risk_report = selective_risk_report if isinstance(selective_risk_report, dict) else None
     state.latest_sample_review_report = sample_review_report if isinstance(sample_review_report, dict) else None
+    state.latest_error_atlas_report = error_atlas_report if isinstance(error_atlas_report, dict) else None
     state.latest_threshold_report = threshold_report if isinstance(threshold_report, dict) else None
     state.latest_model_response_report = model_response_report if isinstance(model_response_report, dict) else None
     state.latest_pairwise_interaction_report = (
@@ -1279,6 +1306,7 @@ def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
         calibration_repair_report=state.latest_calibration_repair_report,
         selective_risk_report=state.latest_selective_risk_report,
         sample_review_report=state.latest_sample_review_report,
+        error_atlas_report=state.latest_error_atlas_report,
         threshold_report=state.latest_threshold_report,
         model_response_report=state.latest_model_response_report,
         pairwise_interaction_report=state.latest_pairwise_interaction_report,
@@ -1389,6 +1417,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_calibration_repair_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
+        state.latest_error_atlas_report = None
         state.latest_threshold_report = None
         state.latest_model_response_report = None
         state.latest_pairwise_interaction_report = None
@@ -1428,6 +1457,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_calibration_repair_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
+        state.latest_error_atlas_report = None
         state.latest_threshold_report = None
         state.latest_model_response_report = None
         state.latest_pairwise_interaction_report = None
@@ -1491,6 +1521,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_calibration_repair_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
+        state.latest_error_atlas_report = None
         state.latest_threshold_report = None
         state.latest_model_response_report = None
         state.latest_pairwise_interaction_report = None
@@ -1849,6 +1880,30 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                     f"label={int(item['label'])}, pred={int(item['predicted_label'])}, "
                     f"p={float(item['probability']):.4f}, loss={float(item['loss']):.4f}",
                 )
+    elif kind == "error_atlas":
+        state.latest_error_atlas_report = result
+        _log(window, format_error_atlas_summary(result))
+        for label, items in (
+            ("high-confidence error", result.get("high_confidence_errors", [])),
+            ("near-threshold", result.get("near_threshold_rows", [])),
+            ("false positive", result.get("buckets", {}).get("false_positive", [])),
+            ("false negative", result.get("buckets", {}).get("false_negative", [])),
+        ):
+            for item in items[:3]:
+                _log(
+                    window,
+                    f"  {label} row={int(item['row_index'])}: "
+                    f"label={int(item['label'])}, pred={int(item['predicted_label'])}, "
+                    f"p={float(item['probability']):.4f}, loss={float(item['loss']):.4f}, "
+                    f"margin={float(item['margin']):.4f}",
+                )
+        for item in result.get("feature_error_shifts", [])[:3]:
+            _log(
+                window,
+                f"  error-shift x{int(item['feature_index']) + 1}: "
+                f"shift={float(item['standardized_shift']):.4f}, "
+                f"error_mean={float(item['error_mean']):.4f}, correct_mean={float(item['correct_mean']):.4f}",
+            )
     elif kind == "permutation_null":
         state.latest_permutation_null_report = result
         _log(window, format_permutation_null_summary(result))
@@ -1941,6 +1996,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_calibration_repair_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
+        state.latest_error_atlas_report = None
         state.latest_threshold_report = None
         state.latest_model_response_report = None
         state.latest_pairwise_interaction_report = None
@@ -1988,6 +2044,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_calibration_repair_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
+        state.latest_error_atlas_report = None
         state.latest_threshold_report = None
         state.latest_model_response_report = None
         state.latest_pairwise_interaction_report = None
@@ -2103,6 +2160,7 @@ def _invalidate_model_artifacts(state: AppState) -> None:
     state.latest_calibration_repair_report = None
     state.latest_selective_risk_report = None
     state.latest_sample_review_report = None
+    state.latest_error_atlas_report = None
     state.latest_threshold_report = None
     state.latest_model_response_report = None
     state.latest_pairwise_interaction_report = None
@@ -2183,6 +2241,7 @@ def _set_busy(window, busy: bool) -> None:
         "-CALIBRATION_REPAIR-",
         "-SELECTIVE_RISK-",
         "-SAMPLE_REVIEW-",
+        "-ERROR_ATLAS-",
         "-PERMUTATION_NULL-",
         "-CARTOGRAPHY-",
         "-DATASET_TRIAGE-",
@@ -2512,6 +2571,7 @@ def _activate_model_slot(window, state: AppState, values: dict[str, Any]) -> Non
     state.latest_calibration_repair_report = None
     state.latest_selective_risk_report = None
     state.latest_sample_review_report = None
+    state.latest_error_atlas_report = None
     state.latest_threshold_report = None
     state.latest_model_response_report = None
     state.latest_pairwise_interaction_report = None
@@ -2621,6 +2681,7 @@ def _load_registry(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_calibration_repair_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
+        state.latest_error_atlas_report = None
         state.latest_threshold_report = None
         state.latest_model_response_report = None
         state.latest_pairwise_interaction_report = None
@@ -2665,6 +2726,7 @@ def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_calibration_repair_report = None
     state.latest_selective_risk_report = None
     state.latest_sample_review_report = None
+    state.latest_error_atlas_report = None
     state.latest_threshold_report = None
     state.latest_model_response_report = None
     state.latest_pairwise_interaction_report = None
@@ -2747,6 +2809,7 @@ def _build_stacked_ensemble(window, state: AppState, values: dict[str, Any]) -> 
     state.latest_calibration_repair_report = None
     state.latest_selective_risk_report = None
     state.latest_sample_review_report = None
+    state.latest_error_atlas_report = None
     state.latest_threshold_report = None
     state.latest_model_response_report = None
     state.latest_pairwise_interaction_report = None
@@ -2963,6 +3026,7 @@ def _start_promotion_gate(window, state: AppState) -> None:
             dataset_triage_report=state.latest_dataset_triage_report,
             experiment_advisor_report=state.latest_experiment_advisor_report,
             trial_inspector_report=state.latest_trial_inspector_report,
+            error_atlas_report=state.latest_error_atlas_report,
             threshold_report=state.latest_threshold_report,
             calibration_repair_report=state.latest_calibration_repair_report,
             stress_report=state.latest_stress_report,
@@ -3157,6 +3221,7 @@ def _merge_slots(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_calibration_repair_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
+        state.latest_error_atlas_report = None
         state.latest_threshold_report = None
         state.latest_model_response_report = None
         state.latest_pairwise_interaction_report = None

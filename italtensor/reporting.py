@@ -31,6 +31,7 @@ def build_experiment_report(
     calibration_repair_report: dict[str, Any] | None = None,
     selective_risk_report: dict[str, Any] | None = None,
     sample_review_report: dict[str, Any] | None = None,
+    error_atlas_report: dict[str, Any] | None = None,
     threshold_report: dict[str, Any] | None = None,
     model_response_report: dict[str, Any] | None = None,
     pairwise_interaction_report: dict[str, Any] | None = None,
@@ -85,6 +86,7 @@ def build_experiment_report(
         "posthoc_calibration_repair_diagnostics": calibration_repair_report or None,
         "selective_prediction_diagnostics": selective_risk_report or None,
         "sample_review": sample_review_report or None,
+        "error_atlas": error_atlas_report or None,
         "threshold_diagnostics": threshold_report or None,
         "model_response_diagnostics": model_response_report or None,
         "pairwise_interaction_diagnostics": pairwise_interaction_report or None,
@@ -133,6 +135,7 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     decision_curve = report.get("decision_curve_diagnostics") or {}
     selective_risk = report.get("selective_prediction_diagnostics") or {}
     sample_review = report.get("sample_review") or {}
+    error_atlas = report.get("error_atlas") or {}
     threshold_diagnostics = report.get("threshold_diagnostics") or {}
     model_response = report.get("model_response_diagnostics") or {}
     pairwise_interactions = report.get("pairwise_interaction_diagnostics") or {}
@@ -506,6 +509,44 @@ def format_markdown_report(report: dict[str, Any]) -> str:
                     f"p={_format_value(item.get('probability', '-'))}, "
                     f"loss={_format_value(item.get('loss', '-'))}"
                 )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Error Atlas"])
+    if error_atlas:
+        summary = error_atlas.get("summary", {})
+        confusion = error_atlas.get("confusion", {})
+        lines.extend(
+            [
+                f"- Errors: {summary.get('error_count', '-')}/{error_atlas.get('sample_count', '-')}",
+                f"- Error rate: {_format_value(summary.get('error_rate', '-'))}",
+                f"- False positives: {confusion.get('false_positive', '-')}",
+                f"- False negatives: {confusion.get('false_negative', '-')}",
+                f"- High-confidence errors: {summary.get('high_confidence_error_count', '-')}",
+                f"- Near-threshold rows: {summary.get('near_threshold_count', '-')}",
+                f"- Dominant error type: {summary.get('dominant_error_type', '-')}",
+                f"- Recommendation: {summary.get('recommendation') or 'none'}",
+            ]
+        )
+        for label, rows in (
+            ("high-confidence error", error_atlas.get("high_confidence_errors", [])),
+            ("near-threshold", error_atlas.get("near_threshold_rows", [])),
+        ):
+            for item in rows[:5]:
+                lines.append(
+                    f"- {label} row {item.get('row_index')}: "
+                    f"label={item.get('label')}, pred={item.get('predicted_label')}, "
+                    f"p={_format_value(item.get('probability', '-'))}, "
+                    f"loss={_format_value(item.get('loss', '-'))}, "
+                    f"margin={_format_value(item.get('margin', '-'))}"
+                )
+        for item in error_atlas.get("feature_error_shifts", [])[:5]:
+            lines.append(
+                f"- Error-shift x{int(item.get('feature_index', 0)) + 1}: "
+                f"shift={_format_value(item.get('standardized_shift', '-'))}, "
+                f"error_mean={_format_value(item.get('error_mean', '-'))}, "
+                f"correct_mean={_format_value(item.get('correct_mean', '-'))}"
+            )
     else:
         lines.append("- None")
 

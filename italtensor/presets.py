@@ -429,6 +429,22 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="error_atlas_lab",
+        name="Error atlas lab",
+        description="Clear cores, boundary rows, and asymmetric error pockets for row-level confusion analysis.",
+        default_samples=200,
+        input_dim=4,
+        recommended_feature_map="linear",
+        feature_names=("margin_score", "support_signal", "false_alarm_pocket", "miss_pocket"),
+        training_defaults={"epochs": 70, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Likely true negative", "features": [-1.1, -0.4, 0.0, 0.0], "expected_label": 0},
+            {"name": "False-alarm review pocket", "features": [0.3, 0.1, 1.4, 0.0], "expected_label": 0},
+            {"name": "Missed-positive review pocket", "features": [-0.3, -0.1, 0.0, 1.4], "expected_label": 1},
+            {"name": "Likely true positive", "features": [1.1, 0.4, 0.0, 0.0], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
         key="ood_sentinel_lab",
         name="OOD sentinel lab",
         description="Mostly ordinary rows plus leverage and artifact rows for outlier screening.",
@@ -663,6 +679,8 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _conformal_coverage_lab(total, rng)
     elif preset.key == "label_audit_traps":
         features, labels = _label_audit_traps(total, rng)
+    elif preset.key == "error_atlas_lab":
+        features, labels = _error_atlas_lab(total, rng)
     elif preset.key == "ood_sentinel_lab":
         features, labels = _ood_sentinel_lab(total, rng)
     elif preset.key == "bootstrap_stability_lab":
@@ -1285,6 +1303,43 @@ def _label_audit_traps(total: int, rng: np.random.Generator) -> tuple[np.ndarray
     labels[chosen_negatives] = 1
     labels[chosen_positives] = 0
     return features.astype(np.float32), labels.astype(np.int32)
+
+
+def _error_atlas_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    labels = _balanced_labels(total)
+    negative_count = int(np.sum(labels == 0))
+    positive_count = int(np.sum(labels == 1))
+    pocket_count = max(6, total // 10)
+    fp_pocket_count = min(negative_count - 4, pocket_count // 2)
+    fn_pocket_count = min(positive_count - 4, pocket_count - fp_pocket_count)
+    boundary_count = max(8, total // 5)
+    boundary_negative = min(negative_count - fp_pocket_count - 2, boundary_count // 2)
+    boundary_positive = min(positive_count - fn_pocket_count - 2, boundary_count - boundary_negative)
+    core_negative = negative_count - fp_pocket_count - boundary_negative
+    core_positive = positive_count - fn_pocket_count - boundary_positive
+
+    negative_core = rng.normal(loc=(-1.15, -0.45, 0.0, 0.0), scale=(0.25, 0.32, 0.12, 0.12), size=(core_negative, 4))
+    positive_core = rng.normal(loc=(1.15, 0.45, 0.0, 0.0), scale=(0.25, 0.32, 0.12, 0.12), size=(core_positive, 4))
+    negative_boundary = rng.normal(loc=(-0.12, -0.05, 0.0, 0.0), scale=(0.22, 0.28, 0.12, 0.12), size=(boundary_negative, 4))
+    positive_boundary = rng.normal(loc=(0.12, 0.05, 0.0, 0.0), scale=(0.22, 0.28, 0.12, 0.12), size=(boundary_positive, 4))
+    false_alarm_pocket = rng.normal(loc=(0.30, 0.10, 1.4, 0.0), scale=(0.16, 0.18, 0.14, 0.10), size=(fp_pocket_count, 4))
+    missed_positive_pocket = rng.normal(loc=(-0.30, -0.10, 0.0, 1.4), scale=(0.16, 0.18, 0.10, 0.14), size=(fn_pocket_count, 4))
+    features = np.vstack(
+        [
+            negative_core,
+            negative_boundary,
+            false_alarm_pocket,
+            positive_core,
+            positive_boundary,
+            missed_positive_pocket,
+        ]
+    ).astype(np.float32)
+    output_labels = np.asarray(
+        [0] * (core_negative + boundary_negative + fp_pocket_count)
+        + [1] * (core_positive + boundary_positive + fn_pocket_count),
+        dtype=np.int32,
+    )
+    return _shuffle(features, output_labels, rng)
 
 
 def _ood_sentinel_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:

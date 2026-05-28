@@ -18,6 +18,7 @@ def build_promotion_gate(
     dataset_triage_report: dict[str, Any] | None = None,
     experiment_advisor_report: dict[str, Any] | None = None,
     trial_inspector_report: dict[str, Any] | None = None,
+    error_atlas_report: dict[str, Any] | None = None,
     threshold_report: dict[str, Any] | None = None,
     calibration_repair_report: dict[str, Any] | None = None,
     stress_report: dict[str, Any] | None = None,
@@ -197,6 +198,7 @@ def build_promotion_gate(
         add,
         calibration_repair_report=calibration_repair_report,
         stress_report=stress_report,
+        error_atlas_report=error_atlas_report,
         permutation_null_report=permutation_null_report,
         population_drift_report=population_drift_report,
         adversarial_validation_report=adversarial_validation_report,
@@ -352,6 +354,7 @@ def _add_repair_and_robustness_checks(
     *,
     calibration_repair_report: dict[str, Any] | None,
     stress_report: dict[str, Any] | None,
+    error_atlas_report: dict[str, Any] | None,
     permutation_null_report: dict[str, Any] | None,
     population_drift_report: dict[str, Any] | None,
     adversarial_validation_report: dict[str, Any] | None,
@@ -394,6 +397,30 @@ def _add_repair_and_robustness_checks(
                 evidence=f"stress_f1_ratio={ratio:.3f}.",
                 action="Document the worst perturbation and add monitoring or feature validation.",
                 penalty=8.0,
+            )
+    if error_atlas_report:
+        summary = error_atlas_report.get("summary", {})
+        high_confidence_errors = int(summary.get("high_confidence_error_count", 0) or 0)
+        error_rate = float(summary.get("error_rate", 0.0) or 0.0)
+        if high_confidence_errors:
+            add(
+                severity="caution",
+                category="error_analysis",
+                title="High-confidence errors need review",
+                status="review",
+                evidence=f"Error atlas found {high_confidence_errors} high-confidence error row(s).",
+                action="Review high-confidence false positives/negatives before promotion.",
+                penalty=8.0,
+            )
+        elif error_rate >= 0.25:
+            add(
+                severity="caution",
+                category="error_analysis",
+                title="Error atlas shows a high local error rate",
+                status="review",
+                evidence=f"Loaded-dataset error rate is {error_rate:.3f}.",
+                action="Inspect false-positive and false-negative buckets before promotion.",
+                penalty=7.0,
             )
     if permutation_null_report:
         verdict = str((permutation_null_report.get("summary") or {}).get("verdict", ""))
