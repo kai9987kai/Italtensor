@@ -246,6 +246,8 @@ def run_app() -> None:
                 _run_shap_analysis(window, state, values)
             elif event == "-DECISION_BOUNDARY-":
                 _run_decision_boundary(window, state, values)
+            elif event == "-CURVES_ANALYSIS-":
+                _run_curves_analysis(window, state)
             elif event == "-EXPORT_TRIALS-":
                 _export_trials(window, state, values)
             elif event == "-SLOT_SIMILARITY-":
@@ -379,6 +381,8 @@ def _layout(sg):
             ),
         ],
         [
+            sg.Text("LR"),
+            sg.Input("0.001", key="-LEARNING_RATE-", size=(6, 1)),
             sg.Text("LR Sched"),
             sg.Combo(["constant", "cosine", "step_decay"], default_value="constant", readonly=True, key="-LR_SCHEDULE-", size=(10, 1)),
             sg.Text("Grad Clip"),
@@ -407,6 +411,18 @@ def _layout(sg):
             sg.Text("phys"),
             sg.Input("4", key="-MPS_PHYS-", size=(4, 1)),
         ],
+        [sg.HorizontalSeparator()],
+        [sg.Text("AutoML Hyperparameter Optimization", font=("Segoe UI", 10, "bold"))],
+        [
+            sg.Checkbox("Tune LR", default=True, key="-AUTOML_TUNE_LR-"),
+            sg.Checkbox("Tune L1/Clip", default=True, key="-AUTOML_TUNE_L1-"),
+            sg.Checkbox("Tune SMOTE", default=False, key="-AUTOML_TUNE_SMOTE-"),
+            sg.Checkbox("Tune Feat Sel", default=False, key="-AUTOML_TUNE_FEAT-"),
+            sg.Text("AutoML Trials"),
+            sg.Input("10", key="-AUTOML_TRIALS-", size=(4, 1)),
+            sg.Button("Auto-Tune Hyperparameters", key="-AUTO_TUNE-", button_color=("white", "#2A5C91")),
+        ],
+        [sg.HorizontalSeparator()],
         [sg.Text("Trial CSV")],
         [
             sg.Input(key="-TRIAL_CSV_PATH-", expand_x=True),
@@ -503,6 +519,7 @@ def _layout(sg):
         [
             sg.Button("SHAP Local Analysis", key="-SHAP_ANALYSIS-", tooltip="Analyze local feature contributions of prediction vector"),
             sg.Button("Visualize Decision Boundary", key="-DECISION_BOUNDARY-", tooltip="Draw PCA-projected 2D decision boundary map of active model"),
+            sg.Button("Interactive ROC/PR Curves", key="-CURVES_ANALYSIS-", tooltip="Generate and render beautiful ASCII ROC and Precision-Recall evaluation curves"),
         ],
         [sg.HorizontalSeparator()],
         [sg.Text("Automated Model & Dataset Diagnostics")],
@@ -982,6 +999,10 @@ def _start_permutation_null(window, state: AppState) -> None:
 
 
 def _config_from_values(values: dict[str, Any]) -> ModelConfig:
+    try:
+        learning_rate = float(values.get("-LEARNING_RATE-", "0.001").strip())
+    except ValueError:
+        raise ValueError("Learning rate must be a float.")
     l1_raw = values.get("-L1_PENALTY-", "0.0").strip()
     l1_penalty = float(l1_raw) if l1_raw else 0.0
     feat_k_raw = values.get("-FEATURE_K-", "").strip()
@@ -1007,7 +1028,7 @@ def _config_from_values(values: dict[str, Any]) -> ModelConfig:
         raise ValueError("MPS physical dimension must be at least 2.")
     return ModelConfig(
         hidden_layers=(32,),
-        learning_rate=0.001,
+        learning_rate=learning_rate,
         batch_size=_positive_int(values["-BATCH_SIZE-"], "batch size"),
         max_epochs=_positive_int(values["-EPOCHS-"], "epochs"),
         feature_map=values["-FEATURE_MAP-"],
@@ -3123,3 +3144,61 @@ def _merge_slots(window, state: AppState, values: dict[str, Any]) -> None:
 
     except Exception as exc:
         _log(window, f"Merge error: {exc}")
+
+
+def _start_auto_tune(window, state: AppState, values: dict[str, Any]) -> None:
+    _ensure_not_busy(state)
+    if not state.features:
+        raise ValueError("Load a dataset before running AutoML.")
+    dataset = validate_dataset(state.features, state.labels, min_samples=4, require_two_classes=True)
+    config = _config_from_values(values)
+
+    n_trials = _positive_int(values.get("-AUTOML_TRIALS-", "10"), "AutoML trials")
+    tune_lr = values.get("-AUTOML_TUNE_LR-", True)
+    tune_l1 = values.get("-AUTOML_TUNE_L1-", True)
+    tune_smote = values.get("-AUTOML_TUNE_SMOTE-", False)
+    tune_features = values.get("-AUTOML_TUNE_FEAT-", False)
+    use_cv = values.get("-USE_CV-", False)
+
+    from .automl import run_auto_tune
+
+    def task() -> tuple[str, tuple[dict[str, Any], ExperimentResult]]:
+        best_params, best_result = run_auto_tune(
+            dataset.features,
+            dataset.labels,
+            n_trials=n_trials,
+            base_config=config,
+            use_cv=use_cv,
+            tune_lr=tune_lr,
+            tune_l1=tune_l1,
+            tune_smote=tune_smote,
+            tune_features=tune_features,
+            logger=lambda msg: window.write_event_value("-LOG_MSG-", msg),
+        )
+        return "automl", (best_params, best_result)
+
+    _start_worker(window, state, f"Running AutoML hyperparameter tuning ({n_trials} trials)...", task)
+
+
+def _run_curves_analysis(window, state: AppState) -> None:
+    if state.model is None:
+        _log(window, "No active model. Train or load a model first.")
+        return
+    if not state.features:
+        _log(window, "No dataset loaded.")
+        return
+    try:
+        import numpy as np
+        from .curves import render_evaluation_curves
+        from .modeling import predict_probability
+
+        x = np.array(state.features, dtype=np.float32)
+        y = np.array(state.labels, dtype=np.int32)
+
+        prepared = state.preprocessor.transform(x) if state.preprocessor is not None else x
+        probs = predict_probability(state.model, prepared)
+
+        curves_ascii = render_evaluation_curves(y, probs)
+        _log(window, "\n" + curves_ascii)
+    except Exception as exc:
+        _log(window, f"Curves visualization error: {exc}")

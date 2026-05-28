@@ -102,10 +102,10 @@ class TPEOptimizer:
 
         # 3. For each hyperparameter, build the estimator and choose the best candidate
         for name, (space_type, bounds) in self.space.space.items():
-            good_vals = np.array([t["params"][name] for t in good_trials], dtype=np.float32)
-            bad_vals = np.array([t["params"][name] for t in bad_trials], dtype=np.float32)
-
             if space_type in ("continuous_log", "continuous_uniform"):
+                good_vals = np.array([t["params"][name] for t in good_trials], dtype=np.float32)
+                bad_vals = np.array([t["params"][name] for t in bad_trials], dtype=np.float32)
+
                 # Work in log-space for log-uniform
                 is_log = space_type == "continuous_log"
                 if is_log:
@@ -145,6 +145,8 @@ class TPEOptimizer:
                     suggested_params[name] = float(best_cand)
 
             elif space_type == "discrete_choice":
+                good_vals = [t["params"][name] for t in good_trials]
+                bad_vals = [t["params"][name] for t in bad_trials]
                 # For discrete choices, compute frequencies with Laplace smoothing
                 # options is the list of bounds
                 options = bounds
