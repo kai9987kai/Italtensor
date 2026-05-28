@@ -256,6 +256,8 @@ def run_app() -> None:
                 _start_train_once(window, state, values)
             elif event == "-AUTO_EXPERIMENTS-":
                 _start_auto_experiments(window, state, values)
+            elif event == "-AUTO_TUNE-":
+                _start_auto_tune(window, state, values)
             elif event == "-SAVE_MODEL-":
                 _save_model(window, state, values)
             elif event == "-LOAD_MODEL-":
@@ -297,6 +299,8 @@ def run_app() -> None:
             elif event == "-TRIAL_DONE-":
                 index, total, result = values[event]
                 _log(window, f"Trial {index}/{total}: {_format_config(result.config)} | {_format_metrics(result.metrics)}")
+            elif event == "-LOG_MSG-":
+                _log(window, values[event])
             elif event == "-WORKER_DONE-":
                 _handle_worker_done(window, state, values[event])
             elif event == "-WORKER_ERROR-":
@@ -1407,6 +1411,70 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         _log(window, _format_uncertainty(training_result.uncertainty))
         _log(window, _format_cv_summary(training_result.metrics))
         _log(window, _format_importances(training_result.feature_importances))
+    elif kind == "automl":
+        best_params, best_result = result
+        state.model = best_result.model
+        state.latest_config = best_result.config
+        state.latest_metrics = best_result.metrics
+        state.latest_threshold = best_result.threshold
+        state.preprocessor = best_result.preprocessor
+        state.feature_importances = best_result.feature_importances
+        state.trial_history = [_summarize_trial(best_result)]
+        state.uncertainty_metadata = best_result.uncertainty
+
+        state.latest_ablation_report = None
+        state.latest_decision_curve_report = None
+        state.latest_conformal_set_report = None
+        state.latest_calibration_repair_report = None
+        state.latest_selective_risk_report = None
+        state.latest_sample_review_report = None
+        state.latest_threshold_report = None
+        state.latest_model_response_report = None
+        state.latest_pairwise_interaction_report = None
+        state.latest_slice_report = None
+        state.latest_subgroup_disparity_report = None
+        state.latest_stress_report = None
+        state.latest_permutation_null_report = None
+        state.latest_population_drift_report = None
+        state.latest_adversarial_validation_report = None
+        state.latest_chronological_holdout_report = None
+        state.latest_cartography_report = None
+        state.latest_ood_sentinel_report = None
+        state.latest_bootstrap_stability_report = None
+        state.latest_experiment_advisor_report = None
+        state.latest_trial_inspector_report = None
+        state.latest_promotion_gate_report = None
+        state.latest_mps_sweep_report = None
+
+        _log(window, f"AutoML Tuning Complete! Best validation F1: {best_result.metrics.get('f1', 0.0):.4f}")
+        _log(window, _format_calibration(best_result.metrics))
+        _log(window, _format_uncertainty(best_result.uncertainty))
+        _log(window, _format_importances(best_result.feature_importances))
+
+        try:
+            window["-LEARNING_RATE-"].update(f"{best_params['learning_rate']:.6f}")
+            window["-L1_PENALTY-"].update(f"{best_params['l1_penalty']:.6f}")
+            window["-GRADIENT_CLIP-"].update(f"{best_params['gradient_clip']:.3f}")
+            window["-EPOCHS-"].update(str(best_params["max_epochs"]))
+            window["-BATCH_SIZE-"].update(str(best_params["batch_size"]))
+            window["-FEATURE_K-"].update("" if best_params["feature_selection_k"] is None else str(best_params["feature_selection_k"]))
+            window["-USE_SMOTE-"].update(best_params["use_smote"])
+            window["-SMOTE_K-"].update(str(best_params["smote_k"]))
+        except Exception as exc:
+            _log(window, f"Warning: Failed to update some GUI fields: {exc}")
+
+        slot = ModelSlot(
+            model=best_result.model,
+            config=best_result.config,
+            metrics=best_result.metrics.copy(),
+            preprocessor=best_result.preprocessor,
+            threshold=best_result.threshold,
+            name=f"AutoML Best (F1: {best_result.metrics.get('f1', 0.0):.4f})",
+        )
+        state.model_slots.append(slot)
+        state.active_slot_index = len(state.model_slots) - 1
+        _update_slots_listbox(window, state)
+        _log(window, "Automatically stored optimized AutoML model in Slot Registry as 'AutoML Best'.")
     elif kind == "experiments":
         best = select_best_result(result)
         state.model = best.model
