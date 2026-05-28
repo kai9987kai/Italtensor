@@ -599,6 +599,24 @@ def test_report_export_json_and_markdown(tmp_path):
                 ],
             },
         },
+        experiment_advisor_report={
+            "summary": {
+                "recommendation_count": 1,
+                "top_priority": "high",
+                "top_category": "thresholding",
+                "recommended_next_step": "Promote threshold tuning",
+                "needs_training": False,
+            },
+            "recommendations": [
+                {
+                    "rank": 1,
+                    "priority": "high",
+                    "category": "thresholding",
+                    "title": "Promote threshold tuning",
+                    "action": "Run Threshold tradeoff and Decision curve.",
+                }
+            ],
+        },
         mps_sweep_report={
             "input_dim": 2,
             "physical_dim": 4,
@@ -647,6 +665,7 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["feature_separability"]["summary"]["top_feature"] == 1
     assert saved_json["neighborhood_hardness"]["summary"]["top_hard_row"] == 2
     assert saved_json["dataset_triage"]["summary"]["readiness_score"] == 71.0
+    assert saved_json["experiment_advisor"]["summary"]["recommended_next_step"] == "Promote threshold tuning"
     assert saved_json["mps_bond_sweep"]["recommended_bond_dim"] == 8
     assert saved_json["trial_history"][0]["config"]["feature_map"] == "rff"
     assert "Feature 0" in saved_markdown
@@ -694,6 +713,8 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "Leave-one-out accuracy" in saved_markdown
     assert "## Dataset Triage" in saved_markdown
     assert "Readiness score" in saved_markdown
+    assert "## Experiment Advisor" in saved_markdown
+    assert "Promote threshold tuning" in saved_markdown
     assert "## OOD Sentinel" in saved_markdown
     assert "Max OOD score" in saved_markdown
     assert "## Bootstrap Stability Diagnostics" in saved_markdown

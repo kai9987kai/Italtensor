@@ -59,6 +59,7 @@ def save_model_bundle(
     feature_separability_report: dict[str, Any] | None = None,
     neighborhood_hardness_report: dict[str, Any] | None = None,
     dataset_triage_report: dict[str, Any] | None = None,
+    experiment_advisor_report: dict[str, Any] | None = None,
     mps_sweep_report: dict[str, Any] | None = None,
 ) -> tuple[Path, Path]:
     model_path = Path(path)
@@ -133,6 +134,7 @@ def save_model_bundle(
         "feature_separability": feature_separability_report or None,
         "neighborhood_hardness": neighborhood_hardness_report or None,
         "dataset_triage": dataset_triage_report or None,
+        "experiment_advisor": experiment_advisor_report or None,
         "mps_bond_sweep": mps_sweep_report or None,
         "threshold": float(threshold),
         "preprocessing": resolved_preprocessor.to_dict(),

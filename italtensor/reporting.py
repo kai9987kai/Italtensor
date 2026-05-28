@@ -48,6 +48,7 @@ def build_experiment_report(
     feature_separability_report: dict[str, Any] | None = None,
     neighborhood_hardness_report: dict[str, Any] | None = None,
     dataset_triage_report: dict[str, Any] | None = None,
+    experiment_advisor_report: dict[str, Any] | None = None,
     mps_sweep_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     label_array = np.asarray(labels, dtype=np.int32)
@@ -99,6 +100,7 @@ def build_experiment_report(
         "feature_separability": feature_separability_report or None,
         "neighborhood_hardness": neighborhood_hardness_report or None,
         "dataset_triage": dataset_triage_report or None,
+        "experiment_advisor": experiment_advisor_report or None,
         "mps_bond_sweep": mps_sweep_report or None,
         "feature_importances": feature_importances,
         "trial_history": trial_history or [],
@@ -144,6 +146,7 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     feature_separability = report.get("feature_separability") or {}
     neighborhood_hardness = report.get("neighborhood_hardness") or {}
     dataset_triage = report.get("dataset_triage") or {}
+    experiment_advisor = report.get("experiment_advisor") or {}
     mps_sweep = report.get("mps_bond_sweep") or {}
     audit = dataset.get("audit") or {}
 
@@ -189,6 +192,26 @@ def format_markdown_report(report: dict[str, Any]) -> str:
         )
         for action in summary.get("top_actions", [])[:6]:
             lines.append(f"- Action: {action}")
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Experiment Advisor"])
+    if experiment_advisor:
+        summary = experiment_advisor.get("summary", {})
+        lines.extend(
+            [
+                f"- Recommendations: {summary.get('recommendation_count', '-')}",
+                f"- Top priority: {summary.get('top_priority', '-')}",
+                f"- Top category: {summary.get('top_category', '-')}",
+                f"- Recommended next step: {summary.get('recommended_next_step') or 'none'}",
+                f"- Needs training: {summary.get('needs_training', '-')}",
+            ]
+        )
+        for item in experiment_advisor.get("recommendations", [])[:8]:
+            lines.append(
+                f"- {item.get('rank', '-')}. [{item.get('priority', '-')}/{item.get('category', '-')}] "
+                f"{item.get('title', '-')}: {item.get('action', '-')}"
+            )
     else:
         lines.append("- None")
 

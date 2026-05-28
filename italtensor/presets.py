@@ -530,6 +530,28 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="experiment_advisor_lab",
+        name="Experiment advisor lab",
+        description="An imbalanced nonlinear dataset where the advisor should favor triage, CV, SMOTE, and RFF-style search.",
+        default_samples=220,
+        input_dim=5,
+        recommended_feature_map="rff",
+        feature_names=("arc_x", "arc_y", "support_noise", "tail_probe", "boundary_marker"),
+        training_defaults={
+            "epochs": 90,
+            "batch_size": 16,
+            "trials": 16,
+            "feature_map": "rff",
+            "use_smote": True,
+            "backend": "auto",
+        },
+        prediction_examples=(
+            {"name": "Common interior negative", "features": [0.1, 0.1, 0.0, 0.0, -0.5], "expected_label": 0},
+            {"name": "Boundary review", "features": [1.0, 0.0, 0.0, 0.0, 1.0], "expected_label": None},
+            {"name": "Rare outer positive", "features": [1.65, 0.15, 0.0, 0.0, -0.5], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
         key="proxy_leakage_lab",
         name="Proxy leakage lab",
         description="A label-correlated proxy feature that makes ablation and reliance diagnostics visible.",
@@ -636,6 +658,8 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _neighborhood_hardness_lab(total, rng)
     elif preset.key == "dataset_triage_lab":
         features, labels = _dataset_triage_lab(total, rng)
+    elif preset.key == "experiment_advisor_lab":
+        features, labels = _experiment_advisor_lab(total, rng)
     elif preset.key == "proxy_leakage_lab":
         features, labels = _proxy_leakage_lab(total, rng)
     else:
@@ -1439,6 +1463,28 @@ def _dataset_triage_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarra
         features[3] = features[2]
         labels[2] = 1
         labels[3] = 0
+    return _shuffle(features, labels, rng)
+
+
+def _experiment_advisor_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    angle = rng.uniform(0.0, 2.0 * np.pi, size=total)
+    radius = rng.normal(0.95, 0.35, size=total)
+    arc_x = radius * np.cos(angle) + rng.normal(0.0, 0.08, size=total)
+    arc_y = radius * np.sin(angle) + rng.normal(0.0, 0.08, size=total)
+    radial_score = np.sqrt(arc_x * arc_x + arc_y * arc_y)
+    threshold = float(np.quantile(radial_score, 0.73))
+    labels = (radial_score >= threshold).astype(np.int32)
+    boundary_marker = np.abs(radial_score - threshold) + rng.normal(0.0, 0.03, size=total)
+    support_noise = rng.normal(0.0, 1.0, size=total)
+    tail_probe = rng.normal(0.0, 0.22, size=total)
+    tail_count = max(4, total // 20)
+    tail_indices = rng.choice(total, size=tail_count, replace=False)
+    tail_probe[tail_indices] += rng.choice([-1.0, 1.0], size=tail_count) * rng.uniform(3.0, 5.0, size=tail_count)
+    flip_count = max(2, total // 25)
+    boundary_order = np.argsort(np.abs(radial_score - threshold))
+    flip_indices = boundary_order[:flip_count]
+    labels[flip_indices] = 1 - labels[flip_indices]
+    features = np.column_stack([arc_x, arc_y, support_noise, tail_probe, boundary_marker]).astype(np.float32)
     return _shuffle(features, labels, rng)
 
 

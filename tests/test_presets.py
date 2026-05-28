@@ -153,6 +153,7 @@ def test_experimental_builtin_presets_are_available():
         "Separability lens lab",
         "Neighborhood hardness lab",
         "Dataset triage lab",
+        "Experiment advisor lab",
         "Proxy leakage lab",
     }.issubset(names)
 
@@ -425,6 +426,20 @@ def test_dataset_triage_lab_preset_has_conflicts_redundancy_and_tails():
     assert float(np.std(dataset.features[:, 4])) == pytest.approx(0.0)
     assert float(np.corrcoef(dataset.features[:, 0], dataset.features[:, 2])[0, 1]) > 0.95
     assert float(np.max(np.abs(dataset.features[:, 5]))) > 4.0
+
+
+def test_experiment_advisor_lab_preset_has_imbalanced_nonlinear_boundary():
+    metadata = preset_metadata("Experiment advisor lab")
+    dataset = generate_builtin_preset("Experiment advisor lab", sample_count=160, seed=11)
+    positive_rate = float(np.mean(dataset.labels == 1))
+
+    assert metadata["input_dim"] == 5
+    assert metadata["recommended_feature_map"] == "rff"
+    assert metadata["training_defaults"]["use_smote"] is True
+    assert metadata["feature_names"] == ["arc_x", "arc_y", "support_noise", "tail_probe", "boundary_marker"]
+    assert any(example["name"] == "Rare outer positive" for example in metadata["prediction_examples"])
+    assert 0.20 <= positive_rate <= 0.35
+    assert float(np.max(np.abs(dataset.features[:, 3]))) > 3.0
 
 
 def test_label_audit_traps_preset_has_suspicious_example():

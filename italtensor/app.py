@@ -64,6 +64,7 @@ from .cartography import format_cartography_summary, run_dataset_cartography
 from .mps_diagnostics import format_mps_sweep_summary, run_mps_bond_sweep
 from .ood_sentinel import format_ood_sentinel_summary, run_ood_sentinel
 from .dataset_triage import format_dataset_triage_summary, run_dataset_triage
+from .experiment_advisor import build_experiment_advisor, format_experiment_advisor_summary
 from .bootstrap_stability import (
     format_bootstrap_stability_summary,
     run_bootstrap_stability_diagnostics,
@@ -117,6 +118,7 @@ class AppState:
     latest_feature_separability_report: dict[str, Any] | None = None
     latest_neighborhood_hardness_report: dict[str, Any] | None = None
     latest_dataset_triage_report: dict[str, Any] | None = None
+    latest_experiment_advisor_report: dict[str, Any] | None = None
     latest_mps_sweep_report: dict[str, Any] | None = None
     busy: bool = False
     status_message: str = "Ready"
@@ -216,6 +218,8 @@ def run_app() -> None:
                 _start_cartography(window, state)
             elif event == "-DATASET_TRIAGE-":
                 _start_dataset_triage(window, state)
+            elif event == "-EXPERIMENT_ADVISOR-":
+                _start_experiment_advisor(window, state)
             elif event == "-OOD_SENTINEL-":
                 _start_ood_sentinel(window, state)
             elif event == "-BOOTSTRAP_STABILITY-":
@@ -496,6 +500,7 @@ def _layout(sg):
         [sg.Text("Automated Model & Dataset Diagnostics")],
         [
             sg.Button("Dataset triage", key="-DATASET_TRIAGE-", expand_x=True),
+            sg.Button("Experiment advisor", key="-EXPERIMENT_ADVISOR-", expand_x=True),
         ],
         [
             sg.Button("Audit dataset", key="-AUDIT_DATASET-", expand_x=True),
@@ -1086,6 +1091,7 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         feature_separability_report=state.latest_feature_separability_report,
         neighborhood_hardness_report=state.latest_neighborhood_hardness_report,
         dataset_triage_report=state.latest_dataset_triage_report,
+        experiment_advisor_report=state.latest_experiment_advisor_report,
         mps_sweep_report=state.latest_mps_sweep_report,
     )
     window["-MODEL_PATH-"].update(str(model_path))
@@ -1146,6 +1152,7 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     feature_separability_report = metadata.get("feature_separability")
     neighborhood_hardness_report = metadata.get("neighborhood_hardness")
     dataset_triage_report = metadata.get("dataset_triage")
+    experiment_advisor_report = metadata.get("experiment_advisor")
     mps_sweep_report = metadata.get("mps_bond_sweep")
     state.latest_ablation_report = ablation_report if isinstance(ablation_report, dict) else None
     state.latest_decision_curve_report = decision_curve_report if isinstance(decision_curve_report, dict) else None
@@ -1203,6 +1210,9 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_ood_sentinel_report = state.latest_ood_sentinel_report or _dict_or_none(
             state.latest_dataset_triage_report.get("ood_sentinel")
         )
+    state.latest_experiment_advisor_report = (
+        experiment_advisor_report if isinstance(experiment_advisor_report, dict) else None
+    )
     state.latest_mps_sweep_report = mps_sweep_report if isinstance(mps_sweep_report, dict) else None
     _log(window, f"Loaded model expecting {state.input_dim} features.")
 
@@ -1245,6 +1255,7 @@ def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
         feature_separability_report=state.latest_feature_separability_report,
         neighborhood_hardness_report=state.latest_neighborhood_hardness_report,
         dataset_triage_report=state.latest_dataset_triage_report,
+        experiment_advisor_report=state.latest_experiment_advisor_report,
         mps_sweep_report=state.latest_mps_sweep_report,
     )
     path = export_experiment_report(_required_path(values["-REPORT_PATH-"], "report path"), report)
@@ -1348,6 +1359,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
+        state.latest_experiment_advisor_report = None
         state.latest_mps_sweep_report = None
         _log(window, f"Training complete: {_format_metrics(training_result.metrics)}")
         _log(window, _format_calibration(training_result.metrics))
@@ -1383,6 +1395,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
+        state.latest_experiment_advisor_report = None
         state.latest_mps_sweep_report = None
         _log(window, f"Best config: {_format_config(best.config)}")
         _log(window, f"Best metrics: {_format_metrics(best.metrics)}")
@@ -1662,6 +1675,16 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
             _log(window, "  " + format_neighborhood_hardness_summary(state.latest_neighborhood_hardness_report))
         if isinstance(state.latest_ood_sentinel_report, dict):
             _log(window, "  " + format_ood_sentinel_summary(state.latest_ood_sentinel_report))
+    elif kind == "experiment_advisor":
+        state.latest_experiment_advisor_report = result
+        _log(window, format_experiment_advisor_summary(result))
+        for item in result.get("recommendations", [])[:6]:
+            _log(
+                window,
+                f"  {int(item.get('rank', 0))}. "
+                f"[{item.get('priority', '-')}/{item.get('category', '-')}] "
+                f"{item.get('title', '-')}: {item.get('action', '-')}",
+            )
     elif kind == "mps_sweep":
         state.latest_mps_sweep_report = result
         _log(window, format_mps_sweep_summary(result))
@@ -1791,6 +1814,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
+        state.latest_experiment_advisor_report = None
         state.latest_mps_sweep_report = None
         for item in result:
             slot = ModelSlot(
@@ -1835,6 +1859,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
+        state.latest_experiment_advisor_report = None
         state.latest_mps_sweep_report = None
         
         # Auto-store in slots
@@ -1951,6 +1976,7 @@ def _invalidate_model_artifacts(state: AppState) -> None:
     state.latest_feature_separability_report = None
     state.latest_neighborhood_hardness_report = None
     state.latest_dataset_triage_report = None
+    state.latest_experiment_advisor_report = None
     state.latest_mps_sweep_report = None
 
 
@@ -2014,6 +2040,7 @@ def _set_busy(window, busy: bool) -> None:
         "-PERMUTATION_NULL-",
         "-CARTOGRAPHY-",
         "-DATASET_TRIAGE-",
+        "-EXPERIMENT_ADVISOR-",
         "-OOD_SENTINEL-",
         "-BOOTSTRAP_STABILITY-",
         "-PROTOTYPE_AUDIT-",
@@ -2344,6 +2371,7 @@ def _activate_model_slot(window, state: AppState, values: dict[str, Any]) -> Non
     state.latest_prototype_audit_report = None
     state.latest_feature_separability_report = None
     state.latest_neighborhood_hardness_report = None
+    state.latest_experiment_advisor_report = None
     state.latest_mps_sweep_report = None
     _log(window, f"Activated slot '{slot.name}'. Predictions and weight analysis will now run on this model.")
     _update_slots_listbox(window, state)
@@ -2450,6 +2478,7 @@ def _load_registry(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_prototype_audit_report = None
         state.latest_feature_separability_report = None
         state.latest_neighborhood_hardness_report = None
+        state.latest_experiment_advisor_report = None
         state.latest_mps_sweep_report = None
     _update_slots_listbox(window, state)
     _log(window, f"Loaded {len(slots)} slot(s) from registry.")
@@ -2491,6 +2520,7 @@ def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_prototype_audit_report = None
     state.latest_feature_separability_report = None
     state.latest_neighborhood_hardness_report = None
+    state.latest_experiment_advisor_report = None
     state.latest_mps_sweep_report = None
     
     state.latest_config = ModelConfig(
@@ -2570,6 +2600,7 @@ def _build_stacked_ensemble(window, state: AppState, values: dict[str, Any]) -> 
     state.latest_prototype_audit_report = None
     state.latest_feature_separability_report = None
     state.latest_neighborhood_hardness_report = None
+    state.latest_experiment_advisor_report = None
     state.latest_mps_sweep_report = None
     probs = ensemble.predict(dataset.features).reshape(-1)
     metrics = evaluate_predictions(dataset.labels, probs, threshold=0.5)
@@ -2710,6 +2741,37 @@ def _start_dataset_triage(window, state: AppState) -> None:
         return "dataset_triage", report
 
     _start_worker(window, state, "Running dataset triage workflow...", task)
+
+
+def _start_experiment_advisor(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = build_experiment_advisor(
+            sample_count=len(state.labels),
+            input_dim=state.input_dim,
+            labels=state.labels,
+            config=state.latest_config,
+            metrics=state.latest_metrics,
+            trial_history=state.trial_history,
+            dataset_triage_report=state.latest_dataset_triage_report,
+            feature_separability_report=state.latest_feature_separability_report,
+            neighborhood_hardness_report=state.latest_neighborhood_hardness_report,
+            prototype_audit_report=state.latest_prototype_audit_report,
+            ood_sentinel_report=state.latest_ood_sentinel_report,
+            threshold_report=state.latest_threshold_report,
+            calibration_repair_report=state.latest_calibration_repair_report,
+            decision_curve_report=state.latest_decision_curve_report,
+            selective_risk_report=state.latest_selective_risk_report,
+            stress_report=state.latest_stress_report,
+            permutation_null_report=state.latest_permutation_null_report,
+            population_drift_report=state.latest_population_drift_report,
+            adversarial_validation_report=state.latest_adversarial_validation_report,
+            chronological_holdout_report=state.latest_chronological_holdout_report,
+        )
+        return "experiment_advisor", report
+
+    _start_worker(window, state, "Building next-experiment advisor...", task)
 
 
 def _run_reliability_diagram(window, state: AppState) -> None:
@@ -2908,6 +2970,7 @@ def _merge_slots(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_prototype_audit_report = None
         state.latest_feature_separability_report = None
         state.latest_neighborhood_hardness_report = None
+        state.latest_experiment_advisor_report = None
         state.latest_mps_sweep_report = None
         state.latest_config = ModelConfig(
             lr_schedule="constant",
