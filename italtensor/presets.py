@@ -372,6 +372,54 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="shadow_replay_lab",
+        name="Shadow replay lab",
+        description="Ordered rows with a late pocket of active-model degradation for fixed-model replay diagnostics.",
+        default_samples=240,
+        min_samples=16,
+        input_dim=5,
+        recommended_feature_map="linear",
+        feature_names=("stable_margin", "late_counter_signal", "regime_marker", "review_band", "decoy_noise"),
+        training_defaults={"epochs": 80, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Early stable negative", "features": [-1.1, -0.2, -1.0, -0.8, 0.0], "expected_label": 0},
+            {"name": "Early stable positive", "features": [1.1, 0.2, -1.0, -0.8, 0.0], "expected_label": 1},
+            {"name": "Late replay review", "features": [0.7, 1.2, 1.0, 0.9, 0.0], "expected_label": None},
+        ),
+    ),
+    PresetInfo(
+        key="threshold_stability_lab",
+        name="Threshold stability lab",
+        description="Dense boundary rows and asymmetric costs for bootstrapped operating-threshold review.",
+        default_samples=220,
+        min_samples=20,
+        input_dim=4,
+        recommended_feature_map="linear",
+        feature_names=("risk_score", "support_signal", "boundary_band", "decoy_noise"),
+        training_defaults={"epochs": 80, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Clear threshold negative", "features": [-1.0, -0.4, -1.0, 0.0], "expected_label": 0},
+            {"name": "Boundary threshold review", "features": [0.05, 0.0, 1.0, 0.0], "expected_label": None},
+            {"name": "Clear threshold positive", "features": [1.0, 0.4, -1.0, 0.0], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
+        key="capacity_planner_lab",
+        name="Capacity planner lab",
+        description="Rare high-value positives with false-alarm decoys for finite review/action budget planning.",
+        default_samples=240,
+        min_samples=20,
+        input_dim=5,
+        recommended_feature_map="linear",
+        feature_names=("priority_score", "support_signal", "false_alarm_decoy", "capacity_band", "background_noise"),
+        training_defaults={"epochs": 80, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Low priority negative", "features": [-0.9, -0.4, 0.0, -1.0, 0.0], "expected_label": 0},
+            {"name": "False-alarm review", "features": [0.8, -0.2, 1.2, 0.8, 0.0], "expected_label": None},
+            {"name": "High priority positive", "features": [1.2, 0.7, 0.0, 1.0, 0.0], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
         key="cost_sensitive_screening",
         name="Cost-sensitive screening",
         description="Rare positives with overlapping scores for threshold tradeoff and false-negative-cost experiments.",
@@ -687,6 +735,12 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _adversarial_validation_lab(total, rng)
     elif preset.key == "chronological_holdout_lab":
         features, labels = _chronological_holdout_lab(total, rng)
+    elif preset.key == "shadow_replay_lab":
+        features, labels = _shadow_replay_lab(total, rng)
+    elif preset.key == "threshold_stability_lab":
+        features, labels = _threshold_stability_lab(total, rng)
+    elif preset.key == "capacity_planner_lab":
+        features, labels = _capacity_planner_lab(total, rng)
     elif preset.key == "cost_sensitive_screening":
         features, labels = _cost_sensitive_screening(total, rng)
     elif preset.key == "decision_utility_tradeoff":
@@ -1250,6 +1304,125 @@ def _chronological_holdout_lab(total: int, rng: np.random.Generator) -> tuple[np
     features = np.vstack([reference, current]).astype(np.float32)
     labels = np.concatenate([reference_labels, current_labels]).astype(np.int32)
     return features, labels
+
+
+def _shadow_replay_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    early_count = max(8, int(round(total * 0.55)))
+    early_count = min(early_count, total - 8)
+    transition_count = max(4, int(round(total * 0.20)))
+    if early_count + transition_count > total - 4:
+        transition_count = max(2, total - early_count - 4)
+    late_count = total - early_count - transition_count
+
+    early_margin = rng.normal(0.0, 1.0, size=early_count)
+    early_counter = rng.normal(0.0, 0.35, size=early_count)
+    early_regime = rng.normal(-1.0, 0.12, size=early_count)
+    early_review = rng.normal(-0.7, 0.25, size=early_count)
+    early_decoy = rng.normal(0.0, 1.0, size=early_count)
+    early_latent = 1.15 * early_margin + 0.25 * early_counter + rng.normal(0.0, 0.35, size=early_count)
+    early_labels = (early_latent > np.median(early_latent)).astype(np.int32)
+
+    transition_margin = rng.normal(0.0, 1.0, size=transition_count)
+    transition_counter = rng.normal(0.35, 0.55, size=transition_count)
+    transition_regime = rng.normal(0.0, 0.22, size=transition_count)
+    transition_review = rng.normal(0.0, 0.35, size=transition_count)
+    transition_decoy = rng.normal(0.0, 1.0, size=transition_count)
+    transition_latent = (
+        0.85 * transition_margin
+        + 0.50 * transition_counter
+        + 0.20 * transition_review
+        + rng.normal(0.0, 0.45, size=transition_count)
+    )
+    transition_labels = (transition_latent > np.median(transition_latent)).astype(np.int32)
+
+    late_margin = rng.normal(0.25, 0.9, size=late_count)
+    late_counter = rng.normal(1.0, 0.55, size=late_count)
+    late_regime = rng.normal(1.0, 0.12, size=late_count)
+    late_review = rng.normal(0.75, 0.28, size=late_count)
+    late_decoy = rng.normal(0.0, 1.0, size=late_count)
+    late_latent = (
+        -0.30 * late_margin
+        + 1.30 * late_counter
+        + 0.40 * late_review
+        + rng.normal(0.0, 0.45, size=late_count)
+    )
+    late_labels = (late_latent > np.median(late_latent)).astype(np.int32)
+
+    features = np.vstack(
+        [
+            np.column_stack([early_margin, early_counter, early_regime, early_review, early_decoy]),
+            np.column_stack(
+                [transition_margin, transition_counter, transition_regime, transition_review, transition_decoy]
+            ),
+            np.column_stack([late_margin, late_counter, late_regime, late_review, late_decoy]),
+        ]
+    ).astype(np.float32)
+    labels = np.concatenate([early_labels, transition_labels, late_labels]).astype(np.int32)
+    return features, labels
+
+
+def _threshold_stability_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    boundary_count = max(12, int(round(total * 0.38)))
+    core_count = total - boundary_count
+    negative_count = core_count // 2
+    positive_count = core_count - negative_count
+
+    negative_risk = rng.normal(-0.85, 0.35, size=negative_count)
+    positive_risk = rng.normal(0.85, 0.35, size=positive_count)
+    boundary_risk = rng.normal(0.02, 0.22, size=boundary_count)
+    negative_support = rng.normal(-0.35, 0.35, size=negative_count)
+    positive_support = rng.normal(0.35, 0.35, size=positive_count)
+    boundary_support = rng.normal(0.05, 0.55, size=boundary_count)
+
+    risk_score = np.concatenate([negative_risk, positive_risk, boundary_risk])
+    support_signal = np.concatenate([negative_support, positive_support, boundary_support])
+    boundary_band = np.concatenate(
+        [
+            rng.normal(-1.0, 0.12, size=negative_count + positive_count),
+            rng.normal(1.0, 0.12, size=boundary_count),
+        ]
+    )
+    decoy = rng.normal(0.0, 1.0, size=total)
+    latent = 1.05 * risk_score + 0.35 * support_signal + rng.normal(0.0, 0.28, size=total)
+    labels = np.concatenate(
+        [
+            np.zeros(negative_count, dtype=np.int32),
+            np.ones(positive_count, dtype=np.int32),
+            (latent[negative_count + positive_count:] > np.median(latent[negative_count + positive_count:])).astype(
+                np.int32
+            ),
+        ]
+    )
+    features = np.column_stack([risk_score, support_signal, boundary_band, decoy]).astype(np.float32)
+    return _shuffle(features, labels.astype(np.int32), rng)
+
+
+def _capacity_planner_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    positive_count = max(8, int(round(total * 0.16)))
+    false_alarm_count = max(8, int(round(total * 0.14)))
+    negative_count = total - positive_count - false_alarm_count
+    if negative_count < 4:
+        negative_count = 4
+        false_alarm_count = max(2, total - positive_count - negative_count)
+
+    positives = rng.normal(
+        loc=(1.15, 0.75, -0.20, 1.0, 0.0),
+        scale=(0.28, 0.30, 0.35, 0.18, 1.0),
+        size=(positive_count, 5),
+    )
+    false_alarms = rng.normal(
+        loc=(0.85, -0.45, 1.25, 0.85, 0.0),
+        scale=(0.25, 0.32, 0.25, 0.22, 1.0),
+        size=(false_alarm_count, 5),
+    )
+    negatives = rng.normal(
+        loc=(-0.55, -0.25, 0.0, -0.75, 0.0),
+        scale=(0.45, 0.45, 0.55, 0.28, 1.0),
+        size=(negative_count, 5),
+    )
+    features = np.vstack([positives, false_alarms, negatives]).astype(np.float32)
+    labels = np.asarray([1] * positive_count + [0] * false_alarm_count + [0] * negative_count, dtype=np.int32)
+    return _shuffle(features, labels, rng)
 
 
 def _cost_sensitive_screening(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:

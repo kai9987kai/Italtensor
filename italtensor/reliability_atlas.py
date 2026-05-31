@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Any, Sequence
 
 import numpy as np
@@ -19,29 +20,38 @@ def run_reliability_atlas(
     min_bin_count: int = 2,
 ) -> dict[str, Any]:
     """Persistable reliability-bin diagnostic for the active model."""
-    x = np.asarray(features, dtype=np.float32)
-    y = np.asarray(labels, dtype=np.int32).reshape(-1)
+    try:
+        x = np.asarray(features, dtype=np.float32)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Reliability atlas features must be finite numbers.") from exc
+    y = _validate_labels(labels)
     if x.ndim != 2:
         raise ValueError("Reliability atlas features must be a 2D array.")
     if x.shape[0] != y.shape[0]:
         raise ValueError("Reliability atlas feature and label counts do not match.")
     if x.shape[0] == 0:
         raise ValueError("Reliability atlas needs at least one sample.")
-    if not set(np.unique(y).tolist()).issubset({0, 1}):
-        raise ValueError("Reliability atlas labels must be binary 0/1.")
+    if not np.all(np.isfinite(x)):
+        raise ValueError("Reliability atlas features must be finite numbers.")
     n_bins = max(2, int(n_bins))
     min_bin_count = max(1, int(min_bin_count))
 
     prepared = preprocessor.transform(x) if preprocessor is not None else x
+    if not np.all(np.isfinite(prepared)):
+        raise ValueError("Reliability atlas preprocessed features must be finite.")
     probabilities = predict_probability(model, prepared).reshape(-1).astype(np.float64)
     if probabilities.shape[0] != x.shape[0]:
         raise ValueError("Model returned a different number of probabilities than input rows.")
     if not np.all(np.isfinite(probabilities)):
         raise ValueError("Model probabilities must be finite.")
+    if np.any((probabilities < -1e-7) | (probabilities > 1.0 + 1e-7)):
+        raise ValueError("Model probabilities must be between 0 and 1.")
+    clipped_probability_count = int(np.count_nonzero((probabilities < 0.0) | (probabilities > 1.0)))
     probabilities = np.clip(probabilities, 0.0, 1.0)
     diagnostics = probability_diagnostics(y, probabilities, n_bins=n_bins)
     bins = [_bin_row(item, min_bin_count=min_bin_count) for item in diagnostics.get("calibration_bins", [])]
-    ranked_bins = sorted(bins, key=lambda item: (-float(item["weighted_error"]), -float(item["absolute_error"]), -int(item["count"])))
+    ranked_bins = sorted(bins, key=lambda item: (-float(item["absolute_error"]), -float(item["weighted_error"]), -int(item["count"])))
+    impact_bins = sorted(bins, key=lambda item: (-float(item["weighted_error"]), -float(item["absolute_error"]), -int(item["count"])))
     underconfident_bins = [item for item in ranked_bins if item["calibration_direction"] == "underconfident"]
     overconfident_bins = [item for item in ranked_bins if item["calibration_direction"] == "overconfident"]
     sparse_bins = [item for item in bins if int(item["count"]) < min_bin_count]
@@ -61,6 +71,7 @@ def run_reliability_atlas(
     return {
         "sample_count": int(x.shape[0]),
         "input_dim": int(x.shape[1]),
+        "dataset_fingerprint": reliability_dataset_fingerprint(x, y),
         "n_bins": n_bins,
         "min_bin_count": min_bin_count,
         "summary": {
@@ -71,6 +82,7 @@ def run_reliability_atlas(
             "mean_probability": float(diagnostics.get("mean_probability", 0.0)),
             "label_prevalence": float(diagnostics.get("label_prevalence", 0.0)),
             "predicted_positive_rate": float(diagnostics.get("predicted_positive_rate", 0.0)),
+            "clipped_probability_count": clipped_probability_count,
             "bin_count": len(bins),
             "sparse_bin_count": len(sparse_bins),
             "overconfident_bin_count": len(overconfident_bins),
@@ -81,6 +93,7 @@ def run_reliability_atlas(
         },
         "bins": bins,
         "worst_bins": ranked_bins[:6],
+        "highest_impact_bins": impact_bins[:6],
         "overconfident_bins": overconfident_bins[:6],
         "underconfident_bins": underconfident_bins[:6],
         "sparse_bins": sparse_bins[:6],
@@ -100,6 +113,42 @@ def format_reliability_atlas_summary(report: dict[str, Any]) -> str:
         f"bins={int(summary.get('bin_count', 0))}, "
         f"next={summary.get('recommendation') or 'none'}"
     )
+
+
+def reliability_dataset_fingerprint(
+    features: Sequence[Sequence[float]] | np.ndarray,
+    labels: Sequence[int] | np.ndarray,
+) -> str:
+    """Return a stable fingerprint for the raw labeled rows behind a diagnostic."""
+    try:
+        x = np.asarray(features, dtype=np.float32)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Reliability atlas features must be finite numbers.") from exc
+    y = _validate_labels(labels)
+    if x.ndim != 2:
+        raise ValueError("Reliability atlas features must be a 2D array.")
+    if x.shape[0] != y.shape[0]:
+        raise ValueError("Reliability atlas feature and label counts do not match.")
+    if not np.all(np.isfinite(x)):
+        raise ValueError("Reliability atlas features must be finite numbers.")
+    hasher = hashlib.sha256()
+    hasher.update(str(tuple(int(value) for value in x.shape)).encode("ascii"))
+    hasher.update(np.ascontiguousarray(x, dtype=np.float32).tobytes())
+    hasher.update(str(tuple(int(value) for value in y.shape)).encode("ascii"))
+    hasher.update(np.ascontiguousarray(y, dtype=np.int8).tobytes())
+    return hasher.hexdigest()
+
+
+def _validate_labels(labels: Sequence[int] | np.ndarray) -> np.ndarray:
+    try:
+        y = np.asarray(labels, dtype=np.float64).reshape(-1)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Reliability atlas labels must be binary 0/1.") from exc
+    if not np.all(np.isfinite(y)):
+        raise ValueError("Reliability atlas labels must be binary 0/1.")
+    if not np.all((y == 0.0) | (y == 1.0)):
+        raise ValueError("Reliability atlas labels must be binary 0/1.")
+    return y.astype(np.int32)
 
 
 def _bin_row(item: dict[str, Any], *, min_bin_count: int) -> dict[str, Any]:

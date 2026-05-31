@@ -12,6 +12,11 @@ from .data import (
     validate_dataset,
 )
 from .calibration_repair import format_calibration_repair_summary, run_calibration_repair_diagnostics
+from .capacity_planner import (
+    capacity_planner_dataset_fingerprint,
+    format_capacity_planner_summary,
+    run_capacity_planner,
+)
 from .counterfactual import find_counterfactual, format_counterfactual_result
 from .conformal_sets import format_conformal_set_summary, run_conformal_set_diagnostics
 from .decision_curve import format_decision_curve_summary, run_decision_curve_diagnostics
@@ -52,8 +57,23 @@ from .presets import generate_builtin_preset, load_preset_file, preset_labels, p
 from .reporting import build_experiment_report, export_experiment_report
 from .registry import ModelSlot
 from .sample_review import format_sample_review_summary, run_sample_review
+from .schema_guard import (
+    check_vector_against_schema,
+    format_schema_guard_summary,
+    run_schema_guard,
+    schema_guard_dataset_fingerprint,
+)
 from .error_atlas import format_error_atlas_summary, run_error_atlas
-from .reliability_atlas import format_reliability_atlas_summary, run_reliability_atlas
+from .reliability_atlas import (
+    format_reliability_atlas_summary,
+    reliability_dataset_fingerprint,
+    run_reliability_atlas,
+)
+from .shadow_replay import (
+    format_shadow_replay_summary,
+    run_shadow_replay,
+    shadow_replay_dataset_fingerprint,
+)
 from .scoring import load_reviewed_prediction_csv, score_prediction_csv
 from .selective_risk import format_selective_risk_summary, run_selective_risk_diagnostics
 from .subgroup_disparity import format_subgroup_disparity_summary, run_subgroup_disparity_diagnostics
@@ -62,6 +82,11 @@ from .learning_curves import learning_curve_points
 from .slices import format_slice_summary, run_slice_diagnostics
 from .stress import format_stress_summary, run_stress_suite
 from .thresholds import format_threshold_summary, run_threshold_diagnostics
+from .threshold_stability import (
+    format_threshold_stability_summary,
+    run_threshold_stability,
+    threshold_stability_dataset_fingerprint,
+)
 from .cartography import format_cartography_summary, run_dataset_cartography
 from .mps_diagnostics import format_mps_sweep_summary, run_mps_bond_sweep
 from .ood_sentinel import format_ood_sentinel_summary, run_ood_sentinel
@@ -106,7 +131,10 @@ class AppState:
     latest_sample_review_report: dict[str, Any] | None = None
     latest_error_atlas_report: dict[str, Any] | None = None
     latest_reliability_atlas_report: dict[str, Any] | None = None
+    latest_shadow_replay_report: dict[str, Any] | None = None
     latest_threshold_report: dict[str, Any] | None = None
+    latest_threshold_stability_report: dict[str, Any] | None = None
+    latest_capacity_planner_report: dict[str, Any] | None = None
     latest_calibration_repair_report: dict[str, Any] | None = None
     latest_model_response_report: dict[str, Any] | None = None
     latest_pairwise_interaction_report: dict[str, Any] | None = None
@@ -120,6 +148,7 @@ class AppState:
     latest_cartography_report: dict[str, Any] | None = None
     latest_ood_sentinel_report: dict[str, Any] | None = None
     latest_bootstrap_stability_report: dict[str, Any] | None = None
+    latest_schema_guard_report: dict[str, Any] | None = None
     latest_prototype_audit_report: dict[str, Any] | None = None
     latest_feature_separability_report: dict[str, Any] | None = None
     latest_neighborhood_hardness_report: dict[str, Any] | None = None
@@ -194,6 +223,8 @@ def run_app() -> None:
                 _start_adversarial_validation(window, state)
             elif event == "-CHRONOLOGICAL_HOLDOUT-":
                 _start_chronological_holdout(window, state)
+            elif event == "-SHADOW_REPLAY-":
+                _start_shadow_replay(window, state)
             elif event == "-LEARNING_CURVE-":
                 _start_learning_curve(window, state, values)
             elif event == "-ABLATION_DIAGNOSTICS-":
@@ -218,6 +249,10 @@ def run_app() -> None:
                 _start_subgroup_disparity(window, state)
             elif event == "-THRESHOLD_DIAGNOSTICS-":
                 _start_threshold_diagnostics(window, state)
+            elif event == "-THRESHOLD_STABILITY-":
+                _start_threshold_stability(window, state)
+            elif event == "-CAPACITY_PLANNER-":
+                _start_capacity_planner(window, state)
             elif event == "-SAMPLE_REVIEW-":
                 _start_sample_review(window, state)
             elif event == "-ERROR_ATLAS-":
@@ -228,6 +263,8 @@ def run_app() -> None:
                 _start_cartography(window, state)
             elif event == "-DATASET_TRIAGE-":
                 _start_dataset_triage(window, state)
+            elif event == "-SCHEMA_GUARD-":
+                _start_schema_guard(window, state)
             elif event == "-EXPERIMENT_ADVISOR-":
                 _start_experiment_advisor(window, state)
             elif event == "-TRIAL_INSPECTOR-":
@@ -535,6 +572,7 @@ def _layout(sg):
         [sg.Text("Automated Model & Dataset Diagnostics")],
         [
             sg.Button("Dataset triage", key="-DATASET_TRIAGE-", expand_x=True),
+            sg.Button("Schema guard", key="-SCHEMA_GUARD-", expand_x=True),
             sg.Button("Experiment advisor", key="-EXPERIMENT_ADVISOR-", expand_x=True),
             sg.Button("Trial inspector", key="-TRIAL_INSPECTOR-", expand_x=True),
             sg.Button("Promotion gate", key="-PROMOTION_GATE-", expand_x=True),
@@ -544,6 +582,7 @@ def _layout(sg):
             sg.Button("Population drift", key="-POPULATION_DRIFT-", expand_x=True),
             sg.Button("Adversarial validation", key="-ADVERSARIAL_VALIDATION-", expand_x=True),
             sg.Button("Chronological holdout", key="-CHRONOLOGICAL_HOLDOUT-", expand_x=True),
+            sg.Button("Shadow replay", key="-SHADOW_REPLAY-", expand_x=True),
             sg.Button("Learning curve", key="-LEARNING_CURVE-", expand_x=True),
         ],
         [
@@ -556,6 +595,8 @@ def _layout(sg):
             sg.Button("Pairwise interactions", key="-PAIRWISE_INTERACTIONS-", expand_x=True),
             sg.Button("Subgroup disparity", key="-SUBGROUP_DISPARITY-", expand_x=True),
             sg.Button("Threshold tradeoff", key="-THRESHOLD_DIAGNOSTICS-", expand_x=True),
+            sg.Button("Threshold stability", key="-THRESHOLD_STABILITY-", expand_x=True),
+            sg.Button("Capacity planner", key="-CAPACITY_PLANNER-", expand_x=True),
         ],
         [
             sg.Button("Decision curve", key="-DECISION_CURVE-", expand_x=True),
@@ -934,6 +975,43 @@ def _start_threshold_diagnostics(window, state: AppState) -> None:
     _start_worker(window, state, "Running threshold tradeoff sweep...", task)
 
 
+def _start_threshold_stability(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    if state.model is None:
+        raise ValueError("Train or load a model before running threshold stability.")
+    dataset = validate_dataset(state.features, state.labels, min_samples=6, require_two_classes=True)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_threshold_stability(
+            state.model,
+            dataset.features,
+            dataset.labels,
+            preprocessor=state.preprocessor,
+            current_threshold=state.latest_threshold,
+        )
+        return "threshold_stability", report
+
+    _start_worker(window, state, "Bootstrapping threshold stability...", task)
+
+
+def _start_capacity_planner(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    if state.model is None:
+        raise ValueError("Train or load a model before running capacity planning.")
+    dataset = validate_dataset(state.features, state.labels, min_samples=1, require_two_classes=False)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_capacity_planner(
+            state.model,
+            dataset.features,
+            dataset.labels,
+            preprocessor=state.preprocessor,
+        )
+        return "capacity_planner", report
+
+    _start_worker(window, state, "Planning finite action capacity...", task)
+
+
 def _start_sample_review(window, state: AppState) -> None:
     _ensure_not_busy(state)
     if state.model is None:
@@ -1137,7 +1215,10 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         sample_review_report=state.latest_sample_review_report,
         error_atlas_report=state.latest_error_atlas_report,
         reliability_atlas_report=state.latest_reliability_atlas_report,
+        shadow_replay_report=state.latest_shadow_replay_report,
         threshold_report=state.latest_threshold_report,
+        threshold_stability_report=state.latest_threshold_stability_report,
+        capacity_planner_report=state.latest_capacity_planner_report,
         model_response_report=state.latest_model_response_report,
         pairwise_interaction_report=state.latest_pairwise_interaction_report,
         slice_report=state.latest_slice_report,
@@ -1150,6 +1231,7 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         cartography_report=state.latest_cartography_report,
         ood_sentinel_report=state.latest_ood_sentinel_report,
         bootstrap_stability_report=state.latest_bootstrap_stability_report,
+        schema_guard_report=state.latest_schema_guard_report,
         prototype_audit_report=state.latest_prototype_audit_report,
         feature_separability_report=state.latest_feature_separability_report,
         neighborhood_hardness_report=state.latest_neighborhood_hardness_report,
@@ -1161,6 +1243,76 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
     )
     window["-MODEL_PATH-"].update(str(model_path))
     _log(window, f"Saved model to {model_path} and metadata to {metadata_path}.")
+
+
+def _compatible_reliability_atlas_report(report: Any, state: AppState) -> dict[str, Any] | None:
+    if not isinstance(report, dict):
+        return None
+    stored_fingerprint = report.get("dataset_fingerprint")
+    if stored_fingerprint and state.features and state.labels:
+        try:
+            current_fingerprint = reliability_dataset_fingerprint(state.features, state.labels)
+        except ValueError:
+            return None
+        if current_fingerprint != stored_fingerprint:
+            return None
+    return report
+
+
+def _compatible_shadow_replay_report(report: Any, state: AppState) -> dict[str, Any] | None:
+    if not isinstance(report, dict):
+        return None
+    stored_fingerprint = report.get("dataset_fingerprint")
+    if stored_fingerprint and state.features and state.labels:
+        try:
+            current_fingerprint = shadow_replay_dataset_fingerprint(state.features, state.labels)
+        except ValueError:
+            return None
+        if current_fingerprint != stored_fingerprint:
+            return None
+    return report
+
+
+def _compatible_threshold_stability_report(report: Any, state: AppState) -> dict[str, Any] | None:
+    if not isinstance(report, dict):
+        return None
+    stored_fingerprint = report.get("dataset_fingerprint")
+    if stored_fingerprint and state.features and state.labels:
+        try:
+            current_fingerprint = threshold_stability_dataset_fingerprint(state.features, state.labels)
+        except ValueError:
+            return None
+        if current_fingerprint != stored_fingerprint:
+            return None
+    return report
+
+
+def _compatible_capacity_planner_report(report: Any, state: AppState) -> dict[str, Any] | None:
+    if not isinstance(report, dict):
+        return None
+    stored_fingerprint = report.get("dataset_fingerprint")
+    if stored_fingerprint and state.features and state.labels:
+        try:
+            current_fingerprint = capacity_planner_dataset_fingerprint(state.features, state.labels)
+        except ValueError:
+            return None
+        if current_fingerprint != stored_fingerprint:
+            return None
+    return report
+
+
+def _compatible_schema_guard_report(report: Any, state: AppState) -> dict[str, Any] | None:
+    if not isinstance(report, dict):
+        return None
+    stored_fingerprint = report.get("dataset_fingerprint")
+    if stored_fingerprint and state.features:
+        try:
+            current_fingerprint = schema_guard_dataset_fingerprint(state.features)
+        except ValueError:
+            return None
+        if current_fingerprint != stored_fingerprint:
+            return None
+    return report
 
 
 def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
@@ -1202,7 +1354,10 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     sample_review_report = metadata.get("sample_review")
     error_atlas_report = metadata.get("error_atlas")
     reliability_atlas_report = metadata.get("reliability_atlas")
+    shadow_replay_report = metadata.get("shadow_replay")
     threshold_report = metadata.get("threshold_diagnostics")
+    threshold_stability_report = metadata.get("threshold_stability")
+    capacity_planner_report = metadata.get("capacity_planner")
     model_response_report = metadata.get("model_response_diagnostics")
     pairwise_interaction_report = metadata.get("pairwise_interaction_diagnostics")
     slice_report = metadata.get("slice_diagnostics")
@@ -1215,6 +1370,7 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     cartography_report = metadata.get("dataset_cartography")
     ood_sentinel_report = metadata.get("ood_sentinel")
     bootstrap_stability_report = metadata.get("bootstrap_stability_diagnostics")
+    schema_guard_report = metadata.get("schema_guard")
     prototype_audit_report = metadata.get("prototype_audit")
     feature_separability_report = metadata.get("feature_separability")
     neighborhood_hardness_report = metadata.get("neighborhood_hardness")
@@ -1232,10 +1388,38 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_selective_risk_report = selective_risk_report if isinstance(selective_risk_report, dict) else None
     state.latest_sample_review_report = sample_review_report if isinstance(sample_review_report, dict) else None
     state.latest_error_atlas_report = error_atlas_report if isinstance(error_atlas_report, dict) else None
-    state.latest_reliability_atlas_report = (
-        reliability_atlas_report if isinstance(reliability_atlas_report, dict) else None
-    )
+    state.latest_reliability_atlas_report = _compatible_reliability_atlas_report(reliability_atlas_report, state)
+    if (
+        isinstance(reliability_atlas_report, dict)
+        and state.latest_reliability_atlas_report is None
+        and reliability_atlas_report.get("dataset_fingerprint")
+    ):
+        _log(window, "Skipped stored reliability atlas because it was created for a different loaded dataset.")
+    state.latest_shadow_replay_report = _compatible_shadow_replay_report(shadow_replay_report, state)
+    if (
+        isinstance(shadow_replay_report, dict)
+        and state.latest_shadow_replay_report is None
+        and shadow_replay_report.get("dataset_fingerprint")
+    ):
+        _log(window, "Skipped stored shadow replay because it was created for a different loaded dataset.")
     state.latest_threshold_report = threshold_report if isinstance(threshold_report, dict) else None
+    state.latest_threshold_stability_report = _compatible_threshold_stability_report(
+        threshold_stability_report,
+        state,
+    )
+    if (
+        isinstance(threshold_stability_report, dict)
+        and state.latest_threshold_stability_report is None
+        and threshold_stability_report.get("dataset_fingerprint")
+    ):
+        _log(window, "Skipped stored threshold stability because it was created for a different loaded dataset.")
+    state.latest_capacity_planner_report = _compatible_capacity_planner_report(capacity_planner_report, state)
+    if (
+        isinstance(capacity_planner_report, dict)
+        and state.latest_capacity_planner_report is None
+        and capacity_planner_report.get("dataset_fingerprint")
+    ):
+        _log(window, "Skipped stored capacity planner because it was created for a different loaded dataset.")
     state.latest_model_response_report = model_response_report if isinstance(model_response_report, dict) else None
     state.latest_pairwise_interaction_report = (
         pairwise_interaction_report if isinstance(pairwise_interaction_report, dict) else None
@@ -1262,6 +1446,13 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_bootstrap_stability_report = (
         bootstrap_stability_report if isinstance(bootstrap_stability_report, dict) else None
     )
+    state.latest_schema_guard_report = _compatible_schema_guard_report(schema_guard_report, state)
+    if (
+        isinstance(schema_guard_report, dict)
+        and state.latest_schema_guard_report is None
+        and schema_guard_report.get("dataset_fingerprint")
+    ):
+        _log(window, "Skipped stored schema guard because it was created for a different loaded dataset.")
     state.latest_prototype_audit_report = prototype_audit_report if isinstance(prototype_audit_report, dict) else None
     state.latest_feature_separability_report = (
         feature_separability_report if isinstance(feature_separability_report, dict) else None
@@ -1315,7 +1506,10 @@ def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
         sample_review_report=state.latest_sample_review_report,
         error_atlas_report=state.latest_error_atlas_report,
         reliability_atlas_report=state.latest_reliability_atlas_report,
+        shadow_replay_report=state.latest_shadow_replay_report,
         threshold_report=state.latest_threshold_report,
+        threshold_stability_report=state.latest_threshold_stability_report,
+        capacity_planner_report=state.latest_capacity_planner_report,
         model_response_report=state.latest_model_response_report,
         pairwise_interaction_report=state.latest_pairwise_interaction_report,
         slice_report=state.latest_slice_report,
@@ -1328,6 +1522,7 @@ def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
         cartography_report=state.latest_cartography_report,
         ood_sentinel_report=state.latest_ood_sentinel_report,
         bootstrap_stability_report=state.latest_bootstrap_stability_report,
+        schema_guard_report=state.latest_schema_guard_report,
         prototype_audit_report=state.latest_prototype_audit_report,
         feature_separability_report=state.latest_feature_separability_report,
         neighborhood_hardness_report=state.latest_neighborhood_hardness_report,
@@ -1427,7 +1622,10 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_sample_review_report = None
         state.latest_error_atlas_report = None
         state.latest_reliability_atlas_report = None
+        state.latest_shadow_replay_report = None
         state.latest_threshold_report = None
+        state.latest_threshold_stability_report = None
+        state.latest_capacity_planner_report = None
         state.latest_model_response_report = None
         state.latest_pairwise_interaction_report = None
         state.latest_slice_report = None
@@ -1468,7 +1666,10 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_sample_review_report = None
         state.latest_error_atlas_report = None
         state.latest_reliability_atlas_report = None
+        state.latest_shadow_replay_report = None
         state.latest_threshold_report = None
+        state.latest_threshold_stability_report = None
+        state.latest_capacity_planner_report = None
         state.latest_model_response_report = None
         state.latest_pairwise_interaction_report = None
         state.latest_slice_report = None
@@ -1533,7 +1734,10 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_sample_review_report = None
         state.latest_error_atlas_report = None
         state.latest_reliability_atlas_report = None
+        state.latest_shadow_replay_report = None
         state.latest_threshold_report = None
+        state.latest_threshold_stability_report = None
+        state.latest_capacity_planner_report = None
         state.latest_model_response_report = None
         state.latest_pairwise_interaction_report = None
         state.latest_slice_report = None
@@ -1713,6 +1917,48 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                     f"cost={float(item['cost']):.4f}",
                 )
 
+    elif kind == "threshold_stability":
+        state.latest_threshold_stability_report = result
+        state.latest_promotion_gate_report = None
+        _log(window, format_threshold_stability_summary(result))
+        summary = result.get("summary", {})
+        interval = summary.get("threshold_interval", {})
+        _log(
+            window,
+            "  interval: "
+            f"q05={float(interval.get('q05', 0.0)):.4f}, "
+            f"q50={float(interval.get('q50', 0.5)):.4f}, "
+            f"q95={float(interval.get('q95', 1.0)):.4f}, "
+            f"inside_current={bool(summary.get('current_inside_interval', False))}",
+        )
+        for item in result.get("recommendations", [])[:4]:
+            _log(
+                window,
+                f"  {int(item.get('rank', 0))}. "
+                f"[{item.get('priority', '-')}/{item.get('category', '-')}] "
+                f"{item.get('title', '-')}: {item.get('action', '-')}",
+            )
+
+    elif kind == "capacity_planner":
+        state.latest_capacity_planner_report = result
+        state.latest_promotion_gate_report = None
+        _log(window, format_capacity_planner_summary(result))
+        for item in result.get("points", [])[:6]:
+            _log(
+                window,
+                f"  budget={float(item['capacity_fraction']):.3f}, "
+                f"k={int(item['k'])}, precision={float(item['precision_at_k']):.4f}, "
+                f"recall={float(item['recall_captured']):.4f}, lift={float(item['lift']):.4f}, "
+                f"utility={float(item['net_utility']):.4f}",
+            )
+        for item in result.get("recommendations", [])[:4]:
+            _log(
+                window,
+                f"  {int(item.get('rank', 0))}. "
+                f"[{item.get('priority', '-')}/{item.get('category', '-')}] "
+                f"{item.get('title', '-')}: {item.get('action', '-')}",
+            )
+
     elif kind == "cartography":
         state.latest_cartography_report = result
         _log(window, format_cartography_summary(result))
@@ -1759,6 +2005,26 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                 f"disagree={float(item['disagreement_rate']):.4f}, "
                 f"mean_p={float(item['mean_probability']):.4f}, "
                 f"flags={flags}",
+            )
+    elif kind == "schema_guard":
+        state.latest_schema_guard_report = result
+        state.latest_promotion_gate_report = None
+        _log(window, format_schema_guard_summary(result))
+        for item in result.get("features", [])[:6]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            _log(
+                window,
+                f"  {item.get('feature_name', 'x')}: "
+                f"range=[{float(item.get('min', 0.0)):.4f}, {float(item.get('max', 0.0)):.4f}], "
+                f"unique={int(item.get('unique_count', 0))}, "
+                f"outliers={int(item.get('outlier_count', 0))}, flags={flags}",
+            )
+        for item in result.get("recommendations", [])[:4]:
+            _log(
+                window,
+                f"  {int(item.get('rank', 0))}. "
+                f"[{item.get('priority', '-')}/{item.get('category', '-')}] "
+                f"{item.get('title', '-')}: {item.get('action', '-')}",
             )
     elif kind == "prototype_audit":
         state.latest_prototype_audit_report = result
@@ -1917,6 +2183,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
             )
     elif kind == "reliability_atlas":
         state.latest_reliability_atlas_report = result
+        state.latest_promotion_gate_report = None
         _log(window, format_reliability_atlas_summary(result))
         for item in result.get("worst_bins", [])[:5]:
             _log(
@@ -1925,6 +2192,31 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                 f"n={int(item['count'])}, conf={float(item['confidence']):.4f}, "
                 f"acc={float(item['accuracy']):.4f}, err={float(item['absolute_error']):.4f}, "
                 f"dir={item.get('calibration_direction', '-')}",
+            )
+        for item in result.get("recommendations", [])[:4]:
+            _log(
+                window,
+                f"  {int(item.get('rank', 0))}. "
+                f"[{item.get('priority', '-')}/{item.get('category', '-')}] "
+                f"{item.get('title', '-')}: {item.get('action', '-')}",
+            )
+    elif kind == "shadow_replay":
+        state.latest_shadow_replay_report = result
+        state.latest_promotion_gate_report = None
+        _log(window, format_shadow_replay_summary(result))
+        for item in result.get("degradation_windows", [])[:5]:
+            _log(
+                window,
+                f"  window {int(item['window_index'])} rows {int(item['start_row'])}:{int(item['end_row_exclusive'])}: "
+                f"F1={float(item['f1']):.4f}, acc={float(item['accuracy']):.4f}, "
+                f"Brier={float(item['brier_score']):.4f}, drop={float(-item['f1_delta_vs_first']):.4f}",
+            )
+        for item in result.get("error_runs", [])[:3]:
+            _log(
+                window,
+                f"  error run rows {int(item['start_row'])}:{int(item['end_row_exclusive'])}: "
+                f"len={int(item['length'])}, loss={float(item['mean_loss']):.4f}, "
+                f"conf={float(item['mean_confidence']):.4f}",
             )
         for item in result.get("recommendations", [])[:4]:
             _log(
@@ -2027,7 +2319,10 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_sample_review_report = None
         state.latest_error_atlas_report = None
         state.latest_reliability_atlas_report = None
+        state.latest_shadow_replay_report = None
         state.latest_threshold_report = None
+        state.latest_threshold_stability_report = None
+        state.latest_capacity_planner_report = None
         state.latest_model_response_report = None
         state.latest_pairwise_interaction_report = None
         state.latest_slice_report = None
@@ -2076,7 +2371,10 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_sample_review_report = None
         state.latest_error_atlas_report = None
         state.latest_reliability_atlas_report = None
+        state.latest_shadow_replay_report = None
         state.latest_threshold_report = None
+        state.latest_threshold_stability_report = None
+        state.latest_capacity_planner_report = None
         state.latest_model_response_report = None
         state.latest_pairwise_interaction_report = None
         state.latest_slice_report = None
@@ -2193,7 +2491,10 @@ def _invalidate_model_artifacts(state: AppState) -> None:
     state.latest_sample_review_report = None
     state.latest_error_atlas_report = None
     state.latest_reliability_atlas_report = None
+    state.latest_shadow_replay_report = None
     state.latest_threshold_report = None
+    state.latest_threshold_stability_report = None
+    state.latest_capacity_planner_report = None
     state.latest_model_response_report = None
     state.latest_pairwise_interaction_report = None
     state.latest_slice_report = None
@@ -2260,6 +2561,7 @@ def _set_busy(window, busy: bool) -> None:
         "-POPULATION_DRIFT-",
         "-ADVERSARIAL_VALIDATION-",
         "-CHRONOLOGICAL_HOLDOUT-",
+        "-SHADOW_REPLAY-",
         "-LEARNING_CURVE-",
         "-ABLATION_DIAGNOSTICS-",
         "-STRESS_TEST-",
@@ -2268,6 +2570,8 @@ def _set_busy(window, busy: bool) -> None:
         "-PAIRWISE_INTERACTIONS-",
         "-SUBGROUP_DISPARITY-",
         "-THRESHOLD_DIAGNOSTICS-",
+        "-THRESHOLD_STABILITY-",
+        "-CAPACITY_PLANNER-",
         "-DECISION_CURVE-",
         "-CONFORMAL_SETS-",
         "-CALIBRATION_REPAIR-",
@@ -2277,6 +2581,7 @@ def _set_busy(window, busy: bool) -> None:
         "-PERMUTATION_NULL-",
         "-CARTOGRAPHY-",
         "-DATASET_TRIAGE-",
+        "-SCHEMA_GUARD-",
         "-EXPERIMENT_ADVISOR-",
         "-TRIAL_INSPECTOR-",
         "-PROMOTION_GATE-",
@@ -2605,7 +2910,10 @@ def _activate_model_slot(window, state: AppState, values: dict[str, Any]) -> Non
     state.latest_sample_review_report = None
     state.latest_error_atlas_report = None
     state.latest_reliability_atlas_report = None
+    state.latest_shadow_replay_report = None
     state.latest_threshold_report = None
+    state.latest_threshold_stability_report = None
+    state.latest_capacity_planner_report = None
     state.latest_model_response_report = None
     state.latest_pairwise_interaction_report = None
     state.latest_slice_report = None
@@ -2716,7 +3024,10 @@ def _load_registry(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_sample_review_report = None
         state.latest_error_atlas_report = None
         state.latest_reliability_atlas_report = None
+        state.latest_shadow_replay_report = None
         state.latest_threshold_report = None
+        state.latest_threshold_stability_report = None
+        state.latest_capacity_planner_report = None
         state.latest_model_response_report = None
         state.latest_pairwise_interaction_report = None
         state.latest_slice_report = None
@@ -2762,7 +3073,10 @@ def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_sample_review_report = None
     state.latest_error_atlas_report = None
     state.latest_reliability_atlas_report = None
+    state.latest_shadow_replay_report = None
     state.latest_threshold_report = None
+    state.latest_threshold_stability_report = None
+    state.latest_capacity_planner_report = None
     state.latest_model_response_report = None
     state.latest_pairwise_interaction_report = None
     state.latest_slice_report = None
@@ -2846,7 +3160,10 @@ def _build_stacked_ensemble(window, state: AppState, values: dict[str, Any]) -> 
     state.latest_sample_review_report = None
     state.latest_error_atlas_report = None
     state.latest_reliability_atlas_report = None
+    state.latest_shadow_replay_report = None
     state.latest_threshold_report = None
+    state.latest_threshold_stability_report = None
+    state.latest_capacity_planner_report = None
     state.latest_model_response_report = None
     state.latest_pairwise_interaction_report = None
     state.latest_slice_report = None
@@ -3007,6 +3324,17 @@ def _start_dataset_triage(window, state: AppState) -> None:
     _start_worker(window, state, "Running dataset triage workflow...", task)
 
 
+def _start_schema_guard(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    dataset = validate_dataset(state.features, state.labels, min_samples=2, require_two_classes=False)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_schema_guard(dataset.features, dataset.labels)
+        return "schema_guard", report
+
+    _start_worker(window, state, "Inferring numeric feature schema guard...", task)
+
+
 def _start_experiment_advisor(window, state: AppState) -> None:
     _ensure_not_busy(state)
 
@@ -3064,7 +3392,10 @@ def _start_promotion_gate(window, state: AppState) -> None:
             trial_inspector_report=state.latest_trial_inspector_report,
             error_atlas_report=state.latest_error_atlas_report,
             reliability_atlas_report=state.latest_reliability_atlas_report,
+            shadow_replay_report=state.latest_shadow_replay_report,
             threshold_report=state.latest_threshold_report,
+            threshold_stability_report=state.latest_threshold_stability_report,
+            capacity_planner_report=state.latest_capacity_planner_report,
             calibration_repair_report=state.latest_calibration_repair_report,
             stress_report=state.latest_stress_report,
             permutation_null_report=state.latest_permutation_null_report,
@@ -3094,6 +3425,25 @@ def _start_reliability_atlas(window, state: AppState) -> None:
         return "reliability_atlas", report
 
     _start_worker(window, state, "Building reliability atlas...", task)
+
+
+def _start_shadow_replay(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    if state.model is None:
+        raise ValueError("Train or load a model before running shadow replay.")
+    dataset = validate_dataset(state.features, state.labels, min_samples=6, require_two_classes=False)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_shadow_replay(
+            state.model,
+            dataset.features,
+            dataset.labels,
+            preprocessor=state.preprocessor,
+            threshold=state.latest_threshold,
+        )
+        return "shadow_replay", report
+
+    _start_worker(window, state, "Running shadow replay over loaded row order...", task)
 
 
 def _start_mps_bond_sweep(window, state: AppState, values: dict[str, Any]) -> None:
@@ -3266,7 +3616,10 @@ def _merge_slots(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_sample_review_report = None
         state.latest_error_atlas_report = None
         state.latest_reliability_atlas_report = None
+        state.latest_shadow_replay_report = None
         state.latest_threshold_report = None
+        state.latest_threshold_stability_report = None
+        state.latest_capacity_planner_report = None
         state.latest_model_response_report = None
         state.latest_pairwise_interaction_report = None
         state.latest_slice_report = None

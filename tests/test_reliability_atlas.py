@@ -2,7 +2,11 @@ import numpy as np
 import pytest
 
 from italtensor.preprocessing import FeatureStandardizer
-from italtensor.reliability_atlas import format_reliability_atlas_summary, run_reliability_atlas
+from italtensor.reliability_atlas import (
+    format_reliability_atlas_summary,
+    reliability_dataset_fingerprint,
+    run_reliability_atlas,
+)
 
 
 class ProbabilityModel:
@@ -20,6 +24,16 @@ class NanModel:
         return np.full((np.asarray(samples).shape[0], 1), np.nan, dtype=np.float32)
 
 
+class ConstantModel:
+    def predict(self, samples, verbose=0):
+        return np.full((np.asarray(samples).shape[0], 1), 0.5, dtype=np.float32)
+
+
+class OutOfRangeModel:
+    def predict(self, samples, verbose=0):
+        return np.full((np.asarray(samples).shape[0], 1), 1.2, dtype=np.float32)
+
+
 def test_reliability_atlas_ranks_worst_bins_and_recommendations():
     features = np.asarray([[0.05], [0.15], [0.85], [0.95], [0.55], [0.65]], dtype=np.float32)
     labels = np.asarray([0, 0, 0, 1, 1, 1], dtype=np.int32)
@@ -28,7 +42,10 @@ def test_reliability_atlas_ranks_worst_bins_and_recommendations():
 
     assert report["summary"]["expected_calibration_error"] > 0.0
     assert report["summary"]["max_calibration_error"] > 0.0
+    assert report["dataset_fingerprint"] == reliability_dataset_fingerprint(features, labels)
+    assert report["summary"]["clipped_probability_count"] == 0
     assert report["worst_bins"][0]["absolute_error"] >= report["worst_bins"][-1]["absolute_error"]
+    assert report["highest_impact_bins"][0]["weighted_error"] >= report["highest_impact_bins"][-1]["weighted_error"]
     assert report["summary"]["risk_level"] in {"medium", "high"}
     assert report["recommendations"][0]["category"] in {"calibration", "bin_review"}
     assert format_reliability_atlas_summary(report).startswith("Reliability atlas:")
@@ -60,3 +77,9 @@ def test_reliability_atlas_validates_model_output_and_labels():
         run_reliability_atlas(NanModel(), features, labels)
     with pytest.raises(ValueError, match="binary"):
         run_reliability_atlas(ProbabilityModel(), features, np.asarray([0, 2], dtype=np.int32))
+    with pytest.raises(ValueError, match="binary"):
+        run_reliability_atlas(ProbabilityModel(), features, np.asarray([0.2, 1.0], dtype=np.float32))
+    with pytest.raises(ValueError, match="finite numbers"):
+        run_reliability_atlas(ConstantModel(), np.asarray([[0.2], [np.inf]], dtype=np.float32), labels)
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        run_reliability_atlas(OutOfRangeModel(), features, labels)

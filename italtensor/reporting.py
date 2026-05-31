@@ -33,7 +33,10 @@ def build_experiment_report(
     sample_review_report: dict[str, Any] | None = None,
     error_atlas_report: dict[str, Any] | None = None,
     reliability_atlas_report: dict[str, Any] | None = None,
+    shadow_replay_report: dict[str, Any] | None = None,
     threshold_report: dict[str, Any] | None = None,
+    threshold_stability_report: dict[str, Any] | None = None,
+    capacity_planner_report: dict[str, Any] | None = None,
     model_response_report: dict[str, Any] | None = None,
     pairwise_interaction_report: dict[str, Any] | None = None,
     slice_report: dict[str, Any] | None = None,
@@ -89,7 +92,10 @@ def build_experiment_report(
         "sample_review": sample_review_report or None,
         "error_atlas": error_atlas_report or None,
         "reliability_atlas": reliability_atlas_report or None,
+        "shadow_replay": shadow_replay_report or None,
         "threshold_diagnostics": threshold_report or None,
+        "threshold_stability": threshold_stability_report or None,
+        "capacity_planner": capacity_planner_report or None,
         "model_response_diagnostics": model_response_report or None,
         "pairwise_interaction_diagnostics": pairwise_interaction_report or None,
         "slice_diagnostics": slice_report or None,
@@ -139,7 +145,10 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     sample_review = report.get("sample_review") or {}
     error_atlas = report.get("error_atlas") or {}
     reliability_atlas = report.get("reliability_atlas") or {}
+    shadow_replay = report.get("shadow_replay") or {}
     threshold_diagnostics = report.get("threshold_diagnostics") or {}
+    threshold_stability = report.get("threshold_stability") or {}
+    capacity_planner = report.get("capacity_planner") or {}
     model_response = report.get("model_response_diagnostics") or {}
     pairwise_interactions = report.get("pairwise_interaction_diagnostics") or {}
     slice_diagnostics = report.get("slice_diagnostics") or {}
@@ -639,6 +648,67 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     else:
         lines.append("- None")
 
+    lines.extend(["", "## Threshold Stability"])
+    if threshold_stability:
+        summary = threshold_stability.get("summary", {})
+        interval = threshold_stability.get("threshold_interval") or summary.get("threshold_interval", {})
+        lines.extend(
+            [
+                f"- Current threshold: {_format_value(threshold_stability.get('current_threshold', '-'))}",
+                f"- Bootstrap samples: {threshold_stability.get('bootstrap_samples', threshold_stability.get('resamples', '-'))}",
+                f"- Verdict: {summary.get('verdict', '-')}",
+                f"- Full-data best threshold: {_format_value(summary.get('full_best_threshold', '-'))}",
+                f"- Median best threshold: {_format_value(summary.get('median_best_threshold', '-'))}",
+                f"- 5-95% interval: {_format_value(interval.get('q05', '-'))}-{_format_value(interval.get('q95', '-'))}",
+                f"- Threshold spread: {_format_value(summary.get('threshold_spread', '-'))}",
+                f"- Current inside interval: {summary.get('current_inside_interval', '-')}",
+                f"- Median F1 gain vs current: {_format_value(summary.get('median_f1_gain_vs_current', '-'))}",
+                f"- Selection agreement: {_format_value(summary.get('selection_agreement_rate', '-'))}",
+                f"- Recommendation: {summary.get('recommendation') or 'none'}",
+            ]
+        )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Capacity Planner"])
+    if capacity_planner:
+        summary = capacity_planner.get("summary", {})
+        utility_model = capacity_planner.get("utility_model", {})
+        lines.extend(
+            [
+                f"- Verdict: {summary.get('verdict', '-')}",
+                f"- Best capacity fraction: {_format_value(summary.get('best_capacity_fraction', '-'))}",
+                f"- Best k: {summary.get('best_k', '-')}",
+                f"- Threshold floor: {_format_value(summary.get('best_threshold_floor', '-'))}",
+                f"- Precision at k: {_format_value(summary.get('best_precision_at_k', '-'))}",
+                f"- Recall captured: {_format_value(summary.get('best_recall_captured', '-'))}",
+                f"- Lift: {_format_value(summary.get('best_lift', '-'))}",
+                f"- Net utility: {_format_value(summary.get('best_net_utility', '-'))}",
+                f"- Utility model: TP={_format_value(utility_model.get('true_positive_value', '-'))}, "
+                f"FP={_format_value(utility_model.get('false_positive_cost', '-'))}, "
+                f"review={_format_value(utility_model.get('review_cost', '-'))}",
+                f"- Recommendation: {summary.get('recommendation') or 'none'}",
+            ]
+        )
+        for item in capacity_planner.get("capacity_points", capacity_planner.get("points", []))[:8]:
+            lines.append(
+                f"- budget={_format_value(item.get('capacity_fraction', '-'))}: "
+                f"k={item.get('k', '-')}, "
+                f"precision={_format_value(item.get('precision_at_k', '-'))}, "
+                f"recall={_format_value(item.get('recall_captured', '-'))}, "
+                f"lift={_format_value(item.get('lift', '-'))}, "
+                f"utility={_format_value(item.get('net_utility', '-'))}"
+            )
+        for item in capacity_planner.get("top_rows", [])[:5]:
+            lines.append(
+                f"- top row {item.get('rank', '-')}: "
+                f"row={item.get('row_index', '-')}, "
+                f"label={item.get('label', '-')}, "
+                f"p={_format_value(item.get('probability', '-'))}"
+            )
+    else:
+        lines.append("- None")
+
     lines.extend(["", "## Decision Curve / Utility"])
     if decision_curve:
         summary = decision_curve.get("summary", {})
@@ -912,6 +982,43 @@ def format_markdown_report(report: dict[str, Any]) -> str:
                 f"logloss_increase={_format_value(item.get('log_loss_increase', '-'))}, "
                 f"prob_shift={_format_value(item.get('mean_probability_shift', '-'))}, "
                 f"flags={flags}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Shadow Replay Diagnostics"])
+    if shadow_replay:
+        summary = shadow_replay.get("summary", {})
+        lines.extend(
+            [
+                f"- Row-order assumption: {shadow_replay.get('row_order_assumption', '-')}",
+                f"- Threshold: {_format_value(shadow_replay.get('threshold', '-'))}",
+                f"- Windows: {shadow_replay.get('window_count', '-')}",
+                f"- Verdict: {summary.get('verdict', '-')}",
+                f"- First-window F1: {_format_value(summary.get('first_window_f1', '-'))}",
+                f"- Last-window F1: {_format_value(summary.get('last_window_f1', '-'))}",
+                f"- Worst-window F1: {_format_value(summary.get('worst_window_f1', '-'))}",
+                f"- Max F1 drop: {_format_value(summary.get('max_f1_drop', '-'))}",
+                f"- Max accuracy drop: {_format_value(summary.get('max_accuracy_drop', '-'))}",
+                f"- Max Brier increase: {_format_value(summary.get('max_brier_increase', '-'))}",
+                f"- Degraded windows: {summary.get('degradation_window_count', '-')}",
+                f"- Recommendation: {summary.get('recommendation') or 'none'}",
+            ]
+        )
+        for item in shadow_replay.get("worst_windows", shadow_replay.get("degradation_windows", []))[:6]:
+            lines.append(
+                f"- Window {item.get('window_index', '-')}: rows {item.get('start_row', '-')}:{item.get('end_row_exclusive', '-')}, "
+                f"F1={_format_value(item.get('f1', '-'))}, "
+                f"acc={_format_value(item.get('accuracy', '-'))}, "
+                f"Brier={_format_value(item.get('brier_score', '-'))}, "
+                f"drop={_format_value(-float(item.get('f1_delta_vs_first', 0.0)))}"
+            )
+        for item in shadow_replay.get("error_runs", [])[:4]:
+            lines.append(
+                f"- Error run rows {item.get('start_row', '-')}:{item.get('end_row_exclusive', '-')}: "
+                f"length={item.get('length', '-')}, "
+                f"mean_loss={_format_value(item.get('mean_loss', '-'))}, "
+                f"mean_confidence={_format_value(item.get('mean_confidence', '-'))}"
             )
     else:
         lines.append("- None")

@@ -14,6 +14,10 @@ from italtensor.app import (
     _activate_model_slot,
     _build_ensemble,
     _compare_models,
+    _compatible_capacity_planner_report,
+    _compatible_reliability_atlas_report,
+    _compatible_shadow_replay_report,
+    _compatible_threshold_stability_report,
     _run_weight_analysis,
     _handle_worker_done,
     _import_reviewed_labels,
@@ -24,7 +28,11 @@ from italtensor.app import (
 )
 from italtensor.data import DataValidationError, validate_dataset
 from italtensor.modeling import ModelConfig
+from italtensor.capacity_planner import capacity_planner_dataset_fingerprint
 from italtensor.preprocessing import FeatureStandardizer
+from italtensor.reliability_atlas import reliability_dataset_fingerprint
+from italtensor.shadow_replay import shadow_replay_dataset_fingerprint
+from italtensor.threshold_stability import threshold_stability_dataset_fingerprint
 from italtensor.registry import ModelSlot
 
 
@@ -78,7 +86,10 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         latest_sample_review_report={"summary": {"label_issue_count": 1}},
         latest_error_atlas_report={"summary": {"error_count": 1}},
         latest_reliability_atlas_report={"summary": {"risk_level": "medium"}},
+        latest_shadow_replay_report={"summary": {"verdict": "ordered_degradation_review"}},
         latest_threshold_report={"summary": {"best_f1": 1.0}},
+        latest_threshold_stability_report={"summary": {"verdict": "threshold_stability_review"}},
+        latest_capacity_planner_report={"summary": {"verdict": "actionable_capacity_plan"}},
         latest_model_response_report={"summary": {"top_feature": 0}},
         latest_pairwise_interaction_report={"summary": {"top_pair": [0, 1]}},
         latest_slice_report={"summary": {"worst_f1_delta": -0.5}},
@@ -122,7 +133,10 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
     assert state.latest_sample_review_report is None
     assert state.latest_error_atlas_report is None
     assert state.latest_reliability_atlas_report is None
+    assert state.latest_shadow_replay_report is None
     assert state.latest_threshold_report is None
+    assert state.latest_threshold_stability_report is None
+    assert state.latest_capacity_planner_report is None
     assert state.latest_model_response_report is None
     assert state.latest_pairwise_interaction_report is None
     assert state.latest_slice_report is None
@@ -193,7 +207,10 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
         latest_dataset_triage_report={"summary": {"readiness_score": 72.0}},
         latest_error_atlas_report={"summary": {"error_count": 2}},
         latest_reliability_atlas_report={"summary": {"risk_level": "medium"}},
+        latest_shadow_replay_report={"summary": {"verdict": "ordered_degradation_review"}},
         latest_experiment_advisor_report={"summary": {"recommended_next_step": "Run auto experiments"}},
+        latest_threshold_stability_report={"summary": {"verdict": "threshold_stability_review"}},
+        latest_capacity_planner_report={"summary": {"verdict": "actionable_capacity_plan"}},
         latest_trial_inspector_report={"summary": {"best_trial_index": 2}},
         latest_promotion_gate_report={"summary": {"verdict": "needs_review"}},
     )
@@ -211,6 +228,9 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
     assert payload["dataset_triage"]["summary"]["readiness_score"] == 72.0
     assert payload["error_atlas"]["summary"]["error_count"] == 2
     assert payload["reliability_atlas"]["summary"]["risk_level"] == "medium"
+    assert payload["shadow_replay"]["summary"]["verdict"] == "ordered_degradation_review"
+    assert payload["threshold_stability"]["summary"]["verdict"] == "threshold_stability_review"
+    assert payload["capacity_planner"]["summary"]["verdict"] == "actionable_capacity_plan"
     assert payload["experiment_advisor"]["summary"]["recommended_next_step"] == "Run auto experiments"
     assert payload["trial_inspector"]["summary"]["best_trial_index"] == 2
     assert payload["promotion_gate"]["summary"]["verdict"] == "needs_review"
@@ -234,6 +254,9 @@ def test_training_preserves_dataset_only_diagnostics():
         latest_dataset_triage_report={"summary": {"readiness_score": 77.0}},
         latest_error_atlas_report={"summary": {"error_count": 1}},
         latest_reliability_atlas_report={"summary": {"risk_level": "medium"}},
+        latest_shadow_replay_report={"summary": {"verdict": "ordered_degradation_review"}},
+        latest_threshold_stability_report={"summary": {"verdict": "threshold_stability_review"}},
+        latest_capacity_planner_report={"summary": {"verdict": "actionable_capacity_plan"}},
         latest_experiment_advisor_report={"summary": {"recommended_next_step": "Old advice"}},
         latest_trial_inspector_report={"summary": {"best_trial_index": 1}},
         latest_promotion_gate_report={"summary": {"verdict": "old"}},
@@ -258,10 +281,73 @@ def test_training_preserves_dataset_only_diagnostics():
     assert state.latest_dataset_triage_report == {"summary": {"readiness_score": 77.0}}
     assert state.latest_error_atlas_report is None
     assert state.latest_reliability_atlas_report is None
+    assert state.latest_shadow_replay_report is None
+    assert state.latest_threshold_stability_report is None
+    assert state.latest_capacity_planner_report is None
     assert state.latest_experiment_advisor_report is None
     assert state.latest_trial_inspector_report is None
     assert state.latest_promotion_gate_report is None
     assert state.latest_metrics == {"f1": 0.5}
+
+
+def test_compatible_reliability_atlas_report_rejects_mismatched_dataset():
+    state = AppState(features=[[0.1], [0.9]], labels=[0, 1], input_dim=1)
+    matching = {
+        "dataset_fingerprint": reliability_dataset_fingerprint(state.features, state.labels),
+        "summary": {"risk_level": "low"},
+    }
+    mismatched = {
+        "dataset_fingerprint": reliability_dataset_fingerprint([[0.2], [0.8]], [0, 1]),
+        "summary": {"risk_level": "medium"},
+    }
+
+    assert _compatible_reliability_atlas_report(matching, state) == matching
+    assert _compatible_reliability_atlas_report(mismatched, state) is None
+
+
+def test_compatible_shadow_replay_report_rejects_mismatched_or_reordered_dataset():
+    state = AppState(features=[[0.1], [0.9], [0.2], [0.8]], labels=[0, 1, 0, 1], input_dim=1)
+    matching = {
+        "dataset_fingerprint": shadow_replay_dataset_fingerprint(state.features, state.labels),
+        "summary": {"verdict": "stable_ordered_replay"},
+    }
+    reordered = {
+        "dataset_fingerprint": shadow_replay_dataset_fingerprint([[0.2], [0.1], [0.8], [0.9]], [0, 0, 1, 1]),
+        "summary": {"verdict": "ordered_degradation_review"},
+    }
+
+    assert _compatible_shadow_replay_report(matching, state) == matching
+    assert _compatible_shadow_replay_report(reordered, state) is None
+
+
+def test_compatible_threshold_stability_report_rejects_mismatched_dataset():
+    state = AppState(features=[[0.1], [0.2], [0.3], [0.7], [0.8], [0.9]], labels=[0, 0, 0, 1, 1, 1], input_dim=1)
+    matching = {
+        "dataset_fingerprint": threshold_stability_dataset_fingerprint(state.features, state.labels),
+        "summary": {"verdict": "stable_threshold"},
+    }
+    mismatched = {
+        "dataset_fingerprint": threshold_stability_dataset_fingerprint([[0.1], [0.2], [0.4], [0.7], [0.8], [0.9]], state.labels),
+        "summary": {"verdict": "unstable_threshold"},
+    }
+
+    assert _compatible_threshold_stability_report(matching, state) == matching
+    assert _compatible_threshold_stability_report(mismatched, state) is None
+
+
+def test_compatible_capacity_planner_report_rejects_mismatched_dataset():
+    state = AppState(features=[[0.1], [0.9], [0.2], [0.8]], labels=[0, 1, 0, 1], input_dim=1)
+    matching = {
+        "dataset_fingerprint": capacity_planner_dataset_fingerprint(state.features, state.labels),
+        "summary": {"verdict": "actionable_capacity_plan"},
+    }
+    mismatched = {
+        "dataset_fingerprint": capacity_planner_dataset_fingerprint([[0.1], [0.8], [0.2], [0.9]], state.labels),
+        "summary": {"verdict": "not_actionable"},
+    }
+
+    assert _compatible_capacity_planner_report(matching, state) == matching
+    assert _compatible_capacity_planner_report(mismatched, state) is None
 
 
 def test_handle_worker_done_stores_stress_report_without_mutating_model():
@@ -1133,6 +1219,96 @@ def test_handle_worker_done_stores_threshold_report_without_mutating_model():
     assert "Threshold sweep" in window["-LOG-"].value
 
 
+def test_handle_worker_done_stores_threshold_stability_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(
+        model=object(),
+        latest_metrics={"f1": 0.9},
+        latest_threshold=0.4,
+        latest_promotion_gate_report={"summary": {"verdict": "old"}},
+        busy=True,
+    )
+    model = state.model
+    report = {
+        "current_threshold": 0.4,
+        "summary": {
+            "verdict": "threshold_stability_review",
+            "median_best_threshold": 0.35,
+            "threshold_spread": 0.2,
+            "median_f1_gain_vs_current": 0.05,
+            "recommendation": "Review threshold stability.",
+            "threshold_interval": {"q05": 0.25, "q50": 0.35, "q95": 0.45},
+            "current_inside_interval": True,
+        },
+        "recommendations": [
+            {
+                "rank": 1,
+                "priority": "medium",
+                "category": "threshold",
+                "title": "Review threshold stability",
+                "action": "Review threshold stability.",
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("threshold_stability", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_threshold_stability_report == report
+    assert state.latest_promotion_gate_report is None
+    assert state.latest_threshold == 0.4
+    assert state.busy is False
+    assert "Threshold stability" in window["-LOG-"].value
+    assert "Review threshold stability" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_capacity_planner_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(
+        model=object(),
+        latest_metrics={"f1": 0.9},
+        latest_threshold=0.4,
+        latest_promotion_gate_report={"summary": {"verdict": "old"}},
+        busy=True,
+    )
+    model = state.model
+    report = {
+        "summary": {
+            "verdict": "actionable_capacity_plan",
+            "best_capacity_fraction": 0.5,
+            "best_precision_at_k": 0.75,
+            "best_recall_captured": 0.6,
+            "best_lift": 1.5,
+            "best_net_utility": 8.0,
+            "recommendation": "Plan top 10 rows.",
+        },
+        "points": [
+            {"capacity_fraction": 0.5, "k": 10, "precision_at_k": 0.75, "recall_captured": 0.6, "lift": 1.5, "net_utility": 8.0}
+        ],
+        "recommendations": [
+            {
+                "rank": 1,
+                "priority": "medium",
+                "category": "capacity",
+                "title": "Use the best utility budget as a starting point",
+                "action": "Plan top 10 rows.",
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("capacity_planner", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_capacity_planner_report == report
+    assert state.latest_promotion_gate_report is None
+    assert state.latest_threshold == 0.4
+    assert state.busy is False
+    assert "Capacity planner" in window["-LOG-"].value
+    assert "Plan top 10 rows" in window["-LOG-"].value
+
+
 def test_handle_worker_done_stores_sample_review_without_mutating_model():
     window = FakeWindow()
     state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
@@ -1201,7 +1377,13 @@ def test_handle_worker_done_stores_error_atlas_without_mutating_model():
 
 def test_handle_worker_done_stores_reliability_atlas_without_mutating_model():
     window = FakeWindow()
-    state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
+    state = AppState(
+        model=object(),
+        latest_metrics={"f1": 0.9},
+        latest_threshold=0.4,
+        latest_promotion_gate_report={"summary": {"verdict": "old"}},
+        busy=True,
+    )
     model = state.model
     report = {
         "summary": {
@@ -1239,10 +1421,67 @@ def test_handle_worker_done_stores_reliability_atlas_without_mutating_model():
     assert state.model is model
     assert state.latest_metrics == {"f1": 0.9}
     assert state.latest_reliability_atlas_report == report
+    assert state.latest_promotion_gate_report is None
     assert state.latest_threshold == 0.4
     assert state.busy is False
     assert "Reliability atlas" in window["-LOG-"].value
     assert "Run Calibration repair" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_shadow_replay_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(
+        model=object(),
+        latest_metrics={"f1": 0.9},
+        latest_threshold=0.4,
+        latest_promotion_gate_report={"summary": {"verdict": "old"}},
+        busy=True,
+    )
+    model = state.model
+    report = {
+        "summary": {
+            "verdict": "ordered_degradation_review",
+            "first_window_f1": 0.9,
+            "last_window_f1": 0.6,
+            "max_f1_drop": 0.3,
+            "worst_window_index": 2,
+            "recommendation": "Inspect degraded replay windows.",
+        },
+        "degradation_windows": [
+            {
+                "window_index": 2,
+                "start_row": 20,
+                "end_row_exclusive": 30,
+                "f1": 0.6,
+                "accuracy": 0.7,
+                "brier_score": 0.3,
+                "f1_delta_vs_first": -0.3,
+            }
+        ],
+        "error_runs": [
+            {"start_row": 23, "end_row_exclusive": 27, "length": 4, "mean_loss": 1.2, "mean_confidence": 0.8}
+        ],
+        "recommendations": [
+            {
+                "rank": 1,
+                "priority": "medium",
+                "category": "temporal_validation",
+                "title": "Review degraded replay windows",
+                "action": "Inspect degraded replay windows.",
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("shadow_replay", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_shadow_replay_report == report
+    assert state.latest_promotion_gate_report is None
+    assert state.latest_threshold == 0.4
+    assert state.busy is False
+    assert "Shadow replay" in window["-LOG-"].value
+    assert "Inspect degraded replay windows" in window["-LOG-"].value
 
 
 def test_import_reviewed_labels_appends_rows_and_invalidates_model(tmp_path):

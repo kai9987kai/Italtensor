@@ -20,7 +20,10 @@ def build_promotion_gate(
     trial_inspector_report: dict[str, Any] | None = None,
     error_atlas_report: dict[str, Any] | None = None,
     reliability_atlas_report: dict[str, Any] | None = None,
+    shadow_replay_report: dict[str, Any] | None = None,
     threshold_report: dict[str, Any] | None = None,
+    threshold_stability_report: dict[str, Any] | None = None,
+    capacity_planner_report: dict[str, Any] | None = None,
     calibration_repair_report: dict[str, Any] | None = None,
     stress_report: dict[str, Any] | None = None,
     permutation_null_report: dict[str, Any] | None = None,
@@ -191,6 +194,58 @@ def build_promotion_gate(
                 action="Run Threshold tradeoff and document the selected operating point.",
                 penalty=7.0,
             )
+        if threshold_stability_report:
+            summary = threshold_stability_report.get("summary", {})
+            verdict = str(summary.get("verdict", "stable_threshold"))
+            spread = float(summary.get("threshold_spread", 0.0) or 0.0)
+            current_inside = bool(summary.get("current_inside_interval", True))
+            median_gain = float(summary.get("median_f1_gain_vs_current", 0.0) or 0.0)
+            if verdict == "unstable_threshold":
+                add(
+                    severity="blocker",
+                    category="threshold",
+                    title="Threshold stability is poor",
+                    status="fail",
+                    evidence=f"spread={spread:.3f}, median_gain={median_gain:.3f}, current_inside={current_inside}.",
+                    action="Collect more validation rows or choose a conservative threshold range before promotion.",
+                    penalty=16.0,
+                )
+            elif verdict == "threshold_stability_review":
+                add(
+                    severity="caution",
+                    category="threshold",
+                    title="Threshold stability needs review",
+                    status="review",
+                    evidence=f"spread={spread:.3f}, median_gain={median_gain:.3f}, current_inside={current_inside}.",
+                    action="Review threshold stability with threshold tradeoff and decision-curve diagnostics.",
+                    penalty=6.0,
+                )
+        if capacity_planner_report:
+            summary = capacity_planner_report.get("summary", {})
+            verdict = str(summary.get("verdict", "actionable_capacity_plan"))
+            utility = float(summary.get("best_net_utility", 0.0) or 0.0)
+            lift = float(summary.get("best_lift", 0.0) or 0.0)
+            recall = float(summary.get("best_recall_captured", 0.0) or 0.0)
+            if verdict in {"not_actionable", "no_positive_evidence"}:
+                add(
+                    severity="blocker",
+                    category="capacity",
+                    title="Capacity planner is not actionable",
+                    status="fail",
+                    evidence=f"verdict={verdict}, utility={utility:.3f}, lift={lift:.3f}.",
+                    action="Review labels, costs, and ranking quality before assigning finite action capacity.",
+                    penalty=14.0,
+                )
+            elif verdict == "low_capture_review" or lift < 1.0:
+                add(
+                    severity="caution",
+                    category="capacity",
+                    title="Capacity planner needs review",
+                    status="review",
+                    evidence=f"recall={recall:.3f}, lift={lift:.3f}, utility={utility:.3f}.",
+                    action="Adjust capacity or improve ranking before using this as an operational action queue.",
+                    penalty=6.0,
+                )
 
     _add_triage_checks(add, dataset_triage_report)
     _add_trial_checks(add, trial_history, trial_inspector_report)
@@ -201,6 +256,7 @@ def build_promotion_gate(
         stress_report=stress_report,
         error_atlas_report=error_atlas_report,
         reliability_atlas_report=reliability_atlas_report,
+        shadow_replay_report=shadow_replay_report,
         permutation_null_report=permutation_null_report,
         population_drift_report=population_drift_report,
         adversarial_validation_report=adversarial_validation_report,
@@ -358,6 +414,7 @@ def _add_repair_and_robustness_checks(
     stress_report: dict[str, Any] | None,
     error_atlas_report: dict[str, Any] | None,
     reliability_atlas_report: dict[str, Any] | None,
+    shadow_replay_report: dict[str, Any] | None,
     permutation_null_report: dict[str, Any] | None,
     population_drift_report: dict[str, Any] | None,
     adversarial_validation_report: dict[str, Any] | None,
@@ -448,6 +505,31 @@ def _add_repair_and_robustness_checks(
                 status="review",
                 evidence=f"ECE={ece:.3f}, max_bin_error={max_error:.3f}.",
                 action="Review worst reliability bins before promotion.",
+                penalty=7.0,
+            )
+    if shadow_replay_report:
+        summary = shadow_replay_report.get("summary", {})
+        verdict = str(summary.get("verdict", "stable_ordered_replay"))
+        max_f1_drop = float(summary.get("max_f1_drop", 0.0) or 0.0)
+        max_brier_increase = float(summary.get("max_brier_increase", 0.0) or 0.0)
+        if verdict == "severe_ordered_degradation":
+            add(
+                severity="blocker",
+                category="temporal",
+                title="Shadow replay shows severe ordered degradation",
+                status="fail",
+                evidence=f"max_f1_drop={max_f1_drop:.3f}, max_brier_increase={max_brier_increase:.3f}.",
+                action="Validate on later rows or retrain with an order-aware split before promotion.",
+                penalty=18.0,
+            )
+        elif verdict in {"ordered_degradation_review", "thin_ordered_evidence"}:
+            add(
+                severity="caution",
+                category="temporal",
+                title="Shadow replay needs ordered-row review",
+                status="review",
+                evidence=f"verdict={verdict}, max_f1_drop={max_f1_drop:.3f}.",
+                action="Inspect degraded replay windows and compare with chronological holdout or drift diagnostics.",
                 penalty=7.0,
             )
     if permutation_null_report:

@@ -143,6 +143,36 @@ def test_report_export_json_and_markdown(tmp_path):
                 }
             ],
         },
+        shadow_replay_report={
+            "summary": {
+                "verdict": "ordered_degradation_review",
+                "first_window_f1": 0.9,
+                "last_window_f1": 0.6,
+                "worst_window_f1": 0.6,
+                "max_f1_drop": 0.3,
+                "max_accuracy_drop": 0.2,
+                "max_brier_increase": 0.12,
+                "degradation_window_count": 1,
+                "recommendation": "Inspect degraded replay windows.",
+            },
+            "threshold": 0.4,
+            "window_count": 2,
+            "row_order_assumption": "loaded_row_order",
+            "worst_windows": [
+                {
+                    "window_index": 1,
+                    "start_row": 2,
+                    "end_row_exclusive": 4,
+                    "f1": 0.6,
+                    "accuracy": 0.5,
+                    "brier_score": 0.3,
+                    "f1_delta_vs_first": -0.3,
+                }
+            ],
+            "error_runs": [
+                {"start_row": 2, "end_row_exclusive": 4, "length": 2, "mean_loss": 1.1, "mean_confidence": 0.8}
+            ],
+        },
         threshold_report={
             "current_threshold": 0.4,
             "summary": {
@@ -155,6 +185,46 @@ def test_report_export_json_and_markdown(tmp_path):
             "best_f1": {"threshold": 0.3, "f1": 0.8, "precision": 0.75, "recall": 0.85, "cost": 0.3},
             "best_balanced_accuracy": {"threshold": 0.35, "f1": 0.75, "precision": 0.7, "recall": 0.8, "cost": 0.4},
             "min_cost": {"threshold": 0.25, "f1": 0.7, "precision": 0.65, "recall": 0.9, "cost": 0.25},
+        },
+        threshold_stability_report={
+            "current_threshold": 0.4,
+            "bootstrap_samples": 24,
+            "threshold_interval": {"q05": 0.25, "q50": 0.35, "q95": 0.55},
+            "summary": {
+                "verdict": "threshold_stability_review",
+                "full_best_threshold": 0.35,
+                "median_best_threshold": 0.35,
+                "threshold_spread": 0.3,
+                "current_inside_interval": True,
+                "median_f1_gain_vs_current": 0.04,
+                "selection_agreement_rate": 0.5,
+                "recommendation": "Review threshold stability.",
+            },
+        },
+        capacity_planner_report={
+            "utility_model": {"true_positive_value": 5.0, "false_positive_cost": 1.0, "review_cost": 0.25},
+            "summary": {
+                "verdict": "actionable_capacity_plan",
+                "best_capacity_fraction": 0.5,
+                "best_k": 2,
+                "best_threshold_floor": 0.65,
+                "best_precision_at_k": 0.5,
+                "best_recall_captured": 0.5,
+                "best_lift": 1.0,
+                "best_net_utility": 3.5,
+                "recommendation": "Plan review/action capacity around top 2 row(s).",
+            },
+            "capacity_points": [
+                {
+                    "capacity_fraction": 0.5,
+                    "k": 2,
+                    "precision_at_k": 0.5,
+                    "recall_captured": 0.5,
+                    "lift": 1.0,
+                    "net_utility": 3.5,
+                }
+            ],
+            "top_rows": [{"rank": 1, "row_index": 0, "label": 1, "probability": 0.9}],
         },
         decision_curve_report={
             "prevalence": 0.5,
@@ -743,7 +813,10 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["sample_review"]["summary"]["label_issue_count"] == 1
     assert saved_json["error_atlas"]["summary"]["error_count"] == 2
     assert saved_json["reliability_atlas"]["summary"]["risk_level"] == "medium"
+    assert saved_json["shadow_replay"]["summary"]["verdict"] == "ordered_degradation_review"
     assert saved_json["threshold_diagnostics"]["summary"]["best_f1_threshold"] == 0.3
+    assert saved_json["threshold_stability"]["summary"]["verdict"] == "threshold_stability_review"
+    assert saved_json["capacity_planner"]["summary"]["best_k"] == 2
     assert saved_json["decision_curve_diagnostics"]["summary"]["best_threshold"] == 0.4
     assert saved_json["posthoc_conformal_diagnostics"]["summary"]["recommended_alpha"] == 0.1
     assert saved_json["posthoc_calibration_repair_diagnostics"]["summary"]["recommended_method"] == "platt"
@@ -781,9 +854,15 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "## Error Atlas" in saved_markdown
     assert "high-confidence error row 2" in saved_markdown
     assert "## Reliability Atlas" in saved_markdown
+    assert "## Capacity Planner" in saved_markdown
+    assert "budget=0.5000" in saved_markdown
     assert "Run Calibration repair" in saved_markdown
+    assert "## Shadow Replay Diagnostics" in saved_markdown
+    assert "Inspect degraded replay windows" in saved_markdown
     assert "## Threshold Tradeoffs" in saved_markdown
     assert "Best F1 threshold" in saved_markdown
+    assert "## Threshold Stability" in saved_markdown
+    assert "Review threshold stability" in saved_markdown
     assert "## Decision Curve / Utility" in saved_markdown
     assert "Useful threshold ranges" in saved_markdown
     assert "## Post-Hoc Conformal Diagnostics" in saved_markdown

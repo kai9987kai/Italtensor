@@ -143,6 +143,9 @@ def test_experimental_builtin_presets_are_available():
         "Population drift lab",
         "Adversarial validation lab",
         "Chronological holdout lab",
+        "Shadow replay lab",
+        "Threshold stability lab",
+        "Capacity planner lab",
         "Cost-sensitive screening",
         "Decision utility tradeoff",
         "Selective abstention triage",
@@ -325,6 +328,55 @@ def test_chronological_holdout_lab_preset_preserves_order_and_has_temporal_featu
     ]
     assert any(example["name"] == "Late degraded review" for example in metadata["prediction_examples"])
     assert float(dataset.features[:48, 2].mean()) < float(dataset.features[48:, 2].mean())
+
+
+def test_shadow_replay_lab_preset_preserves_order_and_late_regime():
+    metadata = preset_metadata("Shadow replay lab")
+    dataset = generate_builtin_preset("Shadow replay lab", sample_count=100, seed=9)
+
+    assert metadata["input_dim"] == 5
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == [
+        "stable_margin",
+        "late_counter_signal",
+        "regime_marker",
+        "review_band",
+        "decoy_noise",
+    ]
+    assert any(example["name"] == "Late replay review" for example in metadata["prediction_examples"])
+    assert float(dataset.features[:55, 2].mean()) < -0.8
+    assert float(dataset.features[-20:, 2].mean()) > 0.8
+
+
+def test_threshold_stability_lab_preset_has_boundary_band():
+    metadata = preset_metadata("Threshold stability lab")
+    dataset = generate_builtin_preset("Threshold stability lab", sample_count=120, seed=10)
+
+    assert metadata["input_dim"] == 4
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == ["risk_score", "support_signal", "boundary_band", "decoy_noise"]
+    assert any(example["name"] == "Boundary threshold review" for example in metadata["prediction_examples"])
+    assert int(np.sum(dataset.features[:, 2] > 0.7)) >= 30
+    assert 0.35 <= float(np.mean(dataset.labels == 1)) <= 0.65
+
+
+def test_capacity_planner_lab_preset_has_false_alarm_decoys():
+    metadata = preset_metadata("Capacity planner lab")
+    dataset = generate_builtin_preset("Capacity planner lab", sample_count=160, seed=10)
+    positive_rate = float(np.mean(dataset.labels == 1))
+
+    assert metadata["input_dim"] == 5
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == [
+        "priority_score",
+        "support_signal",
+        "false_alarm_decoy",
+        "capacity_band",
+        "background_noise",
+    ]
+    assert any(example["name"] == "False-alarm review" for example in metadata["prediction_examples"])
+    assert 0.10 <= positive_rate <= 0.25
+    assert int(np.sum((dataset.labels == 0) & (dataset.features[:, 2] > 0.8))) >= 12
 
 
 def test_cost_sensitive_screening_preset_has_borderline_example():

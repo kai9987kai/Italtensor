@@ -76,12 +76,85 @@ def test_promotion_gate_needs_review_for_thin_or_unstable_search():
         trial_inspector_report={"valid_trial_count": 2, "summary": {"leader_margin_f1": 0.01}},
         error_atlas_report={"summary": {"high_confidence_error_count": 1, "error_rate": 0.10}},
         reliability_atlas_report={"summary": {"risk_level": "medium", "expected_calibration_error": 0.09, "max_calibration_error": 0.25}},
+        threshold_stability_report={"summary": {"verdict": "threshold_stability_review", "threshold_spread": 0.2, "median_f1_gain_vs_current": 0.05, "current_inside_interval": True}},
     )
 
     assert report["summary"]["verdict"] == "needs_review"
     assert any(item["title"] == "Leaderboard winner is unstable" for item in report["checks"])
     assert any(item["category"] == "error_analysis" for item in report["checks"])
     assert any(item["title"] == "Reliability atlas needs calibration review" for item in report["checks"])
+    assert any(item["title"] == "Threshold stability needs review" for item in report["checks"])
     summary = format_promotion_gate_summary(report)
     assert summary.startswith("Promotion gate:")
     assert "verdict=needs_review" in summary
+
+
+def test_promotion_gate_blocks_severe_shadow_replay_degradation():
+    report = build_promotion_gate(
+        sample_count=120,
+        input_dim=3,
+        labels=[0, 1] * 60,
+        config=ModelConfig(feature_map="linear"),
+        metrics={"f1": 0.86, "accuracy": 0.88, "balanced_accuracy": 0.86, "brier_score": 0.14, "ece": 0.04},
+        trial_history=[{"metrics": {"f1": 0.82}}, {"metrics": {"f1": 0.86}}, {"metrics": {"f1": 0.84}}],
+        dataset_triage_report={"summary": {"risk_level": "low", "readiness_score": 90.0, "blocking_issue_count": 0}},
+        trial_inspector_report={"valid_trial_count": 3, "summary": {"leader_margin_f1": 0.04}},
+        shadow_replay_report={
+            "summary": {
+                "verdict": "severe_ordered_degradation",
+                "max_f1_drop": 0.34,
+                "max_brier_increase": 0.13,
+            }
+        },
+    )
+
+    assert report["summary"]["verdict"] == "blocked"
+    assert any(item["title"] == "Shadow replay shows severe ordered degradation" for item in report["checks"])
+
+
+def test_promotion_gate_blocks_unstable_threshold_stability():
+    report = build_promotion_gate(
+        sample_count=120,
+        input_dim=3,
+        labels=[0, 1] * 60,
+        config=ModelConfig(feature_map="linear"),
+        metrics={"f1": 0.86, "accuracy": 0.88, "balanced_accuracy": 0.86, "brier_score": 0.14, "ece": 0.04},
+        trial_history=[{"metrics": {"f1": 0.82}}, {"metrics": {"f1": 0.86}}, {"metrics": {"f1": 0.84}}],
+        dataset_triage_report={"summary": {"risk_level": "low", "readiness_score": 90.0, "blocking_issue_count": 0}},
+        trial_inspector_report={"valid_trial_count": 3, "summary": {"leader_margin_f1": 0.04}},
+        threshold_stability_report={
+            "summary": {
+                "verdict": "unstable_threshold",
+                "threshold_spread": 0.4,
+                "median_f1_gain_vs_current": 0.12,
+                "current_inside_interval": False,
+            }
+        },
+    )
+
+    assert report["summary"]["verdict"] == "blocked"
+    assert any(item["title"] == "Threshold stability is poor" for item in report["checks"])
+
+
+def test_promotion_gate_blocks_non_actionable_capacity_plan():
+    report = build_promotion_gate(
+        sample_count=120,
+        input_dim=3,
+        labels=[0, 1] * 60,
+        config=ModelConfig(feature_map="linear"),
+        metrics={"f1": 0.86, "accuracy": 0.88, "balanced_accuracy": 0.86, "brier_score": 0.14, "ece": 0.04},
+        trial_history=[{"metrics": {"f1": 0.82}}, {"metrics": {"f1": 0.86}}, {"metrics": {"f1": 0.84}}],
+        dataset_triage_report={"summary": {"risk_level": "low", "readiness_score": 90.0, "blocking_issue_count": 0}},
+        trial_inspector_report={"valid_trial_count": 3, "summary": {"leader_margin_f1": 0.04}},
+        capacity_planner_report={
+            "summary": {
+                "verdict": "not_actionable",
+                "best_net_utility": -1.5,
+                "best_lift": 0.8,
+                "best_recall_captured": 0.1,
+            }
+        },
+    )
+
+    assert report["summary"]["verdict"] == "blocked"
+    assert any(item["title"] == "Capacity planner is not actionable" for item in report["checks"])
