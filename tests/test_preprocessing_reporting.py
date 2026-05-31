@@ -609,6 +609,57 @@ def test_report_export_json_and_markdown(tmp_path):
                 }
             ],
         },
+        canary_suite_report={
+            "preset_name": "Canary regression lab",
+            "summary": {
+                "verdict": "canary_review",
+                "checked_count": 2,
+                "passed_count": 2,
+                "failed_count": 0,
+                "review_count": 1,
+                "informational_count": 1,
+                "pass_rate": 1.0,
+                "min_probability_margin_observed": 0.02,
+                "recommended_next_step": "Review low-margin canaries.",
+            },
+            "examples": [
+                {
+                    "name": "Canary boundary review",
+                    "status": "review",
+                    "probability": 0.52,
+                    "predicted_label": 1,
+                    "expected_label": 1,
+                    "margin_to_threshold": 0.02,
+                    "schema_status": "pass",
+                }
+            ],
+        },
+        schema_guard_report={
+            "sample_count": 4,
+            "input_dim": 2,
+            "summary": {
+                "risk_level": "medium",
+                "readiness_score": 78.0,
+                "constant_feature_count": 1,
+                "near_constant_feature_count": 0,
+                "low_cardinality_feature_count": 1,
+                "outlier_feature_count": 1,
+                "recommended_next_step": "Review schema warnings.",
+            },
+            "features": [
+                {
+                    "feature_index": 0,
+                    "feature_name": "dead_sensor",
+                    "min": 1.0,
+                    "q01": 1.0,
+                    "q99": 1.0,
+                    "max": 1.0,
+                    "unique_count": 1,
+                    "outlier_count": 0,
+                    "risk_flags": ["constant_feature", "low_cardinality_numeric"],
+                }
+            ],
+        },
         prototype_audit_report={
             "sample_count": 4,
             "input_dim": 2,
@@ -833,6 +884,8 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["dataset_cartography"]["region_counts"]["ambiguous"] == 1
     assert saved_json["ood_sentinel"]["summary"]["top_row_index"] == 3
     assert saved_json["bootstrap_stability_diagnostics"]["summary"]["top_row_index"] == 2
+    assert saved_json["canary_suite"]["summary"]["verdict"] == "canary_review"
+    assert saved_json["schema_guard"]["summary"]["risk_level"] == "medium"
     assert saved_json["prototype_audit"]["summary"]["top_boundary_row"] == 2
     assert saved_json["feature_separability"]["summary"]["top_feature"] == 1
     assert saved_json["neighborhood_hardness"]["summary"]["top_hard_row"] == 2
@@ -844,6 +897,8 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["trial_history"][0]["config"]["feature_map"] == "rff"
     assert "Feature 0" in saved_markdown
     assert "## Dataset Audit" in saved_markdown
+    assert "## Schema Guard" in saved_markdown
+    assert "dead_sensor" in saved_markdown
     assert "Trial 1" in saved_markdown
     assert "## Uncertainty" in saved_markdown
     assert "conformal_source" in saved_markdown
@@ -907,6 +962,8 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "Max OOD score" in saved_markdown
     assert "## Bootstrap Stability Diagnostics" in saved_markdown
     assert "Mean probability std" in saved_markdown
+    assert "## Canary Suite" in saved_markdown
+    assert "Canary boundary review" in saved_markdown
     assert "## Prototype Audit" in saved_markdown
     assert "Possible label contradictions" in saved_markdown
     assert "## MPS Bond Sweep" in saved_markdown

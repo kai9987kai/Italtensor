@@ -49,6 +49,8 @@ def build_experiment_report(
     cartography_report: dict[str, Any] | None = None,
     ood_sentinel_report: dict[str, Any] | None = None,
     bootstrap_stability_report: dict[str, Any] | None = None,
+    canary_suite_report: dict[str, Any] | None = None,
+    schema_guard_report: dict[str, Any] | None = None,
     prototype_audit_report: dict[str, Any] | None = None,
     feature_separability_report: dict[str, Any] | None = None,
     neighborhood_hardness_report: dict[str, Any] | None = None,
@@ -108,6 +110,8 @@ def build_experiment_report(
         "dataset_cartography": cartography_report or None,
         "ood_sentinel": ood_sentinel_report or None,
         "bootstrap_stability_diagnostics": bootstrap_stability_report or None,
+        "canary_suite": canary_suite_report or None,
+        "schema_guard": schema_guard_report or None,
         "prototype_audit": prototype_audit_report or None,
         "feature_separability": feature_separability_report or None,
         "neighborhood_hardness": neighborhood_hardness_report or None,
@@ -161,6 +165,8 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     cartography = report.get("dataset_cartography") or {}
     ood_sentinel = report.get("ood_sentinel") or {}
     bootstrap_stability = report.get("bootstrap_stability_diagnostics") or {}
+    canary_suite = report.get("canary_suite") or {}
+    schema_guard = report.get("schema_guard") or {}
     prototype_audit = report.get("prototype_audit") or {}
     feature_separability = report.get("feature_separability") or {}
     neighborhood_hardness = report.get("neighborhood_hardness") or {}
@@ -216,6 +222,32 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     else:
         lines.append("- None")
 
+    lines.extend(["", "## Schema Guard"])
+    if schema_guard:
+        summary = schema_guard.get("summary", {})
+        lines.extend(
+            [
+                f"- Readiness score: {_format_value(summary.get('readiness_score', '-'))}/100",
+                f"- Risk level: {summary.get('risk_level', '-')}",
+                f"- Constant features: {summary.get('constant_feature_count', '-')}",
+                f"- Near-constant features: {summary.get('near_constant_feature_count', '-')}",
+                f"- Low-cardinality features: {summary.get('low_cardinality_feature_count', '-')}",
+                f"- Outlier features: {summary.get('outlier_feature_count', '-')}",
+                f"- Recommended next step: {summary.get('recommended_next_step') or 'none'}",
+            ]
+        )
+        for item in schema_guard.get("flagged_features", schema_guard.get("features", []))[:8]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            lines.append(
+                f"- {item.get('feature_name', 'x')}: "
+                f"range=[{_format_value(item.get('min', '-'))}, {_format_value(item.get('max', '-'))}], "
+                f"q01-q99=[{_format_value(item.get('q01', '-'))}, {_format_value(item.get('q99', '-'))}], "
+                f"unique={item.get('unique_count', '-')}, "
+                f"outliers={item.get('outlier_count', '-')}, flags={flags}"
+            )
+    else:
+        lines.append("- None")
+
     lines.extend(["", "## Experiment Advisor"])
     if experiment_advisor:
         summary = experiment_advisor.get("summary", {})
@@ -263,6 +295,38 @@ def format_markdown_report(report: dict[str, Any]) -> str:
                 f"- Group {group.get('group', '-')}: count={group.get('count', '-')} "
                 f"best_F1={_format_value(group.get('best_f1', '-'))} "
                 f"avg_F1={_format_value(group.get('avg_f1', '-'))}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Canary Suite"])
+    if canary_suite:
+        summary = canary_suite.get("summary", {})
+        pass_rate = summary.get("pass_rate")
+        min_margin = summary.get("min_probability_margin_observed")
+        lines.extend(
+            [
+                f"- Verdict: {summary.get('verdict', '-')}",
+                f"- Preset: {canary_suite.get('preset_name') or '-'}",
+                f"- Checked: {summary.get('checked_count', '-')}",
+                f"- Passed: {summary.get('passed_count', '-')}",
+                f"- Failed: {summary.get('failed_count', '-')}",
+                f"- Review: {summary.get('review_count', '-')}",
+                f"- Informational: {summary.get('informational_count', '-')}",
+                f"- Pass rate: {_format_value(pass_rate) if pass_rate is not None else '-'}",
+                f"- Min margin: {_format_value(min_margin) if min_margin is not None else '-'}",
+                f"- Recommendation: {summary.get('recommended_next_step') or 'none'}",
+            ]
+        )
+        for item in canary_suite.get("examples", [])[:8]:
+            expected = item.get("expected_label")
+            expected_text = "-" if expected is None else str(expected)
+            lines.append(
+                f"- {item.get('name', '-')}: status={item.get('status', '-')}, "
+                f"p={_format_value(item.get('probability', '-'))}, "
+                f"pred={item.get('predicted_label', '-')}, expected={expected_text}, "
+                f"margin={_format_value(item.get('margin_to_threshold', '-'))}, "
+                f"schema={item.get('schema_status', 'not_run')}"
             )
     else:
         lines.append("- None")

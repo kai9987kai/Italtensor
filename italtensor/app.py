@@ -11,6 +11,7 @@ from .data import (
     parse_training_example,
     validate_dataset,
 )
+from .canary_suite import format_canary_suite_summary, run_canary_suite
 from .calibration_repair import format_calibration_repair_summary, run_calibration_repair_diagnostics
 from .capacity_planner import (
     capacity_planner_dataset_fingerprint,
@@ -34,6 +35,7 @@ from .model_response import format_model_response_summary, run_model_response_di
 from .model_runner import ModelRunQueue, available_backends, run_model_queue, select_best_from_runs
 from .pairwise_interactions import format_pairwise_interaction_summary, run_pairwise_interaction_diagnostics
 from .permutation_null import format_permutation_null_summary, run_permutation_null_diagnostics
+from .policy_guard import format_policy_guard_summary, run_policy_guard, sanitize_policy_checks
 from .population_drift import format_population_drift_summary, run_population_drift_diagnostics
 from .adversarial_validation import (
     format_adversarial_validation_summary,
@@ -53,7 +55,14 @@ from .persistence import (
     save_model_registry,
 )
 from .preprocessing import FeatureStandardizer
-from .presets import generate_builtin_preset, load_preset_file, preset_labels, preset_metadata, save_preset_file
+from .presets import (
+    generate_builtin_preset,
+    load_preset_file,
+    preset_labels,
+    preset_metadata,
+    sanitize_prediction_examples,
+    save_preset_file,
+)
 from .reporting import build_experiment_report, export_experiment_report
 from .registry import ModelSlot
 from .sample_review import format_sample_review_summary, run_sample_review
@@ -148,6 +157,8 @@ class AppState:
     latest_cartography_report: dict[str, Any] | None = None
     latest_ood_sentinel_report: dict[str, Any] | None = None
     latest_bootstrap_stability_report: dict[str, Any] | None = None
+    latest_canary_suite_report: dict[str, Any] | None = None
+    latest_policy_guard_report: dict[str, Any] | None = None
     latest_schema_guard_report: dict[str, Any] | None = None
     latest_prototype_audit_report: dict[str, Any] | None = None
     latest_feature_separability_report: dict[str, Any] | None = None
@@ -163,6 +174,9 @@ class AppState:
     active_slot_index: int | None = None
     panel_fusion: str = "mean"
     communication_log: list[dict[str, Any]] = field(default_factory=list)
+    current_preset_name: str | None = None
+    current_prediction_examples: list[dict[str, object]] = field(default_factory=list)
+    current_policy_checks: list[dict[str, object]] = field(default_factory=list)
 
 
 def run_app() -> None:
@@ -265,6 +279,10 @@ def run_app() -> None:
                 _start_dataset_triage(window, state)
             elif event == "-SCHEMA_GUARD-":
                 _start_schema_guard(window, state)
+            elif event == "-CANARY_SUITE-":
+                _start_canary_suite(window, state)
+            elif event == "-POLICY_GUARD-":
+                _start_policy_guard(window, state)
             elif event == "-EXPERIMENT_ADVISOR-":
                 _start_experiment_advisor(window, state)
             elif event == "-TRIAL_INSPECTOR-":
@@ -573,6 +591,8 @@ def _layout(sg):
         [
             sg.Button("Dataset triage", key="-DATASET_TRIAGE-", expand_x=True),
             sg.Button("Schema guard", key="-SCHEMA_GUARD-", expand_x=True),
+            sg.Button("Canary suite", key="-CANARY_SUITE-", expand_x=True),
+            sg.Button("Policy guard", key="-POLICY_GUARD-", expand_x=True),
             sg.Button("Experiment advisor", key="-EXPERIMENT_ADVISOR-", expand_x=True),
             sg.Button("Trial inspector", key="-TRIAL_INSPECTOR-", expand_x=True),
             sg.Button("Promotion gate", key="-PROMOTION_GATE-", expand_x=True),
@@ -667,6 +687,7 @@ def _load_builtin_preset(window, state: AppState, values: dict[str, Any]) -> Non
     )
     _replace_dataset(state, dataset, window=window)
     metadata = preset_metadata(values["-PRESET_NAME-"])
+    _store_preset_context(state, metadata)
     _apply_preset_metadata(window, metadata)
     _log(window, f"Loaded preset '{values['-PRESET_NAME-']}' with {dataset.sample_count} samples.")
     _log(window, _format_preset_metadata(metadata))
@@ -675,6 +696,7 @@ def _load_builtin_preset(window, state: AppState, values: dict[str, Any]) -> Non
 def _import_preset(window, state: AppState, values: dict[str, Any]) -> None:
     dataset, metadata = load_preset_file(_required_path(values["-PRESET_PATH-"], "preset path"))
     _replace_dataset(state, dataset, window=window)
+    _store_preset_context(state, metadata)
     _apply_preset_metadata(window, metadata)
     _log(window, f"Imported preset '{metadata['name']}' with {dataset.sample_count} samples.")
     _log(window, _format_preset_metadata(metadata))
@@ -682,6 +704,7 @@ def _import_preset(window, state: AppState, values: dict[str, Any]) -> None:
 
 def _save_preset(window, state: AppState, values: dict[str, Any]) -> None:
     dataset = validate_dataset(state.features, state.labels, min_samples=1)
+    prediction_examples = _preset_prediction_examples_from_values(values, dataset.input_dim)
     path = save_preset_file(
         _required_path(values["-PRESET_PATH-"], "preset path"),
         dataset,
@@ -689,7 +712,14 @@ def _save_preset(window, state: AppState, values: dict[str, Any]) -> None:
         description=values["-PRESET_DESCRIPTION-"],
         training_defaults=_preset_training_defaults_from_values(values),
         recommended_feature_map=values.get("-FEATURE_MAP-", "linear"),
-        prediction_examples=_preset_prediction_examples_from_values(values, dataset.input_dim),
+        prediction_examples=prediction_examples,
+    )
+    _store_preset_context(
+        state,
+        {
+            "name": values["-PRESET_SAVE_NAME-"],
+            "prediction_examples": prediction_examples,
+        },
     )
     _log(window, f"Saved preset '{values['-PRESET_SAVE_NAME-']}' to {path}.")
 
@@ -746,6 +776,7 @@ def _clear_data(window, state: AppState) -> None:
     state.features.clear()
     state.labels.clear()
     state.input_dim = None
+    _clear_preset_context(state)
     _invalidate_model_artifacts(state)
     window["-AUDIT_SUMMARY-"].update("-")
     _log(window, "Cleared dataset.")
@@ -1231,6 +1262,8 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         cartography_report=state.latest_cartography_report,
         ood_sentinel_report=state.latest_ood_sentinel_report,
         bootstrap_stability_report=state.latest_bootstrap_stability_report,
+        canary_suite_report=state.latest_canary_suite_report,
+        policy_guard_report=state.latest_policy_guard_report,
         schema_guard_report=state.latest_schema_guard_report,
         prototype_audit_report=state.latest_prototype_audit_report,
         feature_separability_report=state.latest_feature_separability_report,
@@ -1370,6 +1403,8 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     cartography_report = metadata.get("dataset_cartography")
     ood_sentinel_report = metadata.get("ood_sentinel")
     bootstrap_stability_report = metadata.get("bootstrap_stability_diagnostics")
+    canary_suite_report = metadata.get("canary_suite")
+    policy_guard_report = metadata.get("policy_guard")
     schema_guard_report = metadata.get("schema_guard")
     prototype_audit_report = metadata.get("prototype_audit")
     feature_separability_report = metadata.get("feature_separability")
@@ -1446,6 +1481,8 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_bootstrap_stability_report = (
         bootstrap_stability_report if isinstance(bootstrap_stability_report, dict) else None
     )
+    state.latest_canary_suite_report = canary_suite_report if isinstance(canary_suite_report, dict) else None
+    state.latest_policy_guard_report = policy_guard_report if isinstance(policy_guard_report, dict) else None
     state.latest_schema_guard_report = _compatible_schema_guard_report(schema_guard_report, state)
     if (
         isinstance(schema_guard_report, dict)
@@ -1522,6 +1559,8 @@ def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
         cartography_report=state.latest_cartography_report,
         ood_sentinel_report=state.latest_ood_sentinel_report,
         bootstrap_stability_report=state.latest_bootstrap_stability_report,
+        canary_suite_report=state.latest_canary_suite_report,
+        policy_guard_report=state.latest_policy_guard_report,
         schema_guard_report=state.latest_schema_guard_report,
         prototype_audit_report=state.latest_prototype_audit_report,
         feature_separability_report=state.latest_feature_separability_report,
@@ -1547,9 +1586,23 @@ def _predict(window, state: AppState, values: dict[str, Any]) -> None:
     probability = float(predict_probability(state.model, prepared)[0])
     label = 1 if probability >= state.latest_threshold else 0
     uncertainty_note = _format_uncertainty_prediction(probability, state.uncertainty_metadata)
+    schema_note = ""
+    if state.latest_schema_guard_report is not None:
+        guard = check_vector_against_schema(vector, state.latest_schema_guard_report)
+        if guard["status"] != "pass":
+            schema_note = (
+                f", schema_guard={guard['status']}"
+                f"({int(guard['warning_count'])} warning, {int(guard['failure_count'])} failure)"
+            )
+            for item in (guard.get("failures") or guard.get("warnings") or [])[:3]:
+                _log(
+                    window,
+                    f"Schema guard {item.get('severity', '-')}: "
+                    f"{item.get('feature_name', '-')}: {item.get('message', '-')}",
+                )
     _log(
         window,
-        f"Prediction: label={label}, probability={probability:.4f}, threshold={state.latest_threshold:.4f}{uncertainty_note}",
+        f"Prediction: label={label}, probability={probability:.4f}, threshold={state.latest_threshold:.4f}{uncertainty_note}{schema_note}",
     )
 
 
@@ -1638,6 +1691,8 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
+        state.latest_canary_suite_report = None
+        state.latest_policy_guard_report = None
         state.latest_experiment_advisor_report = None
         state.latest_trial_inspector_report = None
         state.latest_promotion_gate_report = None
@@ -1682,6 +1737,8 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
+        state.latest_canary_suite_report = None
+        state.latest_policy_guard_report = None
         state.latest_experiment_advisor_report = None
         state.latest_trial_inspector_report = None
         state.latest_promotion_gate_report = None
@@ -1750,6 +1807,8 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
+        state.latest_canary_suite_report = None
+        state.latest_policy_guard_report = None
         state.latest_experiment_advisor_report = None
         state.latest_trial_inspector_report = None
         state.latest_promotion_gate_report = None
@@ -2010,7 +2069,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_schema_guard_report = result
         state.latest_promotion_gate_report = None
         _log(window, format_schema_guard_summary(result))
-        for item in result.get("features", [])[:6]:
+        for item in result.get("flagged_features", result.get("features", []))[:6]:
             flags = ",".join(item.get("risk_flags", [])) or "none"
             _log(
                 window,
@@ -2020,6 +2079,41 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                 f"outliers={int(item.get('outlier_count', 0))}, flags={flags}",
             )
         for item in result.get("recommendations", [])[:4]:
+            _log(
+                window,
+                f"  {int(item.get('rank', 0))}. "
+                f"[{item.get('priority', '-')}/{item.get('category', '-')}] "
+                f"{item.get('title', '-')}: {item.get('action', '-')}",
+            )
+    elif kind == "canary_suite":
+        state.latest_canary_suite_report = result
+        state.latest_promotion_gate_report = None
+        _log(window, format_canary_suite_summary(result))
+        for item in result.get("examples", [])[:8]:
+            expected = item.get("expected_label")
+            expected_text = "-" if expected is None else str(int(expected))
+            _log(
+                window,
+                f"  {item.get('name', '-')}: status={item.get('status', '-')}, "
+                f"p={float(item.get('probability', 0.0)):.4f}, "
+                f"pred={int(item.get('predicted_label', 0))}, expected={expected_text}, "
+                f"margin={float(item.get('margin_to_threshold', 0.0)):.4f}, "
+                f"schema={item.get('schema_status', 'not_run')}",
+            )
+    elif kind == "policy_guard":
+        state.latest_policy_guard_report = result
+        state.latest_promotion_gate_report = None
+        _log(window, format_policy_guard_summary(result))
+        for item in result.get("checks", [])[:6]:
+            _log(
+                window,
+                f"  {item.get('name', '-')}: status={item.get('status', '-')}, "
+                f"direction={item.get('direction', '-')}, pairs={int(item.get('pair_count', 0))}, "
+                f"violations={int(item.get('violation_count', 0))}, "
+                f"rate={float(item.get('violation_rate', 0.0)):.3f}, "
+                f"max={float(item.get('max_violation', 0.0)):.4f}",
+            )
+        for item in result.get("recommendations", [])[:3]:
             _log(
                 window,
                 f"  {int(item.get('rank', 0))}. "
@@ -2335,6 +2429,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
+        state.latest_canary_suite_report = None
         state.latest_experiment_advisor_report = None
         state.latest_trial_inspector_report = None
         state.latest_promotion_gate_report = None
@@ -2387,6 +2482,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
+        state.latest_canary_suite_report = None
         state.latest_experiment_advisor_report = None
         state.latest_trial_inspector_report = None
         state.latest_promotion_gate_report = None
@@ -2431,6 +2527,7 @@ def _replace_dataset(state: AppState, dataset, *, window=None) -> None:
     state.features = dataset.features.astype(float).tolist()
     state.labels = dataset.labels.astype(int).tolist()
     state.input_dim = dataset.input_dim
+    _clear_preset_context(state)
     _invalidate_model_artifacts(state)
     if window is not None:
         _refresh_audit_summary(window, state)
@@ -2474,6 +2571,32 @@ def _apply_preset_metadata(window, metadata: dict[str, Any]) -> None:
         window["-FEATURE_MAP-"].update(recommended_map)
 
 
+def _store_preset_context(state: AppState, metadata: dict[str, Any]) -> None:
+    if state.input_dim is None:
+        state.current_preset_name = None
+        state.current_prediction_examples = []
+        state.current_policy_checks = []
+        state.latest_canary_suite_report = None
+        state.latest_policy_guard_report = None
+        return
+    state.current_preset_name = str(metadata.get("name") or "").strip() or None
+    state.current_prediction_examples = sanitize_prediction_examples(
+        metadata.get("prediction_examples"),
+        state.input_dim,
+    )
+    state.current_policy_checks = sanitize_policy_checks(metadata.get("policy_checks"), state.input_dim)
+    state.latest_canary_suite_report = None
+    state.latest_policy_guard_report = None
+
+
+def _clear_preset_context(state: AppState) -> None:
+    state.current_preset_name = None
+    state.current_prediction_examples = []
+    state.current_policy_checks = []
+    state.latest_canary_suite_report = None
+    state.latest_policy_guard_report = None
+
+
 def _invalidate_model_artifacts(state: AppState) -> None:
     state.model = None
     state.latest_config = None
@@ -2507,6 +2630,9 @@ def _invalidate_model_artifacts(state: AppState) -> None:
     state.latest_cartography_report = None
     state.latest_ood_sentinel_report = None
     state.latest_bootstrap_stability_report = None
+    state.latest_canary_suite_report = None
+    state.latest_policy_guard_report = None
+    state.latest_schema_guard_report = None
     state.latest_prototype_audit_report = None
     state.latest_feature_separability_report = None
     state.latest_neighborhood_hardness_report = None
@@ -2582,6 +2708,8 @@ def _set_busy(window, busy: bool) -> None:
         "-CARTOGRAPHY-",
         "-DATASET_TRIAGE-",
         "-SCHEMA_GUARD-",
+        "-CANARY_SUITE-",
+        "-POLICY_GUARD-",
         "-EXPERIMENT_ADVISOR-",
         "-TRIAL_INSPECTOR-",
         "-PROMOTION_GATE-",
@@ -2666,6 +2794,8 @@ def _format_preset_metadata(metadata: dict[str, Any]) -> str:
         parts.append(f"recommended map={recommended}")
     examples = metadata.get("prediction_examples")
     if isinstance(examples, list) and examples:
+        checkable = sum(1 for example in examples if isinstance(example, dict) and example.get("expected_label") is not None)
+        parts.append(f"canaries={checkable}/{len(examples)} checkable")
         first = examples[0]
         parts.append(f"example {first.get('name', 'sample')}={first.get('features')}")
     return "Preset metadata: " + ", ".join(parts) if parts else "Preset metadata: none."
@@ -2926,6 +3056,7 @@ def _activate_model_slot(window, state: AppState, values: dict[str, Any]) -> Non
     state.latest_cartography_report = None
     state.latest_ood_sentinel_report = None
     state.latest_bootstrap_stability_report = None
+    state.latest_canary_suite_report = None
     state.latest_prototype_audit_report = None
     state.latest_feature_separability_report = None
     state.latest_neighborhood_hardness_report = None
@@ -3040,6 +3171,7 @@ def _load_registry(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
+        state.latest_canary_suite_report = None
         state.latest_prototype_audit_report = None
         state.latest_feature_separability_report = None
         state.latest_neighborhood_hardness_report = None
@@ -3089,6 +3221,7 @@ def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_cartography_report = None
     state.latest_ood_sentinel_report = None
     state.latest_bootstrap_stability_report = None
+    state.latest_canary_suite_report = None
     state.latest_prototype_audit_report = None
     state.latest_feature_separability_report = None
     state.latest_neighborhood_hardness_report = None
@@ -3176,6 +3309,7 @@ def _build_stacked_ensemble(window, state: AppState, values: dict[str, Any]) -> 
     state.latest_cartography_report = None
     state.latest_ood_sentinel_report = None
     state.latest_bootstrap_stability_report = None
+    state.latest_canary_suite_report = None
     state.latest_prototype_audit_report = None
     state.latest_feature_separability_report = None
     state.latest_neighborhood_hardness_report = None
@@ -3335,6 +3469,36 @@ def _start_schema_guard(window, state: AppState) -> None:
     _start_worker(window, state, "Inferring numeric feature schema guard...", task)
 
 
+def _start_canary_suite(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    if state.model is None or state.input_dim is None:
+        raise ValueError("Train or load a model before running the canary suite.")
+    if not state.current_prediction_examples:
+        raise ValueError("Load or save a preset with prediction examples before running the canary suite.")
+    model = state.model
+    input_dim = int(state.input_dim)
+    threshold = float(state.latest_threshold)
+    preprocessor = state.preprocessor
+    schema_guard_report = state.latest_schema_guard_report
+    examples = [dict(example) for example in state.current_prediction_examples]
+    preset_name = state.current_preset_name
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_canary_suite(
+            model,
+            examples,
+            input_dim=input_dim,
+            threshold=threshold,
+            preprocessor=preprocessor,
+            schema_guard_report=schema_guard_report,
+        )
+        if preset_name:
+            report["preset_name"] = preset_name
+        return "canary_suite", report
+
+    _start_worker(window, state, "Running preset canary suite...", task)
+
+
 def _start_experiment_advisor(window, state: AppState) -> None:
     _ensure_not_busy(state)
 
@@ -3393,6 +3557,8 @@ def _start_promotion_gate(window, state: AppState) -> None:
             error_atlas_report=state.latest_error_atlas_report,
             reliability_atlas_report=state.latest_reliability_atlas_report,
             shadow_replay_report=state.latest_shadow_replay_report,
+            canary_suite_report=state.latest_canary_suite_report,
+            schema_guard_report=state.latest_schema_guard_report,
             threshold_report=state.latest_threshold_report,
             threshold_stability_report=state.latest_threshold_stability_report,
             capacity_planner_report=state.latest_capacity_planner_report,
@@ -3632,6 +3798,7 @@ def _merge_slots(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
+        state.latest_canary_suite_report = None
         state.latest_prototype_audit_report = None
         state.latest_feature_separability_report = None
         state.latest_neighborhood_hardness_report = None

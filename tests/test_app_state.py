@@ -9,6 +9,7 @@ from italtensor.app import (
     _apply_preset_metadata,
     _format_uncertainty,
     _invalidate_model_artifacts,
+    _predict,
     _replace_dataset,
     _store_model_slot,
     _activate_model_slot,
@@ -16,6 +17,7 @@ from italtensor.app import (
     _compare_models,
     _compatible_capacity_planner_report,
     _compatible_reliability_atlas_report,
+    _compatible_schema_guard_report,
     _compatible_shadow_replay_report,
     _compatible_threshold_stability_report,
     _run_weight_analysis,
@@ -31,6 +33,7 @@ from italtensor.modeling import ModelConfig
 from italtensor.capacity_planner import capacity_planner_dataset_fingerprint
 from italtensor.preprocessing import FeatureStandardizer
 from italtensor.reliability_atlas import reliability_dataset_fingerprint
+from italtensor.schema_guard import schema_guard_dataset_fingerprint
 from italtensor.shadow_replay import shadow_replay_dataset_fingerprint
 from italtensor.threshold_stability import threshold_stability_dataset_fingerprint
 from italtensor.registry import ModelSlot
@@ -102,6 +105,8 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         latest_cartography_report={"region_counts": {"easy_to_learn": 1}},
         latest_ood_sentinel_report={"summary": {"top_row_index": 3}},
         latest_bootstrap_stability_report={"summary": {"top_row_index": 4}},
+        latest_canary_suite_report={"summary": {"verdict": "canary_pass"}},
+        latest_schema_guard_report={"summary": {"risk_level": "medium"}},
         latest_prototype_audit_report={"summary": {"top_boundary_row": 5}},
         latest_feature_separability_report={"summary": {"top_feature": 2}},
         latest_neighborhood_hardness_report={"summary": {"top_hard_row": 6}},
@@ -149,6 +154,8 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
     assert state.latest_cartography_report is None
     assert state.latest_ood_sentinel_report is None
     assert state.latest_bootstrap_stability_report is None
+    assert state.latest_canary_suite_report is None
+    assert state.latest_schema_guard_report is None
     assert state.latest_prototype_audit_report is None
     assert state.latest_feature_separability_report is None
     assert state.latest_neighborhood_hardness_report is None
@@ -167,6 +174,9 @@ def test_replace_dataset_invalidates_old_model_state():
         latest_threshold=0.7,
         preprocessor=FeatureStandardizer.identity(1),
         uncertainty_metadata={"conformal_quantile": 0.3},
+        current_preset_name="Old preset",
+        current_prediction_examples=[{"name": "old", "features": [0.1], "expected_label": 0}],
+        latest_canary_suite_report={"summary": {"verdict": "canary_pass"}},
     )
     dataset = validate_dataset([[1.0, 2.0], [3.0, 4.0]], [0, 1])
 
@@ -178,6 +188,9 @@ def test_replace_dataset_invalidates_old_model_state():
     assert state.model is None
     assert state.latest_metrics == {}
     assert state.uncertainty_metadata == {}
+    assert state.current_preset_name is None
+    assert state.current_prediction_examples == []
+    assert state.latest_canary_suite_report is None
 
 
 def test_format_uncertainty_includes_source_and_coverage():
@@ -204,6 +217,7 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
         latest_feature_separability_report={"summary": {"top_feature": 1}},
         latest_prototype_audit_report={"summary": {"top_boundary_row": 0}},
         latest_neighborhood_hardness_report={"summary": {"top_hard_row": 1}},
+        latest_schema_guard_report={"summary": {"risk_level": "medium"}},
         latest_dataset_triage_report={"summary": {"readiness_score": 72.0}},
         latest_error_atlas_report={"summary": {"error_count": 2}},
         latest_reliability_atlas_report={"summary": {"risk_level": "medium"}},
@@ -211,6 +225,7 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
         latest_experiment_advisor_report={"summary": {"recommended_next_step": "Run auto experiments"}},
         latest_threshold_stability_report={"summary": {"verdict": "threshold_stability_review"}},
         latest_capacity_planner_report={"summary": {"verdict": "actionable_capacity_plan"}},
+        latest_canary_suite_report={"summary": {"verdict": "canary_pass"}},
         latest_trial_inspector_report={"summary": {"best_trial_index": 2}},
         latest_promotion_gate_report={"summary": {"verdict": "needs_review"}},
     )
@@ -225,12 +240,14 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
     assert payload["feature_separability"]["summary"]["top_feature"] == 1
     assert payload["prototype_audit"]["summary"]["top_boundary_row"] == 0
     assert payload["neighborhood_hardness"]["summary"]["top_hard_row"] == 1
+    assert payload["schema_guard"]["summary"]["risk_level"] == "medium"
     assert payload["dataset_triage"]["summary"]["readiness_score"] == 72.0
     assert payload["error_atlas"]["summary"]["error_count"] == 2
     assert payload["reliability_atlas"]["summary"]["risk_level"] == "medium"
     assert payload["shadow_replay"]["summary"]["verdict"] == "ordered_degradation_review"
     assert payload["threshold_stability"]["summary"]["verdict"] == "threshold_stability_review"
     assert payload["capacity_planner"]["summary"]["verdict"] == "actionable_capacity_plan"
+    assert payload["canary_suite"]["summary"]["verdict"] == "canary_pass"
     assert payload["experiment_advisor"]["summary"]["recommended_next_step"] == "Run auto experiments"
     assert payload["trial_inspector"]["summary"]["best_trial_index"] == 2
     assert payload["promotion_gate"]["summary"]["verdict"] == "needs_review"
@@ -251,12 +268,14 @@ def test_training_preserves_dataset_only_diagnostics():
         latest_feature_separability_report={"summary": {"top_feature": 1}},
         latest_prototype_audit_report={"summary": {"top_boundary_row": 0}},
         latest_neighborhood_hardness_report={"summary": {"top_hard_row": 2}},
+        latest_schema_guard_report={"summary": {"risk_level": "medium"}},
         latest_dataset_triage_report={"summary": {"readiness_score": 77.0}},
         latest_error_atlas_report={"summary": {"error_count": 1}},
         latest_reliability_atlas_report={"summary": {"risk_level": "medium"}},
         latest_shadow_replay_report={"summary": {"verdict": "ordered_degradation_review"}},
         latest_threshold_stability_report={"summary": {"verdict": "threshold_stability_review"}},
         latest_capacity_planner_report={"summary": {"verdict": "actionable_capacity_plan"}},
+        latest_canary_suite_report={"summary": {"verdict": "canary_pass"}},
         latest_experiment_advisor_report={"summary": {"recommended_next_step": "Old advice"}},
         latest_trial_inspector_report={"summary": {"best_trial_index": 1}},
         latest_promotion_gate_report={"summary": {"verdict": "old"}},
@@ -278,12 +297,14 @@ def test_training_preserves_dataset_only_diagnostics():
     assert state.latest_feature_separability_report == {"summary": {"top_feature": 1}}
     assert state.latest_prototype_audit_report == {"summary": {"top_boundary_row": 0}}
     assert state.latest_neighborhood_hardness_report == {"summary": {"top_hard_row": 2}}
+    assert state.latest_schema_guard_report == {"summary": {"risk_level": "medium"}}
     assert state.latest_dataset_triage_report == {"summary": {"readiness_score": 77.0}}
     assert state.latest_error_atlas_report is None
     assert state.latest_reliability_atlas_report is None
     assert state.latest_shadow_replay_report is None
     assert state.latest_threshold_stability_report is None
     assert state.latest_capacity_planner_report is None
+    assert state.latest_canary_suite_report is None
     assert state.latest_experiment_advisor_report is None
     assert state.latest_trial_inspector_report is None
     assert state.latest_promotion_gate_report is None
@@ -348,6 +369,21 @@ def test_compatible_capacity_planner_report_rejects_mismatched_dataset():
 
     assert _compatible_capacity_planner_report(matching, state) == matching
     assert _compatible_capacity_planner_report(mismatched, state) is None
+
+
+def test_compatible_schema_guard_report_accepts_reordered_dataset_but_rejects_mismatched_features():
+    state = AppState(features=[[0.1], [0.9], [0.2], [0.8]], labels=[0, 1, 0, 1], input_dim=1)
+    matching_reordered = {
+        "dataset_fingerprint": schema_guard_dataset_fingerprint([[0.2], [0.1], [0.8], [0.9]]),
+        "summary": {"risk_level": "low"},
+    }
+    mismatched = {
+        "dataset_fingerprint": schema_guard_dataset_fingerprint([[0.1], [0.8], [0.2], [0.7]]),
+        "summary": {"risk_level": "medium"},
+    }
+
+    assert _compatible_schema_guard_report(matching_reordered, state) == matching_reordered
+    assert _compatible_schema_guard_report(mismatched, state) is None
 
 
 def test_handle_worker_done_stores_stress_report_without_mutating_model():
@@ -756,6 +792,97 @@ def test_handle_worker_done_stores_bootstrap_stability_without_mutating_model():
     assert state.latest_bootstrap_stability_report == report
     assert state.busy is False
     assert "Bootstrap stability" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_schema_guard_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_promotion_gate_report={"summary": {"verdict": "old"}}, busy=True)
+    model = state.model
+    report = {
+        "summary": {
+            "risk_level": "medium",
+            "readiness_score": 78.0,
+            "constant_feature_count": 1,
+            "low_cardinality_feature_count": 2,
+            "outlier_feature_count": 1,
+            "recommended_next_step": "Review schema warnings.",
+        },
+        "features": [
+            {
+                "feature_index": 0,
+                "feature_name": "dead_sensor",
+                "min": 1.0,
+                "max": 1.0,
+                "unique_count": 1,
+                "outlier_count": 0,
+                "risk_flags": ["constant_feature"],
+            }
+        ],
+        "recommendations": [
+            {
+                "rank": 1,
+                "priority": "medium",
+                "category": "schema",
+                "title": "Feature contract action",
+                "action": "Review schema warnings.",
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("schema_guard", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_schema_guard_report == report
+    assert state.latest_promotion_gate_report is None
+    assert state.busy is False
+    assert "Schema guard" in window["-LOG-"].value
+    assert "Review schema warnings" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_canary_suite_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(
+        model=object(),
+        latest_metrics={"f1": 0.9},
+        latest_promotion_gate_report={"summary": {"verdict": "old"}},
+        busy=True,
+    )
+    model = state.model
+    report = {
+        "summary": {
+            "verdict": "canary_review",
+            "checked_count": 2,
+            "passed_count": 2,
+            "failed_count": 0,
+            "review_count": 1,
+            "informational_count": 0,
+            "pass_rate": 1.0,
+            "min_probability_margin_observed": 0.02,
+            "recommended_next_step": "Review low-margin canaries.",
+        },
+        "examples": [
+            {
+                "name": "Boundary canary",
+                "status": "review",
+                "probability": 0.52,
+                "predicted_label": 1,
+                "expected_label": 1,
+                "margin_to_threshold": 0.02,
+                "schema_status": "pass",
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("canary_suite", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_canary_suite_report == report
+    assert state.latest_promotion_gate_report is None
+    assert state.busy is False
+    assert "Canary suite" in window["-LOG-"].value
+    assert "Boundary canary" in window["-LOG-"].value
 
 
 def test_handle_worker_done_stores_prototype_audit_without_mutating_model():
@@ -1309,6 +1436,30 @@ def test_handle_worker_done_stores_capacity_planner_without_mutating_model():
     assert "Plan top 10 rows" in window["-LOG-"].value
 
 
+def test_predict_logs_schema_guard_vector_warning():
+    from italtensor.modeling import NumpyBinaryClassifier
+    from italtensor.schema_guard import run_schema_guard
+
+    window = FakeWindow()
+    model = NumpyBinaryClassifier(weights=np.asarray([1.0, 0.0], dtype=np.float32), bias=0.0, raw_input_dim=2)
+    schema_report = run_schema_guard(
+        np.asarray([[0.0, 0.0], [1.0, 1.0], [2.0, 0.0], [3.0, 1.0]], dtype=np.float32),
+        feature_names=["score", "code"],
+    )
+    state = AppState(
+        model=model,
+        input_dim=2,
+        latest_threshold=0.5,
+        preprocessor=FeatureStandardizer.identity(2),
+        latest_schema_guard_report=schema_report,
+    )
+
+    _predict(window, state, {"-PREDICTION_VECTOR-": "[9.0, 3.0]"})
+
+    assert "schema_guard=fail" in window["-LOG-"].value
+    assert "Schema guard fail" in window["-LOG-"].value
+
+
 def test_handle_worker_done_stores_sample_review_without_mutating_model():
     window = FakeWindow()
     state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_threshold=0.4, busy=True)
@@ -1621,6 +1772,9 @@ def test_save_preset_uses_current_gui_training_defaults_and_prediction_example(t
     assert defaults["mps_physical_dim"] == 3
     assert payload["recommended_feature_map"] == "quadratic"
     assert payload["prediction_examples"][0]["features"] == [0.3, 0.4]
+    assert state.current_preset_name == "Custom useful preset"
+    assert state.current_prediction_examples[0]["features"] == [0.3, 0.4]
+    assert state.latest_canary_suite_report is None
 
 
 def test_store_model_slot():

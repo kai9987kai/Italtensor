@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 
 from .data import Dataset, DataValidationError, dataset_from_jsonable, dataset_to_jsonable, validate_dataset
+from .policy_guard import sanitize_policy_checks
 
 SCHEMA_VERSION = 1
 DEFAULT_TRAINING_DEFAULTS = {"epochs": 50, "batch_size": 16, "trials": 8, "feature_map": "linear"}
@@ -26,6 +27,7 @@ class PresetInfo:
     label_names: tuple[str, str] = ("negative", "positive")
     training_defaults: dict[str, object] = field(default_factory=lambda: DEFAULT_TRAINING_DEFAULTS.copy())
     prediction_examples: tuple[dict[str, object], ...] = field(default_factory=tuple)
+    policy_checks: tuple[dict[str, object], ...] = field(default_factory=tuple)
 
 
 BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
@@ -610,6 +612,85 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="schema_guard_lab",
+        name="Schema guard lab",
+        description="A feature-contract dataset with wide scales, low-cardinality codes, dead sensors, sparse spikes, and tail probes.",
+        default_samples=180,
+        min_samples=20,
+        input_dim=6,
+        recommended_feature_map="linear",
+        feature_names=(
+            "continuous_signal",
+            "wide_scale_amount",
+            "near_constant_sensor",
+            "status_code",
+            "sparse_indicator",
+            "tail_probe",
+        ),
+        training_defaults={"epochs": 70, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Clean schema row", "features": [-0.8, 120.0, 1.0, 0.0, 0.0, 0.0], "expected_label": 0},
+            {"name": "Schema warning row", "features": [0.2, 980.0, 1.04, 2.0, 1.0, 4.8], "expected_label": None},
+            {"name": "Positive in contract", "features": [1.0, 210.0, 1.0, 1.0, 0.0, 0.2], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
+        key="canary_regression_lab",
+        name="Canary regression lab",
+        description="A model-regression preset with stable canaries, shortcut conflicts, and review-only boundary probes.",
+        default_samples=180,
+        min_samples=20,
+        input_dim=4,
+        recommended_feature_map="linear",
+        feature_names=("stable_margin", "support_signal", "shortcut_marker", "boundary_band"),
+        training_defaults={"epochs": 70, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Canary stable negative", "features": [-1.2, -0.4, -1.0, 0.7], "expected_label": 0},
+            {"name": "Canary stable positive", "features": [1.2, 0.4, 1.0, 0.7], "expected_label": 1},
+            {"name": "Canary shortcut conflict", "features": [-1.0, -0.3, 1.0, 0.7], "expected_label": 0},
+            {"name": "Canary boundary review", "features": [0.02, 0.0, 1.0, 0.0], "expected_label": None},
+        ),
+    ),
+    PresetInfo(
+        key="monotonic_policy_lab",
+        name="Monotonic policy lab",
+        description="A policy-shape dataset for checking whether higher risk raises probability and stronger protection lowers it.",
+        default_samples=180,
+        min_samples=20,
+        input_dim=4,
+        recommended_feature_map="linear",
+        feature_names=("risk_score", "protective_signal", "exposure_amount", "background_noise"),
+        training_defaults={"epochs": 70, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Low-risk protected", "features": [-1.1, 1.0, -0.4, 0.0], "expected_label": 0},
+            {"name": "High-risk exposed", "features": [1.1, -1.0, 0.7, 0.0], "expected_label": 1},
+            {"name": "Policy boundary review", "features": [0.1, 0.0, 0.2, 0.0], "expected_label": None},
+        ),
+        policy_checks=(
+            {
+                "kind": "monotonic",
+                "name": "Risk score should not lower positive probability",
+                "feature_index": 0,
+                "feature_name": "risk_score",
+                "direction": "increasing",
+            },
+            {
+                "kind": "monotonic",
+                "name": "Protective signal should not raise positive probability",
+                "feature_index": 1,
+                "feature_name": "protective_signal",
+                "direction": "decreasing",
+            },
+            {
+                "kind": "monotonic",
+                "name": "Exposure amount should not lower positive probability",
+                "feature_index": 2,
+                "feature_name": "exposure_amount",
+                "direction": "increasing",
+            },
+        ),
+    ),
+    PresetInfo(
         key="experiment_advisor_lab",
         name="Experiment advisor lab",
         description="An imbalanced nonlinear dataset where the advisor should favor triage, CV, SMOTE, and RFF-style search.",
@@ -765,6 +846,12 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _neighborhood_hardness_lab(total, rng)
     elif preset.key == "dataset_triage_lab":
         features, labels = _dataset_triage_lab(total, rng)
+    elif preset.key == "schema_guard_lab":
+        features, labels = _schema_guard_lab(total, rng)
+    elif preset.key == "canary_regression_lab":
+        features, labels = _canary_regression_lab(total, rng)
+    elif preset.key == "monotonic_policy_lab":
+        features, labels = _monotonic_policy_lab(total, rng)
     elif preset.key == "experiment_advisor_lab":
         features, labels = _experiment_advisor_lab(total, rng)
     elif preset.key == "proxy_leakage_lab":
@@ -787,6 +874,7 @@ def save_preset_file(
     feature_names: list[str] | tuple[str, ...] | None = None,
     label_names: dict[str, str] | None = None,
     prediction_examples: list[dict[str, object]] | tuple[dict[str, object], ...] | None = None,
+    policy_checks: list[dict[str, object]] | tuple[dict[str, object], ...] | None = None,
 ) -> Path:
     if not name or not name.strip():
         raise DataValidationError("Preset name is required.")
@@ -803,6 +891,7 @@ def save_preset_file(
         "feature_names": _sanitize_feature_names(feature_names, dataset.input_dim),
         "label_names": _sanitize_label_names(label_names),
         "prediction_examples": _sanitize_prediction_examples(prediction_examples, dataset.input_dim),
+        "policy_checks": sanitize_policy_checks(policy_checks, dataset.input_dim) if policy_checks else [],
         "dataset": dataset_to_jsonable(dataset),
     }
     output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -830,6 +919,7 @@ def load_preset_file(path: str | Path) -> tuple[Dataset, dict[str, Any]]:
             "feature_names": payload.get("feature_names"),
             "label_names": payload.get("label_names"),
             "prediction_examples": payload.get("prediction_examples", []),
+            "policy_checks": payload.get("policy_checks", []),
         }
     else:
         if "samples" not in payload:
@@ -845,10 +935,23 @@ def load_preset_file(path: str | Path) -> tuple[Dataset, dict[str, Any]]:
             "feature_names": None,
             "label_names": {"0": "negative", "1": "positive"},
             "prediction_examples": [],
+            "policy_checks": [],
         }
 
     dataset = dataset_from_jsonable(dataset_payload)
+    metadata["prediction_examples"] = sanitize_prediction_examples(
+        metadata.get("prediction_examples"),
+        dataset.input_dim,
+    )
+    metadata["policy_checks"] = sanitize_policy_checks(metadata.get("policy_checks"), dataset.input_dim)
     return dataset, metadata
+
+
+def sanitize_prediction_examples(
+    examples: list[dict[str, object]] | tuple[dict[str, object], ...] | None,
+    input_dim: int,
+) -> list[dict[str, object]]:
+    return _sanitize_prediction_examples(examples, input_dim)
 
 
 def _sanitize_training_defaults(defaults: dict[str, object] | None) -> dict[str, object]:
@@ -1749,6 +1852,118 @@ def _dataset_triage_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarra
     return _shuffle(features, labels, rng)
 
 
+def _schema_guard_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    continuous_signal = rng.normal(0.0, 1.0, size=total)
+    wide_scale_amount = rng.lognormal(mean=5.0, sigma=0.55, size=total)
+    near_constant_sensor = np.ones(total, dtype=np.float64)
+    status_code = rng.choice([0.0, 1.0, 2.0], size=total, p=[0.60, 0.32, 0.08])
+    sparse_indicator = np.zeros(total, dtype=np.float64)
+    tail_probe = rng.normal(0.0, 0.22, size=total)
+
+    near_constant_count = max(3, total // 30)
+    near_constant_indices = rng.choice(total, size=near_constant_count, replace=False)
+    near_constant_sensor[near_constant_indices] += rng.normal(0.035, 0.006, size=near_constant_count)
+
+    sparse_count = max(4, total // 18)
+    sparse_indices = rng.choice(total, size=sparse_count, replace=False)
+    sparse_indicator[sparse_indices] = 1.0
+
+    tail_count = max(4, total // 18)
+    tail_indices = rng.choice(total, size=tail_count, replace=False)
+    tail_probe[tail_indices] += rng.choice([-1.0, 1.0], size=tail_count) * rng.uniform(4.0, 6.2, size=tail_count)
+    wide_tail_count = max(3, total // 25)
+    wide_indices = rng.choice(total, size=wide_tail_count, replace=False)
+    wide_scale_amount[wide_indices] *= rng.uniform(4.0, 7.5, size=wide_tail_count)
+
+    latent = (
+        1.1 * continuous_signal
+        + 0.45 * (status_code == 1.0).astype(np.float64)
+        + 0.25 * sparse_indicator
+        + rng.normal(0.0, 0.35, size=total)
+    )
+    labels = (latent > np.median(latent)).astype(np.int32)
+    features = np.column_stack(
+        [
+            continuous_signal,
+            wide_scale_amount,
+            near_constant_sensor,
+            status_code,
+            sparse_indicator,
+            tail_probe,
+        ]
+    ).astype(np.float32)
+    return _shuffle(features, labels, rng)
+
+
+def _canary_regression_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    stable_margin = rng.normal(0.0, 1.0, size=total)
+    support_signal = rng.normal(0.0, 0.75, size=total)
+    latent = 1.15 * stable_margin + 0.35 * support_signal + rng.normal(0.0, 0.34, size=total)
+    threshold = float(np.median(latent))
+    labels = (latent > threshold).astype(np.int32)
+    shortcut_marker = np.where(labels == 1, 1.0, -1.0) + rng.normal(0.0, 0.08, size=total)
+    conflict_count = max(4, total // 14)
+    conflict_indices = rng.choice(total, size=conflict_count, replace=False)
+    shortcut_marker[conflict_indices] *= -1.0
+    boundary_band = np.abs(latent - threshold) + rng.normal(0.0, 0.025, size=total)
+    boundary_count = max(4, total // 16)
+    boundary_indices = np.argsort(np.abs(latent - threshold))[:boundary_count]
+    boundary_band[boundary_indices] = rng.normal(0.0, 0.035, size=boundary_count)
+    if total >= 20:
+        features_override = np.asarray(
+            [
+                [-1.25, -0.45, -1.0, 0.7],
+                [1.25, 0.45, 1.0, 0.7],
+                [-1.0, -0.35, 1.0, 0.7],
+                [0.02, 0.0, 1.0, 0.0],
+            ],
+            dtype=np.float64,
+        )
+        labels_override = np.asarray([0, 1, 0, 1], dtype=np.int32)
+        stable_margin[:4] = features_override[:, 0]
+        support_signal[:4] = features_override[:, 1]
+        shortcut_marker[:4] = features_override[:, 2]
+        boundary_band[:4] = features_override[:, 3]
+        labels[:4] = labels_override
+    features = np.column_stack([stable_margin, support_signal, shortcut_marker, boundary_band]).astype(np.float32)
+    return _shuffle(features, labels, rng)
+
+
+def _monotonic_policy_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    risk_score = rng.normal(0.0, 1.0, size=total)
+    protective_signal = rng.normal(0.0, 1.0, size=total)
+    exposure_amount = rng.lognormal(mean=0.0, sigma=0.5, size=total) - 1.0
+    background_noise = rng.normal(0.0, 1.0, size=total)
+    latent = (
+        1.10 * risk_score
+        - 0.85 * protective_signal
+        + 0.45 * exposure_amount
+        + rng.normal(0.0, 0.35, size=total)
+    )
+    labels = (latent > np.median(latent)).astype(np.int32)
+    boundary_count = max(4, total // 16)
+    boundary_indices = np.argsort(np.abs(latent - np.median(latent)))[:boundary_count]
+    background_noise[boundary_indices] += rng.normal(0.0, 0.1, size=boundary_count)
+    if total >= 20:
+        features_override = np.asarray(
+            [
+                [-1.1, 1.0, -0.4, 0.0],
+                [1.1, -1.0, 0.7, 0.0],
+                [0.1, 0.0, 0.2, 0.0],
+                [0.8, 1.0, 0.6, 0.0],
+            ],
+            dtype=np.float64,
+        )
+        labels_override = np.asarray([0, 1, 1, 0], dtype=np.int32)
+        risk_score[:4] = features_override[:, 0]
+        protective_signal[:4] = features_override[:, 1]
+        exposure_amount[:4] = features_override[:, 2]
+        background_noise[:4] = features_override[:, 3]
+        labels[:4] = labels_override
+    features = np.column_stack([risk_score, protective_signal, exposure_amount, background_noise]).astype(np.float32)
+    return _shuffle(features, labels, rng)
+
+
 def _experiment_advisor_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
     angle = rng.uniform(0.0, 2.0 * np.pi, size=total)
     radius = rng.normal(0.95, 0.35, size=total)
@@ -1849,4 +2064,5 @@ def _metadata_from_preset(preset: PresetInfo) -> dict[str, object]:
         "label_names": {"0": preset.label_names[0], "1": preset.label_names[1]},
         "training_defaults": dict(preset.training_defaults),
         "prediction_examples": [dict(example) for example in preset.prediction_examples],
+        "policy_checks": [dict(check) for check in preset.policy_checks],
     }

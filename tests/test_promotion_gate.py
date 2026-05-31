@@ -158,3 +158,56 @@ def test_promotion_gate_blocks_non_actionable_capacity_plan():
 
     assert report["summary"]["verdict"] == "blocked"
     assert any(item["title"] == "Capacity planner is not actionable" for item in report["checks"])
+
+
+def test_promotion_gate_blocks_high_risk_schema_guard():
+    report = build_promotion_gate(
+        sample_count=120,
+        input_dim=4,
+        labels=[0, 1] * 60,
+        config=ModelConfig(feature_map="linear"),
+        metrics={"f1": 0.86, "accuracy": 0.88, "balanced_accuracy": 0.86, "brier_score": 0.14, "ece": 0.04},
+        trial_history=[{"metrics": {"f1": 0.82}}, {"metrics": {"f1": 0.86}}, {"metrics": {"f1": 0.84}}],
+        dataset_triage_report={"summary": {"risk_level": "low", "readiness_score": 90.0, "blocking_issue_count": 0}},
+        trial_inspector_report={"valid_trial_count": 3, "summary": {"leader_margin_f1": 0.04}},
+        schema_guard_report={
+            "summary": {
+                "risk_level": "high",
+                "readiness_score": 54.0,
+                "constant_feature_count": 2,
+                "spike_feature_count": 1,
+                "outlier_feature_count": 1,
+                "recommended_next_step": "Remove constant feature columns.",
+            }
+        },
+    )
+
+    assert report["summary"]["verdict"] == "blocked"
+    assert any(item["title"] == "Schema guard reports feature-contract blockers" for item in report["checks"])
+
+
+def test_promotion_gate_blocks_canary_regression_failures():
+    report = build_promotion_gate(
+        sample_count=120,
+        input_dim=4,
+        labels=[0, 1] * 60,
+        config=ModelConfig(feature_map="linear"),
+        metrics={"f1": 0.9, "accuracy": 0.9, "balanced_accuracy": 0.9, "brier_score": 0.10, "ece": 0.03},
+        trial_history=[{"metrics": {"f1": 0.86}}, {"metrics": {"f1": 0.90}}, {"metrics": {"f1": 0.88}}],
+        dataset_triage_report={"summary": {"risk_level": "low", "readiness_score": 92.0, "blocking_issue_count": 0}},
+        trial_inspector_report={"valid_trial_count": 3, "summary": {"leader_margin_f1": 0.04}},
+        canary_suite_report={
+            "summary": {
+                "verdict": "canary_fail",
+                "checked_count": 3,
+                "passed_count": 2,
+                "failed_count": 1,
+                "schema_failure_count": 0,
+                "pass_rate": 0.667,
+                "recommended_next_step": "Fix the failing canary.",
+            }
+        },
+    )
+
+    assert report["summary"]["verdict"] == "blocked"
+    assert any(item["title"] == "Canary regression suite failed" for item in report["checks"])

@@ -21,6 +21,8 @@ def build_promotion_gate(
     error_atlas_report: dict[str, Any] | None = None,
     reliability_atlas_report: dict[str, Any] | None = None,
     shadow_replay_report: dict[str, Any] | None = None,
+    canary_suite_report: dict[str, Any] | None = None,
+    schema_guard_report: dict[str, Any] | None = None,
     threshold_report: dict[str, Any] | None = None,
     threshold_stability_report: dict[str, Any] | None = None,
     capacity_planner_report: dict[str, Any] | None = None,
@@ -263,6 +265,8 @@ def build_promotion_gate(
         chronological_holdout_report=chronological_holdout_report,
         selective_risk_report=selective_risk_report,
     )
+    _add_canary_checks(add, canary_suite_report)
+    _add_schema_checks(add, schema_guard_report)
 
     checks = _rank_checks(checks)
     score = max(0.0, 100.0 - sum(float(item["penalty"]) for item in checks))
@@ -349,6 +353,92 @@ def _add_triage_checks(add: Any, dataset_triage_report: dict[str, Any] | None) -
             evidence=f"risk={risk}, readiness={readiness:.1f}.",
             action=(summary.get("top_actions") or ["Review dataset triage findings before promotion."])[0],
             penalty=8.0,
+        )
+
+
+def _add_schema_checks(add: Any, schema_guard_report: dict[str, Any] | None) -> None:
+    if not schema_guard_report:
+        return
+    summary = schema_guard_report.get("summary", {})
+    risk = str(summary.get("risk_level", "low"))
+    constant_count = int(summary.get("constant_feature_count", 0) or 0)
+    spike_count = int(summary.get("spike_feature_count", 0) or 0)
+    outlier_count = int(summary.get("outlier_feature_count", 0) or 0)
+    readiness = float(summary.get("readiness_score", 100.0) or 0.0)
+    if risk == "high" or constant_count >= 2 or spike_count >= 2:
+        add(
+            severity="blocker",
+            category="schema",
+            title="Schema guard reports feature-contract blockers",
+            status="fail",
+            evidence=f"risk={risk}, readiness={readiness:.1f}, constant={constant_count}, spikes={spike_count}.",
+            action=str(summary.get("recommended_next_step") or "Resolve schema guard blockers before promotion."),
+            penalty=18.0,
+        )
+    elif risk == "medium" or outlier_count:
+        add(
+            severity="caution",
+            category="schema",
+            title="Schema guard needs review",
+            status="review",
+            evidence=f"risk={risk}, readiness={readiness:.1f}, outlier_features={outlier_count}.",
+            action=str(summary.get("recommended_next_step") or "Review schema guard feature-contract warnings."),
+            penalty=7.0,
+        )
+
+
+def _add_canary_checks(add: Any, canary_suite_report: dict[str, Any] | None) -> None:
+    if not canary_suite_report:
+        return
+    summary = canary_suite_report.get("summary", {})
+    verdict = str(summary.get("verdict", "no_checkable_canaries"))
+    failed = int(summary.get("failed_count", 0) or 0)
+    checked = int(summary.get("checked_count", 0) or 0)
+    review = int(summary.get("review_count", 0) or 0)
+    schema_failures = int(summary.get("schema_failure_count", 0) or 0)
+    schema_warnings = int(summary.get("schema_warning_count", 0) or 0)
+    pass_rate = _optional_float(summary.get("pass_rate"))
+    if verdict == "canary_fail" or failed or schema_failures:
+        add(
+            severity="blocker",
+            category="canary",
+            title="Canary regression suite failed",
+            status="fail",
+            evidence=(
+                f"checked={checked}, failed={failed}, schema_failures={schema_failures}, "
+                f"pass_rate={pass_rate if pass_rate is not None else '-'}."
+            ),
+            action=str(
+                summary.get("recommended_next_step")
+                or "Investigate failing canary examples before promotion."
+            ),
+            penalty=22.0,
+        )
+    elif verdict == "canary_review" or review or schema_warnings:
+        add(
+            severity="caution",
+            category="canary",
+            title="Canary regression suite needs review",
+            status="review",
+            evidence=(
+                f"checked={checked}, review={review}, schema_warnings={schema_warnings}, "
+                f"pass_rate={pass_rate if pass_rate is not None else '-'}."
+            ),
+            action=str(summary.get("recommended_next_step") or "Review canary warnings before promotion."),
+            penalty=7.0,
+        )
+    elif verdict == "no_checkable_canaries":
+        add(
+            severity="caution",
+            category="canary",
+            title="Canary suite is informational only",
+            status="review",
+            evidence="No canary example has an expected label.",
+            action=str(
+                summary.get("recommended_next_step")
+                or "Add expected labels to canary examples before final promotion."
+            ),
+            penalty=4.0,
         )
 
 
@@ -599,6 +689,8 @@ def _must_include(checks: list[dict[str, Any]], metrics: dict[str, float | int],
         items.append("calibration note")
     if any(check["category"] in {"drift", "temporal", "robustness"} for check in checks):
         items.append("deployment-risk note")
+    if any(check["category"] == "schema" for check in checks):
+        items.append("feature-schema note")
     if any(check["severity"] == "blocker" for check in checks):
         items.append("blocked-use warning")
     return items

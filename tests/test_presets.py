@@ -92,6 +92,31 @@ def test_load_preset_rejects_missing_dataset_or_bad_schema_version(tmp_path):
         load_preset_file(bad_version)
 
 
+def test_load_preset_rejects_malformed_prediction_examples(tmp_path):
+    bad_examples = tmp_path / "bad-examples.json"
+    bad_examples.write_text(
+        json.dumps(
+            {
+                "kind": "italtensor.dataset_preset",
+                "schema_version": 1,
+                "name": "bad examples",
+                "prediction_examples": [{"name": "bad width", "features": [0.1], "expected_label": 1}],
+                "dataset": {
+                    "input_dim": 2,
+                    "samples": [
+                        {"features": [0.1, 0.2], "label": 0},
+                        {"features": [0.8, 0.9], "label": 1},
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DataValidationError, match="prediction example"):
+        load_preset_file(bad_examples)
+
+
 def test_save_preset_rejects_inconsistent_metadata(tmp_path):
     dataset = validate_dataset([[0.1, 0.2], [0.8, 0.9]], [0, 1])
 
@@ -158,6 +183,8 @@ def test_experimental_builtin_presets_are_available():
         "Separability lens lab",
         "Neighborhood hardness lab",
         "Dataset triage lab",
+        "Schema guard lab",
+        "Canary regression lab",
         "Experiment advisor lab",
         "Proxy leakage lab",
         "Promotion gate lab",
@@ -498,6 +525,39 @@ def test_dataset_triage_lab_preset_has_conflicts_redundancy_and_tails():
     assert float(np.std(dataset.features[:, 4])) == pytest.approx(0.0)
     assert float(np.corrcoef(dataset.features[:, 0], dataset.features[:, 2])[0, 1]) > 0.95
     assert float(np.max(np.abs(dataset.features[:, 5]))) > 4.0
+
+
+def test_schema_guard_lab_preset_has_contract_risks():
+    metadata = preset_metadata("Schema guard lab")
+    dataset = generate_builtin_preset("Schema guard lab", sample_count=160, seed=10)
+
+    assert metadata["input_dim"] == 6
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == [
+        "continuous_signal",
+        "wide_scale_amount",
+        "near_constant_sensor",
+        "status_code",
+        "sparse_indicator",
+        "tail_probe",
+    ]
+    assert any(example["name"] == "Schema warning row" for example in metadata["prediction_examples"])
+    assert int(np.unique(dataset.features[:, 3]).shape[0]) <= 3
+    assert int(np.sum(dataset.features[:, 4] > 0.5)) >= 4
+    assert float(np.max(np.abs(dataset.features[:, 5]))) > 4.0
+
+
+def test_canary_regression_lab_preset_has_checkable_canaries():
+    metadata = preset_metadata("Canary regression lab")
+    dataset = generate_builtin_preset("Canary regression lab", sample_count=120, seed=10)
+
+    assert metadata["input_dim"] == 4
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == ["stable_margin", "support_signal", "shortcut_marker", "boundary_band"]
+    assert any(example["name"] == "Canary shortcut conflict" for example in metadata["prediction_examples"])
+    assert sum(example["expected_label"] is not None for example in metadata["prediction_examples"]) >= 3
+    assert int(np.sum(np.sign(dataset.features[:, 2]) != np.where(dataset.labels == 1, 1.0, -1.0))) >= 4
+    assert int(np.sum(np.abs(dataset.features[:, 3]) < 0.10)) >= 4
 
 
 def test_experiment_advisor_lab_preset_has_imbalanced_nonlinear_boundary():

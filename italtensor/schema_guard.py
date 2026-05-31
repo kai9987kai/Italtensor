@@ -20,20 +20,22 @@ def run_schema_guard(
     x = _validate_features(features)
     names = _feature_names(feature_names, x.shape[1])
     rows = [_feature_contract(x[:, index], index, names[index]) for index in range(x.shape[1])]
-    rows.sort(
+    flagged_rows = sorted(
+        rows,
         key=lambda row: (
             -float(row["risk_score"]),
             -len(row["risk_flags"]),
             int(row["feature_index"]),
-        )
+        ),
     )
-    summary = _summary(rows, x.shape[0])
+    summary = _summary(flagged_rows, x.shape[0])
     report: dict[str, Any] = {
         "sample_count": int(x.shape[0]),
         "input_dim": int(x.shape[1]),
         "dataset_fingerprint": schema_guard_dataset_fingerprint(x),
         "summary": summary,
-        "features": rows[: max(1, int(max_features))],
+        "features": rows,
+        "flagged_features": flagged_rows[: max(1, int(max_features))],
         "contract": {
             "feature_count": int(x.shape[1]),
             "feature_names": names,
@@ -116,9 +118,11 @@ def format_schema_guard_summary(report: dict[str, Any]) -> str:
 
 def schema_guard_dataset_fingerprint(features: Sequence[Sequence[float]] | np.ndarray) -> str:
     x = _validate_features(features)
+    order = np.lexsort(tuple(x[:, index] for index in range(x.shape[1] - 1, -1, -1)))
+    sorted_x = x[order]
     hasher = hashlib.sha256()
     hasher.update(str(tuple(int(value) for value in x.shape)).encode("ascii"))
-    hasher.update(np.ascontiguousarray(x, dtype=np.float32).tobytes())
+    hasher.update(np.ascontiguousarray(sorted_x, dtype=np.float32).tobytes())
     return hasher.hexdigest()
 
 
@@ -237,7 +241,9 @@ def _risk_flags(
         flags.append("constant_feature")
     elif unique_count <= min(3, max(2, values.shape[0] // 20)) or unique_ratio <= 0.03:
         flags.append("near_constant_feature")
-    if unique_count <= min(20, max(4, values.shape[0] // 4)) and unique_ratio <= 0.20:
+    if unique_count <= 4 or (
+        unique_count <= min(20, max(4, values.shape[0] // 4)) and unique_ratio <= 0.20
+    ):
         flags.append("low_cardinality_numeric")
     if outlier_count:
         flags.append("robust_range_outliers")

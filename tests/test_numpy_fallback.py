@@ -147,6 +147,8 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
         cartography_report={"region_counts": {"ambiguous": 1}},
         ood_sentinel_report={"summary": {"top_row_index": 2}},
         bootstrap_stability_report={"summary": {"top_row_index": 4}},
+        canary_suite_report={"summary": {"verdict": "canary_pass", "passed_count": 2}},
+        schema_guard_report={"summary": {"risk_level": "medium", "readiness_score": 78.0}},
         prototype_audit_report={"summary": {"top_boundary_row": 5}},
         feature_separability_report={"summary": {"top_feature": 1}},
         neighborhood_hardness_report={"summary": {"top_hard_row": 6}},
@@ -193,6 +195,8 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
     assert metadata["dataset_cartography"]["region_counts"]["ambiguous"] == 1
     assert metadata["ood_sentinel"]["summary"]["top_row_index"] == 2
     assert metadata["bootstrap_stability_diagnostics"]["summary"]["top_row_index"] == 4
+    assert metadata["canary_suite"]["summary"]["verdict"] == "canary_pass"
+    assert metadata["schema_guard"]["summary"]["risk_level"] == "medium"
     assert metadata["prototype_audit"]["summary"]["top_boundary_row"] == 5
     assert metadata["feature_separability"]["summary"]["top_feature"] == 1
     assert metadata["neighborhood_hardness"]["summary"]["top_hard_row"] == 6
