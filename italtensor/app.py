@@ -2430,6 +2430,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
         state.latest_canary_suite_report = None
+        state.latest_policy_guard_report = None
         state.latest_experiment_advisor_report = None
         state.latest_trial_inspector_report = None
         state.latest_promotion_gate_report = None
@@ -2483,6 +2484,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
         state.latest_canary_suite_report = None
+        state.latest_policy_guard_report = None
         state.latest_experiment_advisor_report = None
         state.latest_trial_inspector_report = None
         state.latest_promotion_gate_report = None
@@ -3057,6 +3059,7 @@ def _activate_model_slot(window, state: AppState, values: dict[str, Any]) -> Non
     state.latest_ood_sentinel_report = None
     state.latest_bootstrap_stability_report = None
     state.latest_canary_suite_report = None
+    state.latest_policy_guard_report = None
     state.latest_prototype_audit_report = None
     state.latest_feature_separability_report = None
     state.latest_neighborhood_hardness_report = None
@@ -3172,6 +3175,7 @@ def _load_registry(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
         state.latest_canary_suite_report = None
+        state.latest_policy_guard_report = None
         state.latest_prototype_audit_report = None
         state.latest_feature_separability_report = None
         state.latest_neighborhood_hardness_report = None
@@ -3222,6 +3226,7 @@ def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_ood_sentinel_report = None
     state.latest_bootstrap_stability_report = None
     state.latest_canary_suite_report = None
+    state.latest_policy_guard_report = None
     state.latest_prototype_audit_report = None
     state.latest_feature_separability_report = None
     state.latest_neighborhood_hardness_report = None
@@ -3310,6 +3315,7 @@ def _build_stacked_ensemble(window, state: AppState, values: dict[str, Any]) -> 
     state.latest_ood_sentinel_report = None
     state.latest_bootstrap_stability_report = None
     state.latest_canary_suite_report = None
+    state.latest_policy_guard_report = None
     state.latest_prototype_audit_report = None
     state.latest_feature_separability_report = None
     state.latest_neighborhood_hardness_report = None
@@ -3497,6 +3503,36 @@ def _start_canary_suite(window, state: AppState) -> None:
         return "canary_suite", report
 
     _start_worker(window, state, "Running preset canary suite...", task)
+
+
+def _start_policy_guard(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    if state.model is None or state.input_dim is None:
+        raise ValueError("Train or load a model before running Policy guard.")
+    if not state.current_policy_checks:
+        raise ValueError("Load a preset with policy_checks before running Policy guard.")
+    dataset = validate_dataset(state.features, state.labels, min_samples=2, require_two_classes=False)
+    model = state.model
+    input_dim = int(state.input_dim)
+    preprocessor = state.preprocessor
+    threshold = float(state.latest_threshold)
+    checks = [dict(check) for check in state.current_policy_checks]
+    preset_name = state.current_preset_name
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_policy_guard(
+            model,
+            dataset.features,
+            checks,
+            input_dim=input_dim,
+            preprocessor=preprocessor,
+            threshold=threshold,
+        )
+        if preset_name:
+            report["preset_name"] = preset_name
+        return "policy_guard", report
+
+    _start_worker(window, state, "Running monotonic policy guard...", task)
 
 
 def _start_experiment_advisor(window, state: AppState) -> None:
@@ -3799,6 +3835,7 @@ def _merge_slots(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
         state.latest_canary_suite_report = None
+        state.latest_policy_guard_report = None
         state.latest_prototype_audit_report = None
         state.latest_feature_separability_report = None
         state.latest_neighborhood_hardness_report = None

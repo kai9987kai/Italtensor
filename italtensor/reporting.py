@@ -50,6 +50,7 @@ def build_experiment_report(
     ood_sentinel_report: dict[str, Any] | None = None,
     bootstrap_stability_report: dict[str, Any] | None = None,
     canary_suite_report: dict[str, Any] | None = None,
+    policy_guard_report: dict[str, Any] | None = None,
     schema_guard_report: dict[str, Any] | None = None,
     prototype_audit_report: dict[str, Any] | None = None,
     feature_separability_report: dict[str, Any] | None = None,
@@ -111,6 +112,7 @@ def build_experiment_report(
         "ood_sentinel": ood_sentinel_report or None,
         "bootstrap_stability_diagnostics": bootstrap_stability_report or None,
         "canary_suite": canary_suite_report or None,
+        "policy_guard": policy_guard_report or None,
         "schema_guard": schema_guard_report or None,
         "prototype_audit": prototype_audit_report or None,
         "feature_separability": feature_separability_report or None,
@@ -166,6 +168,7 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     ood_sentinel = report.get("ood_sentinel") or {}
     bootstrap_stability = report.get("bootstrap_stability_diagnostics") or {}
     canary_suite = report.get("canary_suite") or {}
+    policy_guard = report.get("policy_guard") or {}
     schema_guard = report.get("schema_guard") or {}
     prototype_audit = report.get("prototype_audit") or {}
     feature_separability = report.get("feature_separability") or {}
@@ -327,6 +330,33 @@ def format_markdown_report(report: dict[str, Any]) -> str:
                 f"pred={item.get('predicted_label', '-')}, expected={expected_text}, "
                 f"margin={_format_value(item.get('margin_to_threshold', '-'))}, "
                 f"schema={item.get('schema_status', 'not_run')}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Policy Guard"])
+    if policy_guard:
+        summary = policy_guard.get("summary", {})
+        lines.extend(
+            [
+                f"- Verdict: {summary.get('verdict', '-')}",
+                f"- Preset: {policy_guard.get('preset_name') or '-'}",
+                f"- Checks: {summary.get('check_count', '-')}",
+                f"- Probe pairs: {summary.get('pair_count', '-')}",
+                f"- Violations: {summary.get('violation_count', '-')}",
+                f"- Violation rate: {_format_value(summary.get('violation_rate', '-'))}",
+                f"- Max violation: {_format_value(summary.get('max_violation', '-'))}",
+                f"- Worst check: {summary.get('worst_check') or '-'}",
+                f"- Recommendation: {summary.get('recommended_next_step') or 'none'}",
+            ]
+        )
+        for item in policy_guard.get("checks", [])[:8]:
+            lines.append(
+                f"- {item.get('name', '-')}: status={item.get('status', '-')}, "
+                f"feature={item.get('feature_name', '-')}, direction={item.get('direction', '-')}, "
+                f"pairs={item.get('pair_count', '-')}, violations={item.get('violation_count', '-')}, "
+                f"rate={_format_value(item.get('violation_rate', '-'))}, "
+                f"max={_format_value(item.get('max_violation', '-'))}"
             )
     else:
         lines.append("- None")

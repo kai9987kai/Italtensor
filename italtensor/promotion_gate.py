@@ -22,6 +22,7 @@ def build_promotion_gate(
     reliability_atlas_report: dict[str, Any] | None = None,
     shadow_replay_report: dict[str, Any] | None = None,
     canary_suite_report: dict[str, Any] | None = None,
+    policy_guard_report: dict[str, Any] | None = None,
     schema_guard_report: dict[str, Any] | None = None,
     threshold_report: dict[str, Any] | None = None,
     threshold_stability_report: dict[str, Any] | None = None,
@@ -266,6 +267,7 @@ def build_promotion_gate(
         selective_risk_report=selective_risk_report,
     )
     _add_canary_checks(add, canary_suite_report)
+    _add_policy_checks(add, policy_guard_report)
     _add_schema_checks(add, schema_guard_report)
 
     checks = _rank_checks(checks)
@@ -439,6 +441,48 @@ def _add_canary_checks(add: Any, canary_suite_report: dict[str, Any] | None) -> 
                 or "Add expected labels to canary examples before final promotion."
             ),
             penalty=4.0,
+        )
+
+
+def _add_policy_checks(add: Any, policy_guard_report: dict[str, Any] | None) -> None:
+    if not policy_guard_report:
+        return
+    summary = policy_guard_report.get("summary", {})
+    verdict = str(summary.get("verdict", "policy_review"))
+    violations = int(summary.get("violation_count", 0) or 0)
+    pair_count = int(summary.get("pair_count", 0) or 0)
+    failed_checks = int(summary.get("failed_check_count", 0) or 0)
+    review_checks = int(summary.get("review_check_count", 0) or 0)
+    max_violation = float(summary.get("max_violation", 0.0) or 0.0)
+    violation_rate = float(summary.get("violation_rate", 0.0) or 0.0)
+    if verdict == "policy_fail" or failed_checks:
+        add(
+            severity="blocker",
+            category="policy",
+            title="Policy guard reports monotonic violations",
+            status="fail",
+            evidence=(
+                f"violations={violations}/{pair_count}, rate={violation_rate:.3f}, "
+                f"max_violation={max_violation:.3f}, failed_checks={failed_checks}."
+            ),
+            action=str(
+                summary.get("recommended_next_step")
+                or "Investigate monotonic policy violations before promotion."
+            ),
+            penalty=20.0,
+        )
+    elif verdict == "policy_review" or review_checks:
+        add(
+            severity="caution",
+            category="policy",
+            title="Policy guard needs review",
+            status="review",
+            evidence=(
+                f"violations={violations}/{pair_count}, rate={violation_rate:.3f}, "
+                f"max_violation={max_violation:.3f}, review_checks={review_checks}."
+            ),
+            action=str(summary.get("recommended_next_step") or "Review policy guard warnings before promotion."),
+            penalty=7.0,
         )
 
 
