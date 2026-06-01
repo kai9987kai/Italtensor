@@ -32,6 +32,14 @@ def test_preset_round_trip_preserves_dataset_and_metadata(tmp_path):
         feature_names=["left", "right"],
         label_names={"0": "reject", "1": "accept"},
         prediction_examples=[{"name": "Review row", "features": [0.4, 0.5], "expected_label": None}],
+        policy_checks=[
+            {
+                "name": "Left should increase",
+                "feature_index": 0,
+                "feature_name": "left",
+                "direction": "increasing",
+            }
+        ],
     )
 
     loaded, metadata = load_preset_file(path)
@@ -53,6 +61,8 @@ def test_preset_round_trip_preserves_dataset_and_metadata(tmp_path):
     assert metadata["feature_names"] == ["left", "right"]
     assert metadata["label_names"] == {"0": "reject", "1": "accept"}
     assert metadata["prediction_examples"][0]["features"] == [0.4, 0.5]
+    assert metadata["policy_checks"][0]["feature_name"] == "left"
+    assert metadata["policy_checks"][0]["direction"] == "increasing"
 
 
 def test_load_preset_accepts_plain_dataset_json(tmp_path):
@@ -115,6 +125,31 @@ def test_load_preset_rejects_malformed_prediction_examples(tmp_path):
 
     with pytest.raises(DataValidationError, match="prediction example"):
         load_preset_file(bad_examples)
+
+
+def test_load_preset_rejects_malformed_policy_checks(tmp_path):
+    bad_policy = tmp_path / "bad-policy.json"
+    bad_policy.write_text(
+        json.dumps(
+            {
+                "kind": "italtensor.dataset_preset",
+                "schema_version": 1,
+                "name": "bad policy",
+                "policy_checks": [{"name": "bad direction", "feature_index": 0, "direction": "sideways"}],
+                "dataset": {
+                    "input_dim": 1,
+                    "samples": [
+                        {"features": [0.1], "label": 0},
+                        {"features": [0.8], "label": 1},
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="direction"):
+        load_preset_file(bad_policy)
 
 
 def test_save_preset_rejects_inconsistent_metadata(tmp_path):
@@ -185,6 +220,7 @@ def test_experimental_builtin_presets_are_available():
         "Dataset triage lab",
         "Schema guard lab",
         "Canary regression lab",
+        "Monotonic policy lab",
         "Experiment advisor lab",
         "Proxy leakage lab",
         "Promotion gate lab",
@@ -558,6 +594,25 @@ def test_canary_regression_lab_preset_has_checkable_canaries():
     assert sum(example["expected_label"] is not None for example in metadata["prediction_examples"]) >= 3
     assert int(np.sum(np.sign(dataset.features[:, 2]) != np.where(dataset.labels == 1, 1.0, -1.0))) >= 4
     assert int(np.sum(np.abs(dataset.features[:, 3]) < 0.10)) >= 4
+
+
+def test_monotonic_policy_lab_preset_has_policy_checks():
+    metadata = preset_metadata("Monotonic policy lab")
+    dataset = generate_builtin_preset("Monotonic policy lab", sample_count=120, seed=10)
+
+    assert metadata["input_dim"] == 4
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == ["risk_score", "protective_signal", "exposure_amount", "background_noise"]
+    assert len(metadata["policy_checks"]) == 3
+    directions = {check["feature_name"]: check["direction"] for check in metadata["policy_checks"]}
+    assert directions == {
+        "risk_score": "increasing",
+        "protective_signal": "decreasing",
+        "exposure_amount": "increasing",
+    }
+    assert any(example["name"] == "Policy boundary review" for example in metadata["prediction_examples"])
+    assert float(np.corrcoef(dataset.features[:, 0], dataset.labels)[0, 1]) > 0.45
+    assert float(np.corrcoef(dataset.features[:, 1], dataset.labels)[0, 1]) < -0.25
 
 
 def test_experiment_advisor_lab_preset_has_imbalanced_nonlinear_boundary():

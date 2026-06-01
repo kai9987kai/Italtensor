@@ -37,6 +37,7 @@ def build_experiment_report(
     threshold_report: dict[str, Any] | None = None,
     threshold_stability_report: dict[str, Any] | None = None,
     capacity_planner_report: dict[str, Any] | None = None,
+    rank_lift_report: dict[str, Any] | None = None,
     model_response_report: dict[str, Any] | None = None,
     pairwise_interaction_report: dict[str, Any] | None = None,
     slice_report: dict[str, Any] | None = None,
@@ -99,6 +100,7 @@ def build_experiment_report(
         "threshold_diagnostics": threshold_report or None,
         "threshold_stability": threshold_stability_report or None,
         "capacity_planner": capacity_planner_report or None,
+        "rank_lift": rank_lift_report or None,
         "model_response_diagnostics": model_response_report or None,
         "pairwise_interaction_diagnostics": pairwise_interaction_report or None,
         "slice_diagnostics": slice_report or None,
@@ -155,6 +157,7 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     threshold_diagnostics = report.get("threshold_diagnostics") or {}
     threshold_stability = report.get("threshold_stability") or {}
     capacity_planner = report.get("capacity_planner") or {}
+    rank_lift = report.get("rank_lift") or {}
     model_response = report.get("model_response_diagnostics") or {}
     pairwise_interactions = report.get("pairwise_interaction_diagnostics") or {}
     slice_diagnostics = report.get("slice_diagnostics") or {}
@@ -799,6 +802,43 @@ def format_markdown_report(report: dict[str, Any]) -> str:
                 f"row={item.get('row_index', '-')}, "
                 f"label={item.get('label', '-')}, "
                 f"p={_format_value(item.get('probability', '-'))}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Rank Lift / Gains"])
+    if rank_lift:
+        summary = rank_lift.get("summary", {})
+        lines.extend(
+            [
+                f"- Verdict: {summary.get('verdict', '-')}",
+                f"- Prevalence: {_format_value(summary.get('prevalence', '-'))}",
+                f"- Top 10% lift: {_format_value(summary.get('top_10_lift', '-'))}",
+                f"- Top 10% capture: {_format_value(summary.get('top_10_positive_capture', '-'))}",
+                f"- Top 20% lift: {_format_value(summary.get('top_20_lift', '-'))}",
+                f"- Top 20% capture: {_format_value(summary.get('top_20_positive_capture', '-'))}",
+                f"- Normalized gains AUC: {_format_value(summary.get('normalized_gains_auc', '-'))}",
+                f"- Score Gini: {_format_value(summary.get('score_gini', '-'))}",
+                f"- Recommendation: {summary.get('recommended_next_step') or 'none'}",
+            ]
+        )
+        for item in rank_lift.get("points", [])[:8]:
+            lines.append(
+                f"- top={_format_value(item.get('top_fraction', '-'))}: "
+                f"k={item.get('k', '-')}, "
+                f"precision={_format_value(item.get('precision_at_k', '-'))}, "
+                f"capture={_format_value(item.get('positive_capture', '-'))}, "
+                f"lift={_format_value(item.get('lift', '-'))}, "
+                f"score_mass={_format_value(item.get('probability_mass_capture', '-'))}"
+            )
+        for item in rank_lift.get("deciles_table", [])[:5]:
+            lines.append(
+                f"- bucket {item.get('bucket', '-')}: "
+                f"rows={item.get('rank_start', '-')}-{item.get('rank_end', '-')}, "
+                f"positives={item.get('positive_count', '-')}/{item.get('count', '-')}, "
+                f"rate={_format_value(item.get('response_rate', '-'))}, "
+                f"lift={_format_value(item.get('lift', '-'))}, "
+                f"cum_capture={_format_value(item.get('cumulative_positive_capture', '-'))}"
             )
     else:
         lines.append("- None")

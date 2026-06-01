@@ -211,3 +211,30 @@ def test_promotion_gate_blocks_canary_regression_failures():
 
     assert report["summary"]["verdict"] == "blocked"
     assert any(item["title"] == "Canary regression suite failed" for item in report["checks"])
+
+
+def test_promotion_gate_blocks_policy_guard_failures():
+    report = build_promotion_gate(
+        sample_count=120,
+        input_dim=4,
+        labels=[0, 1] * 60,
+        config=ModelConfig(feature_map="linear"),
+        metrics={"f1": 0.9, "accuracy": 0.9, "balanced_accuracy": 0.9, "brier_score": 0.10, "ece": 0.03},
+        trial_history=[{"metrics": {"f1": 0.86}}, {"metrics": {"f1": 0.90}}, {"metrics": {"f1": 0.88}}],
+        dataset_triage_report={"summary": {"risk_level": "low", "readiness_score": 92.0, "blocking_issue_count": 0}},
+        trial_inspector_report={"valid_trial_count": 3, "summary": {"leader_margin_f1": 0.04}},
+        policy_guard_report={
+            "summary": {
+                "verdict": "policy_fail",
+                "pair_count": 30,
+                "violation_count": 7,
+                "violation_rate": 0.233,
+                "failed_check_count": 1,
+                "max_violation": 0.12,
+                "recommended_next_step": "Constrain or retrain the model.",
+            }
+        },
+    )
+
+    assert report["summary"]["verdict"] == "blocked"
+    assert any(item["title"] == "Policy guard reports monotonic violations" for item in report["checks"])

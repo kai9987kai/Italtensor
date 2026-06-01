@@ -634,6 +634,31 @@ def test_report_export_json_and_markdown(tmp_path):
                 }
             ],
         },
+        policy_guard_report={
+            "preset_name": "Monotonic policy lab",
+            "summary": {
+                "verdict": "policy_review",
+                "check_count": 2,
+                "pair_count": 24,
+                "violation_count": 1,
+                "violation_rate": 0.0417,
+                "max_violation": 0.02,
+                "worst_check": "Risk score should rise",
+                "recommended_next_step": "Review weak policy violations.",
+            },
+            "checks": [
+                {
+                    "name": "Risk score should rise",
+                    "status": "review",
+                    "feature_name": "risk_score",
+                    "direction": "increasing",
+                    "pair_count": 12,
+                    "violation_count": 1,
+                    "violation_rate": 0.0833,
+                    "max_violation": 0.02,
+                }
+            ],
+        },
         schema_guard_report={
             "sample_count": 4,
             "input_dim": 2,
@@ -885,6 +910,7 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["ood_sentinel"]["summary"]["top_row_index"] == 3
     assert saved_json["bootstrap_stability_diagnostics"]["summary"]["top_row_index"] == 2
     assert saved_json["canary_suite"]["summary"]["verdict"] == "canary_review"
+    assert saved_json["policy_guard"]["summary"]["verdict"] == "policy_review"
     assert saved_json["schema_guard"]["summary"]["risk_level"] == "medium"
     assert saved_json["prototype_audit"]["summary"]["top_boundary_row"] == 2
     assert saved_json["feature_separability"]["summary"]["top_feature"] == 1
@@ -964,6 +990,8 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "Mean probability std" in saved_markdown
     assert "## Canary Suite" in saved_markdown
     assert "Canary boundary review" in saved_markdown
+    assert "## Policy Guard" in saved_markdown
+    assert "Risk score should rise" in saved_markdown
     assert "## Prototype Audit" in saved_markdown
     assert "Possible label contradictions" in saved_markdown
     assert "## MPS Bond Sweep" in saved_markdown

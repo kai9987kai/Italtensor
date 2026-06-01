@@ -422,6 +422,22 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="rank_lift_lab",
+        name="Rank lift lab",
+        description="A score-ranking dataset with concentrated positives, mid-rank decoys, and a diffuse tail for gains-table review.",
+        default_samples=240,
+        min_samples=20,
+        input_dim=5,
+        recommended_feature_map="linear",
+        feature_names=("rank_score", "support_signal", "decoy_score", "tail_noise", "review_band"),
+        training_defaults={"epochs": 80, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Top-ranked positive", "features": [1.35, 0.8, -0.2, 0.0, 1.0], "expected_label": 1},
+            {"name": "Decoy high-score review", "features": [0.85, -0.4, 1.3, 0.0, 0.5], "expected_label": None},
+            {"name": "Diffuse-tail negative", "features": [-0.8, -0.2, 0.0, 0.0, -1.0], "expected_label": 0},
+        ),
+    ),
+    PresetInfo(
         key="cost_sensitive_screening",
         name="Cost-sensitive screening",
         description="Rare positives with overlapping scores for threshold tradeoff and false-negative-cost experiments.",
@@ -822,6 +838,8 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _threshold_stability_lab(total, rng)
     elif preset.key == "capacity_planner_lab":
         features, labels = _capacity_planner_lab(total, rng)
+    elif preset.key == "rank_lift_lab":
+        features, labels = _rank_lift_lab(total, rng)
     elif preset.key == "cost_sensitive_screening":
         features, labels = _cost_sensitive_screening(total, rng)
     elif preset.key == "decision_utility_tradeoff":

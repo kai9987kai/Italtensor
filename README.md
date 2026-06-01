@@ -49,6 +49,7 @@ The full `requirements.txt` install includes TensorFlow. The app code still has 
   - Dataset triage lab
   - Schema guard lab
   - Canary regression lab
+  - Monotonic policy lab
   - Experiment advisor lab
   - Proxy leakage lab
   - Promotion gate lab
@@ -79,6 +80,7 @@ The full `requirements.txt` install includes TensorFlow. The app code still has 
 - Neighborhood hardness diagnostics for leave-one-out local votes, hard rows, ambiguous rows, and label issue candidates.
 - Schema guard infers a numeric feature contract from loaded data and flags constant columns, low-cardinality codes, sparse spikes, heavy tails, out-of-range prediction vectors, and schema drift risks.
 - Canary suite replays preset prediction examples against the active model, marks expected-label regressions, low-margin decisions, informational probes, and optional schema-guard failures.
+- Policy guard replays preset monotonic checks against the active model, flags probability moves that violate expected increasing/decreasing behavior, and feeds promotion-gate blockers when policy checks fail.
 - One-click dataset triage that combines audit, separability, prototype, neighborhood, and model-free OOD checks into a readiness score and action queue.
 - Experiment advisor that turns triage, validation metrics, trial history, and diagnostics into ranked next-run recommendations.
 - Trial inspector that converts auto-experiment history into a leaderboard, backend/feature-map family summary, stability margin, and next search recommendation.
@@ -198,6 +200,10 @@ Preset files wrap the normal dataset shape with metadata:
   "prediction_examples": [
     {"name": "Likely positive", "features": [0.9, 0.7], "expected_label": 1}
   ],
+  "policy_checks": [
+    {"name": "Higher x1 should not lower risk", "feature_index": 0, "feature_name": "x1", "direction": "increasing"},
+    {"name": "Higher x2 should not raise risk", "feature_index": 1, "feature_name": "x2", "direction": "decreasing"}
+  ],
   "dataset": {
     "input_dim": 2,
     "samples": [
@@ -208,7 +214,7 @@ Preset files wrap the normal dataset shape with metadata:
 }
 ```
 
-Use `Save as preset` to turn the current dataset into a reusable preset. Saved presets keep the current GUI training controls, including epochs, batch size, trials, feature map, backend, learning-rate schedule, gradient clipping, L1 penalty, feature-selection count, MPS dimensions, and a valid prediction vector as an optional example. Built-in, saved, and imported presets can carry training defaults, a recommended feature map, feature names, label names, and prediction examples; the GUI applies those defaults when loading presets.
+Use `Save as preset` to turn the current dataset into a reusable preset. Saved presets keep the current GUI training controls, including epochs, batch size, trials, feature map, backend, learning-rate schedule, gradient clipping, L1 penalty, feature-selection count, MPS dimensions, current policy checks, and a valid prediction vector as an optional example. Built-in, saved, and imported presets can carry training defaults, a recommended feature map, feature names, label names, prediction examples, and monotonic policy checks; the GUI applies those defaults when loading presets.
 
 ## Experiment Notes
 
@@ -222,7 +228,7 @@ Feature maps are used by the NumPy fallback backend. If TensorFlow is installed 
 
 Auto experiments search model settings and feature maps, then rank runs by validation F1, accuracy, and validation loss.
 
-Experiment reports can be exported before training when a dataset is loaded, so model-free audits are easy to archive. Reports include dataset availability, class counts when a dataset is loaded, the selected threshold, fixed-`0.5` baseline metrics, calibration diagnostics, reliability-atlas bins, post-hoc calibration repair diagnostics, post-hoc permutation-null diagnostics, population drift diagnostics, adversarial validation diagnostics, chronological holdout diagnostics, shadow-replay windows, threshold-stability intervals, capacity-planner budget tables, schema-guard feature contracts, canary-suite regression probes, conformal-style uncertainty diagnostics, post-hoc conformal prediction-set diagnostics, feature importance, feature ablation diagnostics, model response diagnostics, pairwise interaction diagnostics, subgroup disparity diagnostics, decision-curve utility diagnostics, selective prediction risk-coverage diagnostics, error-atlas buckets, dataset cartography, dataset triage, experiment-advisor recommendations, trial-inspector search summaries, promotion-gate verdicts, neighborhood hardness diagnostics, feature separability diagnostics, prototype audit diagnostics, OOD sentinel rows, bootstrap stability diagnostics, MPS bond sweeps, and trial history for auto experiments.
+Experiment reports can be exported before training when a dataset is loaded, so model-free audits are easy to archive. Reports include dataset availability, class counts when a dataset is loaded, the selected threshold, fixed-`0.5` baseline metrics, calibration diagnostics, reliability-atlas bins, post-hoc calibration repair diagnostics, post-hoc permutation-null diagnostics, population drift diagnostics, adversarial validation diagnostics, chronological holdout diagnostics, shadow-replay windows, threshold-stability intervals, capacity-planner budget tables, schema-guard feature contracts, canary-suite regression probes, policy-guard monotonic probes, conformal-style uncertainty diagnostics, post-hoc conformal prediction-set diagnostics, feature importance, feature ablation diagnostics, model response diagnostics, pairwise interaction diagnostics, subgroup disparity diagnostics, decision-curve utility diagnostics, selective prediction risk-coverage diagnostics, error-atlas buckets, dataset cartography, dataset triage, experiment-advisor recommendations, trial-inspector search summaries, promotion-gate verdicts, neighborhood hardness diagnostics, feature separability diagnostics, prototype audit diagnostics, OOD sentinel rows, bootstrap stability diagnostics, MPS bond sweeps, and trial history for auto experiments.
 
 The uncertainty output is intended as an experimental local diagnostic. When each class has enough samples, Italtensor uses a separate calibration split to estimate a split-conformal-style quantile, then evaluates coverage on the validation split. Prediction displays a label set such as `{0}`, `{1}`, `{0,1}`, or `abstain`. Tiny datasets fall back to validation-reused uncertainty and mark that source in model metadata and reports.
 
@@ -282,6 +288,8 @@ Schema guard is a lightweight feature-contract profiler for numeric vectors. It 
 
 Canary suite is a deterministic model-regression check for preset examples. Built-in, saved, and imported presets can include `prediction_examples`; examples with `expected_label` equal to `0` or `1` become pass/fail probes, while `null` examples are review-only. Canary scoring uses the same raw-vector preprocessing as normal prediction, can reuse the latest Schema guard report, and is saved in model sidecars and exported reports. The `Canary regression lab` preset includes stable negative/positive probes, a shortcut-conflict canary, and a boundary review probe.
 
+Policy guard is a deterministic monotonic-behavior check for preset policy checks. Built-in, saved, and imported presets can include `policy_checks` with a raw `feature_index` and `direction` of `increasing` or `decreasing`; the guard builds bounded lower/upper perturbation pairs from observed feature quantiles, scores them through the active preprocessor and model, and reports violations where the probability moves against the declared direction. The `Monotonic policy lab` preset includes increasing risk/exposure checks and a decreasing protective-signal check so this workflow is visible before saving or promoting a model.
+
 Experiment advisor is the next-step planner. It reads the current dataset, triage report, validation metrics, trial history, and any diagnostics you have run, then ranks concrete follow-up experiments: clean data first, train a baseline, expand the search, tune thresholds, repair calibration, test robustness, or validate against drift. The `Experiment advisor lab` preset has nonlinear weak single-feature structure, imbalance, boundary flips, and outliers so the advisor naturally recommends triage plus RFF/SMOTE/CV-style runs.
 
 Trial inspector is the post-search evidence check. It reads the stored trial history from Train once, auto experiments, multi-backend runs, or loaded model metadata; ranks trials by F1, accuracy, and validation loss; groups repeated evidence by backend and feature map; and warns when the search is too thin, too narrow, poorly calibrated, or decided by a tiny margin. Use it after an auto-experiment sweep and before saving a final model.
@@ -332,6 +340,7 @@ TensorFlow-specific tests skip when TensorFlow is not installed.
 - Dataset triage is a heuristic prioritizer built from simpler diagnostics. It helps decide what to inspect first, but it is not a formal data-quality certificate.
 - Schema guard infers a local contract from the loaded dataset. It cannot know whether a low-cardinality numeric field is a valid code, an ordinal value, or a broken sensor without domain review.
 - Canary suite only checks the examples bundled with the loaded or saved preset. Passing canaries do not prove broad generalization; failing canaries are regression evidence worth investigating before promotion.
+- Policy guard checks monotonic behavior by local perturbation, not by training a constrained model. Passing checks only means the sampled probes passed; failing checks are useful evidence that the active model may violate a domain policy before promotion.
 - Experiment advisor is a rule-based planner over available evidence. It is intentionally transparent, but it can only recommend from diagnostics already run or metrics already available.
 - Trial inspector summarizes recorded runs; it does not prove the top configuration will generalize. Narrow leaderboard margins still need reruns, cross-validation, or fresh validation rows.
 - Promotion gate is a local release checklist, not a production governance system. It blocks or cautions from available Italtensor evidence and cannot know business costs, legal constraints, or data lineage outside the workspace.
@@ -376,6 +385,7 @@ TensorFlow-specific tests skip when TensorFlow is not installed.
 - Dataset triage follows the practical model-card/data-card habit of surfacing blockers before model training: combine class balance, duplicates/conflicts, leakage-like single-feature signals, local-neighborhood disagreement, and outlier/leverage screens into a compact inspection queue rather than hiding them behind separate tools.
 - Schema guard follows the training-serving validation pattern used by TensorFlow Data Validation, where statistics are compared against a schema to detect anomalies, and the schema-expectation workflow described by Great Expectations for catching structural and field-level data-quality changes ([TFDV guide](https://www.tensorflow.org/tfx/guide/tfdv), [TFDV anomalies](https://www.tensorflow.org/tfx/data_validation/anomalies), [GX schema validation](https://docs.greatexpectations.io/docs/reference/learn/data_quality_use_cases/schema)).
 - Canary suite follows software-release canary and model-regression ideas: run a small fixed set of known probes before trusting a new candidate, treat exact expected-label probes as tests, and keep review-only probes for oracle-light cases. It is informed by canary deployment practice ([Google Cloud Deploy canary](https://cloud.google.com/deploy/docs/deployment-strategies/canary/cloud-run), [Kayenta automated canary analysis](https://cloud.google.com/blog/products/gcp/introducing-kayenta-an-open-automated-canary-analysis-tool-from-google-and-netflix)), ML test-oracle/metamorphic-testing work ([systematic mapping](https://link.springer.com/article/10.1007/s10664-020-09881-0), [classifier metamorphic testing](https://pmc.ncbi.nlm.nih.gov/articles/PMC3082144/)), and model-card reporting of intended use, evaluation, and limitations ([Model Cards for Model Reporting](https://arxiv.org/abs/1810.03993)).
+- Policy guard is inspired by monotonic-constraint workflows in tabular ML: scikit-learn histogram gradient boosting and XGBoost expose per-feature increasing/decreasing constraints, while TensorFlow Lattice focuses on Keras layers with shape constraints such as monotonicity. Italtensor v1 keeps this dependency-free by testing active-model behavior with deterministic local probes rather than enforcing constraints during fitting ([scikit-learn monotonic constraints](https://scikit-learn.org/stable/auto_examples/ensemble/plot_monotonic_constraints.html), [XGBoost monotonic constraints](https://xgboost.readthedocs.io/en/stable/tutorials/monotonic.html), [TensorFlow Lattice shape constraints](https://www.tensorflow.org/lattice/tutorials/shape_constraints), [Deep Lattice Networks](https://arxiv.org/abs/1709.06680)).
 - Experiment advisor is inspired by sequential experiment-design practice and model-card reporting workflows: preserve the evidence trail, rank the next uncertainty-reducing action, and separate data-quality blockers from model-selection, calibration, threshold, robustness, and drift follow-ups.
 - Trial inspector follows hyperparameter-search reporting practice: keep the search history, rank by the primary validation objective with deterministic tie-breakers, summarize families of settings instead of only the single winner, and treat tiny margins as stability questions.
 - Promotion gate follows model-card and release-gate practice: make promotion criteria explicit, surface blockers separately from cautions, require calibration/threshold/search evidence when it matters, and carry the required caveats into the exported report.

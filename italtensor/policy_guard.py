@@ -170,6 +170,24 @@ def _run_one_check(
     step_fraction: float,
 ) -> dict[str, Any]:
     feature_index = int(check["feature_index"])
+    selected_indices = getattr(preprocessor, "selected_indices", None)
+    if selected_indices is not None and feature_index not in {int(index) for index in selected_indices}:
+        return {
+            **check,
+            "status": "not_testable",
+            "pair_count": 0,
+            "violation_count": 0,
+            "violation_rate": 0.0,
+            "max_violation": 0.0,
+            "mean_delta": 0.0,
+            "feature_range": [
+                float(np.min(x[:, feature_index])),
+                float(np.max(x[:, feature_index])),
+            ],
+            "threshold_crossing_count": 0,
+            "violations": [],
+            "warning": "Checked feature is not used by the active selected-feature preprocessor.",
+        }
     column = x[:, feature_index]
     low = float(np.quantile(column, 0.05))
     high = float(np.quantile(column, 0.95))

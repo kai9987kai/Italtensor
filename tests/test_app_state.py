@@ -25,6 +25,7 @@ from italtensor.app import (
     _import_reviewed_labels,
     _export_report,
     _save_preset,
+    _start_promotion_gate,
     _run_shap_analysis,
     _run_decision_boundary,
 )
@@ -106,6 +107,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         latest_ood_sentinel_report={"summary": {"top_row_index": 3}},
         latest_bootstrap_stability_report={"summary": {"top_row_index": 4}},
         latest_canary_suite_report={"summary": {"verdict": "canary_pass"}},
+        latest_policy_guard_report={"summary": {"verdict": "policy_pass"}},
         latest_schema_guard_report={"summary": {"risk_level": "medium"}},
         latest_prototype_audit_report={"summary": {"top_boundary_row": 5}},
         latest_feature_separability_report={"summary": {"top_feature": 2}},
@@ -155,6 +157,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
     assert state.latest_ood_sentinel_report is None
     assert state.latest_bootstrap_stability_report is None
     assert state.latest_canary_suite_report is None
+    assert state.latest_policy_guard_report is None
     assert state.latest_schema_guard_report is None
     assert state.latest_prototype_audit_report is None
     assert state.latest_feature_separability_report is None
@@ -176,7 +179,9 @@ def test_replace_dataset_invalidates_old_model_state():
         uncertainty_metadata={"conformal_quantile": 0.3},
         current_preset_name="Old preset",
         current_prediction_examples=[{"name": "old", "features": [0.1], "expected_label": 0}],
+        current_policy_checks=[{"feature_index": 0, "direction": "increasing"}],
         latest_canary_suite_report={"summary": {"verdict": "canary_pass"}},
+        latest_policy_guard_report={"summary": {"verdict": "policy_pass"}},
     )
     dataset = validate_dataset([[1.0, 2.0], [3.0, 4.0]], [0, 1])
 
@@ -190,7 +195,9 @@ def test_replace_dataset_invalidates_old_model_state():
     assert state.uncertainty_metadata == {}
     assert state.current_preset_name is None
     assert state.current_prediction_examples == []
+    assert state.current_policy_checks == []
     assert state.latest_canary_suite_report is None
+    assert state.latest_policy_guard_report is None
 
 
 def test_format_uncertainty_includes_source_and_coverage():
@@ -226,6 +233,7 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
         latest_threshold_stability_report={"summary": {"verdict": "threshold_stability_review"}},
         latest_capacity_planner_report={"summary": {"verdict": "actionable_capacity_plan"}},
         latest_canary_suite_report={"summary": {"verdict": "canary_pass"}},
+        latest_policy_guard_report={"summary": {"verdict": "policy_review"}},
         latest_trial_inspector_report={"summary": {"best_trial_index": 2}},
         latest_promotion_gate_report={"summary": {"verdict": "needs_review"}},
     )
@@ -248,6 +256,7 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
     assert payload["threshold_stability"]["summary"]["verdict"] == "threshold_stability_review"
     assert payload["capacity_planner"]["summary"]["verdict"] == "actionable_capacity_plan"
     assert payload["canary_suite"]["summary"]["verdict"] == "canary_pass"
+    assert payload["policy_guard"]["summary"]["verdict"] == "policy_review"
     assert payload["experiment_advisor"]["summary"]["recommended_next_step"] == "Run auto experiments"
     assert payload["trial_inspector"]["summary"]["best_trial_index"] == 2
     assert payload["promotion_gate"]["summary"]["verdict"] == "needs_review"
@@ -276,6 +285,7 @@ def test_training_preserves_dataset_only_diagnostics():
         latest_threshold_stability_report={"summary": {"verdict": "threshold_stability_review"}},
         latest_capacity_planner_report={"summary": {"verdict": "actionable_capacity_plan"}},
         latest_canary_suite_report={"summary": {"verdict": "canary_pass"}},
+        latest_policy_guard_report={"summary": {"verdict": "policy_pass"}},
         latest_experiment_advisor_report={"summary": {"recommended_next_step": "Old advice"}},
         latest_trial_inspector_report={"summary": {"best_trial_index": 1}},
         latest_promotion_gate_report={"summary": {"verdict": "old"}},
@@ -305,6 +315,7 @@ def test_training_preserves_dataset_only_diagnostics():
     assert state.latest_threshold_stability_report is None
     assert state.latest_capacity_planner_report is None
     assert state.latest_canary_suite_report is None
+    assert state.latest_policy_guard_report is None
     assert state.latest_experiment_advisor_report is None
     assert state.latest_trial_inspector_report is None
     assert state.latest_promotion_gate_report is None
@@ -883,6 +894,100 @@ def test_handle_worker_done_stores_canary_suite_without_mutating_model():
     assert state.busy is False
     assert "Canary suite" in window["-LOG-"].value
     assert "Boundary canary" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_policy_guard_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(
+        model=object(),
+        latest_metrics={"f1": 0.9},
+        latest_promotion_gate_report={"summary": {"verdict": "old"}},
+        busy=True,
+    )
+    model = state.model
+    report = {
+        "summary": {
+            "verdict": "policy_review",
+            "check_count": 1,
+            "pair_count": 12,
+            "violation_count": 1,
+            "violation_rate": 0.083,
+            "max_violation": 0.02,
+            "recommended_next_step": "Review weak policy violations.",
+        },
+        "checks": [
+            {
+                "name": "Risk score should rise",
+                "status": "review",
+                "direction": "increasing",
+                "pair_count": 12,
+                "violation_count": 1,
+                "violation_rate": 0.083,
+                "max_violation": 0.02,
+            }
+        ],
+        "recommendations": [
+            {
+                "rank": 1,
+                "priority": "medium",
+                "category": "policy",
+                "title": "Review policy guard warnings",
+                "action": "Review weak policy violations.",
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("policy_guard", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_policy_guard_report == report
+    assert state.latest_promotion_gate_report is None
+    assert state.busy is False
+    assert "Policy guard" in window["-LOG-"].value
+    assert "Risk score should rise" in window["-LOG-"].value
+
+
+def test_start_promotion_gate_uses_latest_policy_guard_report():
+    window = FakeWindow()
+    state = AppState(
+        features=[[0.0], [1.0], [0.2], [0.8]],
+        labels=[0, 1, 0, 1],
+        input_dim=1,
+        latest_config=ModelConfig(),
+        latest_metrics={"f1": 0.9, "accuracy": 0.9, "validation_loss": 0.2},
+        latest_policy_guard_report={
+            "summary": {
+                "verdict": "policy_fail",
+                "pair_count": 10,
+                "violation_count": 3,
+                "violation_rate": 0.3,
+                "failed_check_count": 1,
+                "max_violation": 0.12,
+                "recommended_next_step": "Retrain with monotonic constraints.",
+            }
+        },
+    )
+    captured = {}
+
+    def fake_start_worker(worker_window, worker_state, status, task):
+        captured["window"] = worker_window
+        captured["state"] = worker_state
+        captured["status"] = status
+        captured["result"] = task()
+
+    with patch("italtensor.app._start_worker", side_effect=fake_start_worker):
+        _start_promotion_gate(window, state)
+
+    assert captured["window"] is window
+    assert captured["state"] is state
+    assert captured["result"][0] == "promotion_gate"
+    report = captured["result"][1]
+    assert report["summary"]["verdict"] == "blocked"
+    assert any(
+        check["category"] == "policy" and check["severity"] == "blocker"
+        for check in report["checks"]
+    )
 
 
 def test_handle_worker_done_stores_prototype_audit_without_mutating_model():
@@ -1735,7 +1840,13 @@ def test_apply_preset_metadata_updates_extended_training_defaults():
 
 def test_save_preset_uses_current_gui_training_defaults_and_prediction_example(tmp_path):
     window = FakeWindow()
-    state = AppState(features=[[0.1, 0.2], [0.8, 0.9]], labels=[0, 1], input_dim=2)
+    state = AppState(
+        features=[[0.1, 0.2], [0.8, 0.9]],
+        labels=[0, 1],
+        input_dim=2,
+        current_policy_checks=[{"name": "left rises", "feature_index": 0, "direction": "increasing"}],
+        latest_policy_guard_report={"summary": {"verdict": "policy_pass"}},
+    )
     path = tmp_path / "custom-preset.json"
     values = {
         "-PRESET_PATH-": str(path),
@@ -1772,9 +1883,12 @@ def test_save_preset_uses_current_gui_training_defaults_and_prediction_example(t
     assert defaults["mps_physical_dim"] == 3
     assert payload["recommended_feature_map"] == "quadratic"
     assert payload["prediction_examples"][0]["features"] == [0.3, 0.4]
+    assert payload["policy_checks"][0]["name"] == "left rises"
     assert state.current_preset_name == "Custom useful preset"
     assert state.current_prediction_examples[0]["features"] == [0.3, 0.4]
+    assert state.current_policy_checks[0]["direction"] == "increasing"
     assert state.latest_canary_suite_report is None
+    assert state.latest_policy_guard_report is None
 
 
 def test_store_model_slot():
