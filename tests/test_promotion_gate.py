@@ -183,6 +183,83 @@ def test_promotion_gate_cautions_on_weak_rank_lift():
     assert any(item["title"] == "Rank-lift evidence is weak" for item in report["checks"])
 
 
+def test_promotion_gate_cautions_on_prior_shift_base_rate_risk():
+    report = build_promotion_gate(
+        sample_count=120,
+        input_dim=3,
+        labels=[0, 1] * 60,
+        config=ModelConfig(feature_map="linear"),
+        metrics={"f1": 0.86, "accuracy": 0.88, "balanced_accuracy": 0.86, "brier_score": 0.14, "ece": 0.04},
+        trial_history=[{"metrics": {"f1": 0.82}}, {"metrics": {"f1": 0.86}}, {"metrics": {"f1": 0.84}}],
+        dataset_triage_report={"summary": {"risk_level": "low", "readiness_score": 90.0, "blocking_issue_count": 0}},
+        trial_inspector_report={"valid_trial_count": 3, "summary": {"leader_margin_f1": 0.04}},
+        prior_shift_report={
+            "summary": {
+                "verdict": "prevalence_shift_risk",
+                "min_ppv": 0.18,
+                "max_false_positive_per_1000": 220.0,
+                "recommended_next_step": "Validate deployment prevalence.",
+            }
+        },
+    )
+
+    assert report["summary"]["verdict"] == "needs_review"
+    assert any(item["title"] == "Prior-shift simulation shows base-rate risk" for item in report["checks"])
+    assert "deployment-risk note" in report["release_note"]["must_include"]
+
+
+def test_promotion_gate_cautions_on_localized_calibration_risk():
+    report = build_promotion_gate(
+        sample_count=120,
+        input_dim=3,
+        labels=[0, 1] * 60,
+        config=ModelConfig(feature_map="linear"),
+        metrics={"f1": 0.86, "accuracy": 0.88, "balanced_accuracy": 0.86, "brier_score": 0.14, "ece": 0.04},
+        trial_history=[{"metrics": {"f1": 0.82}}, {"metrics": {"f1": 0.86}}, {"metrics": {"f1": 0.84}}],
+        dataset_triage_report={"summary": {"risk_level": "low", "readiness_score": 90.0, "blocking_issue_count": 0}},
+        trial_inspector_report={"valid_trial_count": 3, "summary": {"leader_margin_f1": 0.04}},
+        calibration_slice_report={
+            "summary": {
+                "risk_level": "high",
+                "worst_slice": "x2[0, 1]",
+                "max_absolute_confidence_gap": 0.42,
+                "max_weighted_calibration_impact": 0.11,
+                "recommendation": "Review x2[0, 1].",
+            }
+        },
+    )
+
+    assert report["summary"]["verdict"] == "needs_review"
+    assert any(item["title"] == "Localized calibration is high risk" for item in report["checks"])
+    assert "calibration note" in report["release_note"]["must_include"]
+
+
+def test_promotion_gate_blocks_external_holdout_failure():
+    report = build_promotion_gate(
+        sample_count=120,
+        input_dim=3,
+        labels=[0, 1] * 60,
+        config=ModelConfig(feature_map="linear"),
+        metrics={"f1": 0.86, "accuracy": 0.88, "balanced_accuracy": 0.86, "brier_score": 0.14, "ece": 0.04},
+        trial_history=[{"metrics": {"f1": 0.82}}, {"metrics": {"f1": 0.86}}, {"metrics": {"f1": 0.84}}],
+        dataset_triage_report={"summary": {"risk_level": "low", "readiness_score": 90.0, "blocking_issue_count": 0}},
+        trial_inspector_report={"valid_trial_count": 3, "summary": {"leader_margin_f1": 0.04}},
+        external_holdout_report={
+            "summary": {
+                "verdict": "holdout_failure",
+                "f1": 0.42,
+                "balanced_accuracy": 0.50,
+                "recommendation": "Investigate external holdout errors.",
+            }
+        },
+    )
+
+    assert report["summary"]["verdict"] == "blocked"
+    assert any(item["title"] == "External holdout fails promotion floor" for item in report["checks"])
+    assert "deployment-risk note" in report["release_note"]["must_include"]
+    assert "blocked-use warning" in report["release_note"]["must_include"]
+
+
 def test_promotion_gate_blocks_high_risk_schema_guard():
     report = build_promotion_gate(
         sample_count=120,

@@ -20,6 +20,8 @@ def build_promotion_gate(
     trial_inspector_report: dict[str, Any] | None = None,
     error_atlas_report: dict[str, Any] | None = None,
     reliability_atlas_report: dict[str, Any] | None = None,
+    calibration_slice_report: dict[str, Any] | None = None,
+    external_holdout_report: dict[str, Any] | None = None,
     shadow_replay_report: dict[str, Any] | None = None,
     canary_suite_report: dict[str, Any] | None = None,
     policy_guard_report: dict[str, Any] | None = None,
@@ -303,6 +305,60 @@ def build_promotion_gate(
                     evidence=f"verdict={verdict}, min_ppv={min_ppv:.3f}, max_false_positives_per_1000={max_fp:.1f}.",
                     action=str(summary.get("recommended_next_step") or "Review prior-shift sensitivity before promotion."),
                     penalty=5.0,
+                )
+        if calibration_slice_report:
+            summary = calibration_slice_report.get("summary", {})
+            risk = str(summary.get("risk_level", "low"))
+            max_gap = float(summary.get("max_absolute_confidence_gap", 0.0) or 0.0)
+            impact = float(summary.get("max_weighted_calibration_impact", 0.0) or 0.0)
+            worst = str(summary.get("worst_slice", "none"))
+            if risk == "high":
+                add(
+                    severity="caution",
+                    category="calibration",
+                    title="Localized calibration is high risk",
+                    status="review",
+                    evidence=f"worst={worst}, gap={max_gap:.3f}, weighted_impact={impact:.3f}.",
+                    action=str(
+                        summary.get("recommendation")
+                        or "Run calibration repair or collect more representative rows for the worst slice."
+                    ),
+                    penalty=8.0,
+                )
+            elif risk == "medium":
+                add(
+                    severity="caution",
+                    category="calibration",
+                    title="Localized calibration needs review",
+                    status="review",
+                    evidence=f"worst={worst}, gap={max_gap:.3f}, weighted_impact={impact:.3f}.",
+                    action=str(summary.get("recommendation") or "Inspect the worst calibration slice before promotion."),
+                    penalty=5.0,
+                )
+        if external_holdout_report:
+            summary = external_holdout_report.get("summary", {})
+            verdict = str(summary.get("verdict", "holdout_performance_review"))
+            f1 = float(summary.get("f1", 0.0) or 0.0)
+            balanced_accuracy = float(summary.get("balanced_accuracy", 0.0) or 0.0)
+            if verdict == "holdout_failure":
+                add(
+                    severity="blocker",
+                    category="external_validation",
+                    title="External holdout fails promotion floor",
+                    status="fail",
+                    evidence=f"holdout F1={f1:.3f}, balanced_accuracy={balanced_accuracy:.3f}.",
+                    action=str(summary.get("recommendation") or "Investigate external holdout errors before promotion."),
+                    penalty=22.0,
+                )
+            elif verdict != "holdout_pass":
+                add(
+                    severity="caution",
+                    category="external_validation",
+                    title="External holdout needs review",
+                    status="review",
+                    evidence=f"verdict={verdict}, F1={f1:.3f}, balanced_accuracy={balanced_accuracy:.3f}.",
+                    action=str(summary.get("recommendation") or "Review external holdout evidence before promotion."),
+                    penalty=8.0,
                 )
 
     _add_triage_checks(add, dataset_triage_report)
@@ -786,7 +842,7 @@ def _must_include(checks: list[dict[str, Any]], metrics: dict[str, float | int],
         items.append("trial history")
     if any(check["category"] == "calibration" for check in checks) or "ece" in metrics or "brier_score" in metrics:
         items.append("calibration note")
-    if any(check["category"] in {"drift", "temporal", "robustness", "prevalence"} for check in checks):
+    if any(check["category"] in {"drift", "temporal", "robustness", "prevalence", "external_validation"} for check in checks):
         items.append("deployment-risk note")
     if any(check["category"] == "schema" for check in checks):
         items.append("feature-schema note")

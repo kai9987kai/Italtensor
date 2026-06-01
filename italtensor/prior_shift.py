@@ -64,6 +64,7 @@ def format_prior_shift_summary(report: dict[str, Any]) -> str:
         "Prior shift: "
         f"verdict={summary.get('verdict', '-')}, "
         f"observed_prev={float(summary.get('observed_prevalence', 0.0)):.4f}, "
+        f"fpr={float(summary.get('false_positive_rate', 0.0)):.4f}, "
         f"min_ppv={float(summary.get('min_ppv', 0.0)):.4f}, "
         f"max_alerts_per_1000={float(summary.get('max_predicted_positive_per_1000', 0.0)):.1f}, "
         f"max_fp_per_1000={float(summary.get('max_false_positive_per_1000', 0.0)):.1f}, "
@@ -183,11 +184,12 @@ def _prevalence_grid(prevalence_grid: Sequence[float] | None, observed_prevalenc
     raw = raw[np.isfinite(raw)]
     if provided and raw.size == 0:
         raise ValueError("Prior shift prevalence grid must contain at least one finite prevalence.")
+    if np.any((raw < 0.0) | (raw > 1.0)):
+        raise ValueError("Prior shift prevalence grid values must be between 0 and 1.")
     if observed_prevalence > 0.0:
         raw = np.concatenate([raw, np.asarray([observed_prevalence], dtype=np.float64)])
     if raw.size == 0:
         raise ValueError("Prior shift prevalence grid must contain at least one finite prevalence.")
-    raw = np.clip(raw, 0.0, 1.0)
     return np.unique(raw)
 
 
@@ -247,6 +249,8 @@ def _summary(current: dict[str, Any], points: list[dict[str, float]]) -> dict[st
         "observed_prevalence": observed_prevalence,
         "sensitivity": float(current.get("sensitivity", 0.0) or 0.0),
         "specificity": float(current.get("specificity", 0.0) or 0.0),
+        "false_positive_rate": float(current.get("false_positive_rate", 0.0) or 0.0),
+        "false_negative_rate": float(current.get("false_negative_rate", 0.0) or 0.0),
         "current_ppv": current_ppv,
         "current_npv": float(current.get("negative_predictive_value", 0.0) or 0.0),
         "min_ppv": min_ppv,

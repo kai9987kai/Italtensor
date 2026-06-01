@@ -311,6 +311,22 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="calibration_slice_lab",
+        name="Calibration slice lab",
+        description="A feature-defined pocket where probabilities are locally misleading despite useful global signal.",
+        default_samples=240,
+        min_samples=20,
+        input_dim=5,
+        recommended_feature_map="linear",
+        feature_names=("raw_score", "calibration_pocket", "support_signal", "pocket_noise", "background_noise"),
+        training_defaults={"epochs": 80, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Calibrated negative", "features": [-0.9, 0.0, -0.4, 0.0, 0.0], "expected_label": 0},
+            {"name": "Overconfident pocket review", "features": [0.9, 1.0, -0.3, 1.0, 0.0], "expected_label": None},
+            {"name": "Calibrated positive", "features": [1.0, 0.0, 0.5, 0.0, 0.0], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
         key="permutation_null_lab",
         name="Permutation null lab",
         description="A real margin signal with weak support and decoys for shuffled-label significance checks.",
@@ -355,6 +371,22 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
             {"name": "Likely negative base-rate row", "features": [-0.75, -0.25, 0.0, -0.8, 0.0], "expected_label": 0},
             {"name": "False-positive shoulder review", "features": [0.65, -0.35, 1.2, 0.1, 0.0], "expected_label": None},
             {"name": "Likely positive base-rate row", "features": [1.0, 0.6, -0.2, 0.8, 0.0], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
+        key="external_holdout_lab",
+        name="External holdout lab",
+        description="A deployment-like labeled dataset with shifted covariates for external holdout evaluation.",
+        default_samples=220,
+        min_samples=20,
+        input_dim=5,
+        recommended_feature_map="linear",
+        feature_names=("deployment_score", "stable_support", "shift_marker", "prevalence_marker", "background_noise"),
+        training_defaults={"epochs": 80, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Holdout negative", "features": [-0.9, -0.4, 1.0, -0.6, 0.0], "expected_label": 0},
+            {"name": "Shifted holdout review", "features": [0.35, 0.0, 1.4, 0.4, 0.0], "expected_label": None},
+            {"name": "Holdout positive", "features": [1.1, 0.5, 1.0, 0.8, 0.0], "expected_label": 1},
         ),
     ),
     PresetInfo(
@@ -840,12 +872,16 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _calibration_repair_lab(total, rng)
     elif preset.key == "reliability_atlas_lab":
         features, labels = _reliability_atlas_lab(total, rng)
+    elif preset.key == "calibration_slice_lab":
+        features, labels = _calibration_slice_lab(total, rng)
     elif preset.key == "permutation_null_lab":
         features, labels = _permutation_null_lab(total, rng)
     elif preset.key == "population_drift_lab":
         features, labels = _population_drift_lab(total, rng)
     elif preset.key == "prior_shift_lab":
         features, labels = _prior_shift_lab(total, rng)
+    elif preset.key == "external_holdout_lab":
+        features, labels = _external_holdout_lab(total, rng)
     elif preset.key == "adversarial_validation_lab":
         features, labels = _adversarial_validation_lab(total, rng)
     elif preset.key == "chronological_holdout_lab":
@@ -1317,6 +1353,62 @@ def _reliability_atlas_lab(total: int, rng: np.random.Generator) -> tuple[np.nda
     features = np.column_stack(
         [raw_score, overconfidence_band, underconfidence_band, background_noise]
     ).astype(np.float32)
+    return _shuffle(features, labels, rng)
+
+
+def _calibration_slice_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    pocket = max(4, int(round(total * 0.24)))
+    positive = max(4, int(round(total * 0.34)))
+    negative = max(4, int(round(total * 0.34)))
+    boundary = max(0, total - pocket - positive - negative)
+
+    pocket_labels = rng.binomial(1, 0.12, size=pocket).astype(np.int32)
+    pocket_rows = np.column_stack(
+        [
+            rng.normal(0.9, 0.18, size=pocket),
+            np.ones(pocket),
+            rng.normal(-0.35, 0.2, size=pocket),
+            rng.normal(1.0, 0.12, size=pocket),
+            rng.normal(0.0, 0.3, size=pocket),
+        ]
+    )
+    positive_rows = np.column_stack(
+        [
+            rng.normal(1.0, 0.25, size=positive),
+            np.zeros(positive),
+            rng.normal(0.55, 0.25, size=positive),
+            rng.normal(0.0, 0.2, size=positive),
+            rng.normal(0.0, 0.3, size=positive),
+        ]
+    )
+    negative_rows = np.column_stack(
+        [
+            rng.normal(-0.95, 0.25, size=negative),
+            np.zeros(negative),
+            rng.normal(-0.45, 0.25, size=negative),
+            rng.normal(0.0, 0.2, size=negative),
+            rng.normal(0.0, 0.3, size=negative),
+        ]
+    )
+    boundary_labels = rng.binomial(1, 0.5, size=boundary).astype(np.int32)
+    boundary_rows = np.column_stack(
+        [
+            rng.normal(np.where(boundary_labels == 1, 0.25, -0.25), 0.28, size=boundary),
+            rng.binomial(1, 0.12, size=boundary).astype(float),
+            rng.normal(0.0, 0.25, size=boundary),
+            rng.normal(0.2, 0.35, size=boundary),
+            rng.normal(0.0, 0.35, size=boundary),
+        ]
+    )
+    features = np.vstack([pocket_rows, positive_rows, negative_rows, boundary_rows]).astype(np.float32)
+    labels = np.concatenate(
+        [
+            pocket_labels,
+            np.ones(positive, dtype=np.int32),
+            np.zeros(negative, dtype=np.int32),
+            boundary_labels,
+        ]
+    )
     return _shuffle(features, labels, rng)
 
 

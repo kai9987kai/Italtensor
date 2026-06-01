@@ -143,6 +143,58 @@ def test_report_export_json_and_markdown(tmp_path):
                 }
             ],
         },
+        calibration_slice_report={
+            "summary": {
+                "risk_level": "high",
+                "slice_count": 2,
+                "worst_slice": "x2[0, 1]",
+                "max_absolute_confidence_gap": 0.42,
+                "max_weighted_calibration_impact": 0.12,
+                "high_risk_slice_count": 1,
+                "recommendation": "Review x2[0, 1].",
+            },
+            "base": {
+                "expected_calibration_error": 0.08,
+                "brier_score": 0.16,
+            },
+            "slices": [
+                {
+                    "feature_index": 1,
+                    "left": 0.0,
+                    "right": 1.0,
+                    "count": 6,
+                    "label_prevalence": 0.25,
+                    "mean_probability": 0.67,
+                    "signed_confidence_gap": 0.42,
+                    "weighted_calibration_impact": 0.12,
+                    "calibration_direction": "overconfident",
+                }
+            ],
+        },
+        external_holdout_report={
+            "sample_count": 12,
+            "summary": {
+                "verdict": "holdout_shift_review",
+                "f1": 0.72,
+                "balanced_accuracy": 0.74,
+                "recommendation": "Compare holdout rows with the loaded dataset.",
+            },
+            "metrics": {
+                "f1": 0.72,
+                "balanced_accuracy": 0.74,
+                "precision": 0.75,
+                "recall": 0.70,
+            },
+            "probability_diagnostics": {
+                "expected_calibration_error": 0.09,
+                "brier_score": 0.18,
+            },
+            "reference_comparison": {
+                "top_shift_feature": 1,
+                "max_standardized_mean_shift": 1.2,
+                "label_prevalence_shift": 0.25,
+            },
+        },
         shadow_replay_report={
             "summary": {
                 "verdict": "ordered_degradation_review",
@@ -258,6 +310,37 @@ def test_report_export_json_and_markdown(tmp_path):
                     "response_rate": 1.0,
                     "lift": 2.0,
                     "cumulative_positive_capture": 0.5,
+                }
+            ],
+        },
+        prior_shift_report={
+            "summary": {
+                "verdict": "prevalence_shift_risk",
+                "observed_prevalence": 0.5,
+                "sensitivity": 0.8,
+                "specificity": 0.75,
+                "false_positive_rate": 0.25,
+                "false_negative_rate": 0.2,
+                "current_ppv": 0.7,
+                "current_npv": 0.85,
+                "min_ppv": 0.2,
+                "max_predicted_positive_per_1000": 260.0,
+                "max_false_positive_per_1000": 245.0,
+                "recommended_next_step": "Validate deployment prevalence.",
+            },
+            "current": {
+                "true_positive": 2,
+                "false_positive": 1,
+                "false_negative": 0,
+                "true_negative": 1,
+            },
+            "points": [
+                {
+                    "prevalence": 0.02,
+                    "positive_predictive_value": 0.2,
+                    "negative_predictive_value": 0.99,
+                    "expected_predicted_positive": 260.0,
+                    "expected_false_positive": 245.0,
                 }
             ],
         },
@@ -924,11 +1007,14 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["sample_review"]["summary"]["label_issue_count"] == 1
     assert saved_json["error_atlas"]["summary"]["error_count"] == 2
     assert saved_json["reliability_atlas"]["summary"]["risk_level"] == "medium"
+    assert saved_json["calibration_slice_diagnostics"]["summary"]["risk_level"] == "high"
+    assert saved_json["external_holdout"]["summary"]["verdict"] == "holdout_shift_review"
     assert saved_json["shadow_replay"]["summary"]["verdict"] == "ordered_degradation_review"
     assert saved_json["threshold_diagnostics"]["summary"]["best_f1_threshold"] == 0.3
     assert saved_json["threshold_stability"]["summary"]["verdict"] == "threshold_stability_review"
     assert saved_json["capacity_planner"]["summary"]["best_k"] == 2
     assert saved_json["rank_lift"]["summary"]["verdict"] == "concentrated_ranking"
+    assert saved_json["prior_shift"]["summary"]["verdict"] == "prevalence_shift_risk"
     assert saved_json["decision_curve_diagnostics"]["summary"]["best_threshold"] == 0.4
     assert saved_json["posthoc_conformal_diagnostics"]["summary"]["recommended_alpha"] == 0.1
     assert saved_json["posthoc_calibration_repair_diagnostics"]["summary"]["recommended_method"] == "platt"
@@ -971,11 +1057,20 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "## Error Atlas" in saved_markdown
     assert "high-confidence error row 2" in saved_markdown
     assert "## Reliability Atlas" in saved_markdown
+    assert "## Calibration Slice Diagnostics" in saved_markdown
+    assert "Max confidence gap" in saved_markdown
+    assert "Review x2[0, 1]" in saved_markdown
+    assert "## External Holdout Evaluation" in saved_markdown
+    assert "Compare holdout rows with the loaded dataset" in saved_markdown
     assert "## Capacity Planner" in saved_markdown
     assert "budget=0.5000" in saved_markdown
     assert "## Rank Lift / Gains" in saved_markdown
     assert "Top 10% lift" in saved_markdown
     assert "Validate top-decile lift" in saved_markdown
+    assert "## Prior Shift / Prevalence" in saved_markdown
+    assert "False-positive rate" in saved_markdown
+    assert "Min simulated PPV" in saved_markdown
+    assert "Validate deployment prevalence" in saved_markdown
     assert "Run Calibration repair" in saved_markdown
     assert "## Shadow Replay Diagnostics" in saved_markdown
     assert "Inspect degraded replay windows" in saved_markdown

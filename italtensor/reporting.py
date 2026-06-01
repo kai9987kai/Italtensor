@@ -33,6 +33,8 @@ def build_experiment_report(
     sample_review_report: dict[str, Any] | None = None,
     error_atlas_report: dict[str, Any] | None = None,
     reliability_atlas_report: dict[str, Any] | None = None,
+    calibration_slice_report: dict[str, Any] | None = None,
+    external_holdout_report: dict[str, Any] | None = None,
     shadow_replay_report: dict[str, Any] | None = None,
     threshold_report: dict[str, Any] | None = None,
     threshold_stability_report: dict[str, Any] | None = None,
@@ -97,6 +99,8 @@ def build_experiment_report(
         "sample_review": sample_review_report or None,
         "error_atlas": error_atlas_report or None,
         "reliability_atlas": reliability_atlas_report or None,
+        "calibration_slice_diagnostics": calibration_slice_report or None,
+        "external_holdout": external_holdout_report or None,
         "shadow_replay": shadow_replay_report or None,
         "threshold_diagnostics": threshold_report or None,
         "threshold_stability": threshold_stability_report or None,
@@ -155,6 +159,8 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     sample_review = report.get("sample_review") or {}
     error_atlas = report.get("error_atlas") or {}
     reliability_atlas = report.get("reliability_atlas") or {}
+    calibration_slices = report.get("calibration_slice_diagnostics") or {}
+    external_holdout = report.get("external_holdout") or {}
     shadow_replay = report.get("shadow_replay") or {}
     threshold_diagnostics = report.get("threshold_diagnostics") or {}
     threshold_stability = report.get("threshold_stability") or {}
@@ -856,6 +862,8 @@ def format_markdown_report(report: dict[str, Any]) -> str:
                 f"- Observed prevalence: {_format_value(summary.get('observed_prevalence', '-'))}",
                 f"- Sensitivity: {_format_value(summary.get('sensitivity', '-'))}",
                 f"- Specificity: {_format_value(summary.get('specificity', '-'))}",
+                f"- False-positive rate: {_format_value(summary.get('false_positive_rate', '-'))}",
+                f"- False-negative rate: {_format_value(summary.get('false_negative_rate', '-'))}",
                 f"- Current PPV: {_format_value(summary.get('current_ppv', '-'))}",
                 f"- Current NPV: {_format_value(summary.get('current_npv', '-'))}",
                 f"- Min simulated PPV: {_format_value(summary.get('min_ppv', '-'))}",
@@ -1151,6 +1159,63 @@ def format_markdown_report(report: dict[str, Any]) -> str:
                 f"prob_shift={_format_value(item.get('mean_probability_shift', '-'))}, "
                 f"flags={flags}"
             )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Calibration Slice Diagnostics"])
+    if calibration_slices:
+        summary = calibration_slices.get("summary", {})
+        base = calibration_slices.get("base", {})
+        lines.extend(
+            [
+                f"- Risk level: {summary.get('risk_level', '-')}",
+                f"- Base ECE: {_format_value(base.get('expected_calibration_error', '-'))}",
+                f"- Base Brier: {_format_value(base.get('brier_score', '-'))}",
+                f"- Worst slice: {summary.get('worst_slice', '-')}",
+                f"- Max confidence gap: {_format_value(summary.get('max_absolute_confidence_gap', '-'))}",
+                f"- Max weighted impact: {_format_value(summary.get('max_weighted_calibration_impact', '-'))}",
+                f"- High-risk slices: {summary.get('high_risk_slice_count', '-')}",
+                f"- Recommendation: {summary.get('recommendation') or 'none'}",
+            ]
+        )
+        for item in calibration_slices.get("slices", [])[:8]:
+            lines.append(
+                f"- x{int(item.get('feature_index', 0)) + 1}"
+                f"[{_format_value(item.get('left', '-'))}, {_format_value(item.get('right', '-'))}]: "
+                f"n={item.get('count', '-')}, "
+                f"prev={_format_value(item.get('label_prevalence', '-'))}, "
+                f"mean_p={_format_value(item.get('mean_probability', '-'))}, "
+                f"gap={_format_value(item.get('signed_confidence_gap', '-'))}, "
+                f"impact={_format_value(item.get('weighted_calibration_impact', '-'))}, "
+                f"dir={item.get('calibration_direction', '-')}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## External Holdout Evaluation"])
+    if external_holdout:
+        summary = external_holdout.get("summary", {})
+        metrics_data = external_holdout.get("metrics", {})
+        probability = external_holdout.get("probability_diagnostics", {})
+        comparison = external_holdout.get("reference_comparison") or {}
+        top_feature = comparison.get("top_shift_feature")
+        top_feature_text = f"x{int(top_feature) + 1}" if isinstance(top_feature, int) else "-"
+        lines.extend(
+            [
+                f"- Verdict: {summary.get('verdict', '-')}",
+                f"- Rows: {external_holdout.get('sample_count', '-')}",
+                f"- F1: {_format_value(metrics_data.get('f1', '-'))}",
+                f"- Balanced accuracy: {_format_value(metrics_data.get('balanced_accuracy', '-'))}",
+                f"- Precision: {_format_value(metrics_data.get('precision', '-'))}",
+                f"- Recall: {_format_value(metrics_data.get('recall', '-'))}",
+                f"- ECE: {_format_value(probability.get('expected_calibration_error', '-'))}",
+                f"- Brier score: {_format_value(probability.get('brier_score', '-'))}",
+                f"- Top reference-shift feature: {top_feature_text}",
+                f"- Max standardized mean shift: {_format_value(comparison.get('max_standardized_mean_shift', '-'))}",
+                f"- Label prevalence shift: {_format_value(comparison.get('label_prevalence_shift', '-'))}",
+                f"- Recommendation: {summary.get('recommendation') or 'none'}",
+            ]
+        )
     else:
         lines.append("- None")
 

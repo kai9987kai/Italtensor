@@ -12,6 +12,11 @@ from .data import (
     validate_dataset,
 )
 from .canary_suite import format_canary_suite_summary, run_canary_suite
+from .calibration_slices import (
+    calibration_slice_dataset_fingerprint,
+    format_calibration_slice_summary,
+    run_calibration_slice_diagnostics,
+)
 from .calibration_repair import format_calibration_repair_summary, run_calibration_repair_diagnostics
 from .capacity_planner import (
     capacity_planner_dataset_fingerprint,
@@ -21,6 +26,7 @@ from .capacity_planner import (
 from .counterfactual import find_counterfactual, format_counterfactual_result
 from .conformal_sets import format_conformal_set_summary, run_conformal_set_diagnostics
 from .decision_curve import format_decision_curve_summary, run_decision_curve_diagnostics
+from .external_holdout import format_external_holdout_summary, run_external_holdout_evaluation
 from .experiments import (
     ExperimentResult,
     conformal_label_set,
@@ -150,6 +156,8 @@ class AppState:
     latest_sample_review_report: dict[str, Any] | None = None
     latest_error_atlas_report: dict[str, Any] | None = None
     latest_reliability_atlas_report: dict[str, Any] | None = None
+    latest_calibration_slice_report: dict[str, Any] | None = None
+    latest_external_holdout_report: dict[str, Any] | None = None
     latest_shadow_replay_report: dict[str, Any] | None = None
     latest_threshold_report: dict[str, Any] | None = None
     latest_threshold_stability_report: dict[str, Any] | None = None
@@ -235,6 +243,8 @@ def run_app() -> None:
                 _save_preset(window, state, values)
             elif event == "-LOAD_CSV-":
                 _load_csv(window, state, values)
+            elif event == "-EVALUATE_HOLDOUT-":
+                _start_external_holdout(window, state, values)
             elif event == "-SAVE_DATASET-":
                 _save_dataset(window, state, values)
             elif event == "-LOAD_DATASET-":
@@ -317,6 +327,8 @@ def run_app() -> None:
                 _start_neighborhood_hardness(window, state)
             elif event == "-RELIABILITY-":
                 _start_reliability_atlas(window, state)
+            elif event == "-CALIBRATION_SLICES-":
+                _start_calibration_slices(window, state)
             elif event == "-MPS_BOND_SWEEP-":
                 _start_mps_bond_sweep(window, state, values)
             elif event == "-SHAP_ANALYSIS-":
@@ -421,6 +433,7 @@ def _layout(sg):
             sg.Input(key="-CSV_PATH-", expand_x=True),
             sg.FileBrowse(file_types=(("CSV files", "*.csv"), ("All files", "*.*"))),
             sg.Button("Load CSV", key="-LOAD_CSV-"),
+            sg.Button("Evaluate holdout", key="-EVALUATE_HOLDOUT-"),
         ],
         [sg.Text("Dataset JSON")],
         [
@@ -650,6 +663,7 @@ def _layout(sg):
         ],
         [
             sg.Button("Reliability atlas", key="-RELIABILITY-", expand_x=True),
+            sg.Button("Calibration slices", key="-CALIBRATION_SLICES-", expand_x=True),
             sg.Button("OOD sentinel", key="-OOD_SENTINEL-", expand_x=True),
             sg.Button("Bootstrap stability", key="-BOOTSTRAP_STABILITY-", expand_x=True),
             sg.Button("Prototype audit", key="-PROTOTYPE_AUDIT-", expand_x=True),
@@ -779,6 +793,32 @@ def _load_csv(window, state: AppState, values: dict[str, Any]) -> None:
     dataset = load_csv_dataset(_required_path(values["-CSV_PATH-"], "CSV path"))
     _replace_dataset(state, dataset, window=window)
     _log(window, f"Loaded {dataset.sample_count} samples from CSV.")
+
+
+def _start_external_holdout(window, state: AppState, values: dict[str, Any]) -> None:
+    _ensure_not_busy(state)
+    if state.model is None or state.input_dim is None:
+        raise ValueError("Train or load a model before evaluating an external holdout.")
+    holdout = load_csv_dataset(_required_path(values["-CSV_PATH-"], "holdout CSV path"), expected_dim=state.input_dim)
+    reference = (
+        validate_dataset(state.features, state.labels, min_samples=1, require_two_classes=False)
+        if state.features and state.labels
+        else None
+    )
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_external_holdout_evaluation(
+            state.model,
+            holdout.features,
+            holdout.labels,
+            preprocessor=state.preprocessor,
+            threshold=state.latest_threshold,
+            reference_features=reference.features if reference is not None else None,
+            reference_labels=reference.labels if reference is not None else None,
+        )
+        return "external_holdout", report
+
+    _start_worker(window, state, f"Evaluating external holdout ({holdout.sample_count} rows)...", task)
 
 
 def _save_dataset(window, state: AppState, values: dict[str, Any]) -> None:
@@ -1304,6 +1344,8 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         sample_review_report=state.latest_sample_review_report,
         error_atlas_report=state.latest_error_atlas_report,
         reliability_atlas_report=state.latest_reliability_atlas_report,
+        calibration_slice_report=state.latest_calibration_slice_report,
+        external_holdout_report=state.latest_external_holdout_report,
         shadow_replay_report=state.latest_shadow_replay_report,
         threshold_report=state.latest_threshold_report,
         threshold_stability_report=state.latest_threshold_stability_report,
@@ -1345,6 +1387,20 @@ def _compatible_reliability_atlas_report(report: Any, state: AppState) -> dict[s
     if stored_fingerprint and state.features and state.labels:
         try:
             current_fingerprint = reliability_dataset_fingerprint(state.features, state.labels)
+        except ValueError:
+            return None
+        if current_fingerprint != stored_fingerprint:
+            return None
+    return report
+
+
+def _compatible_calibration_slice_report(report: Any, state: AppState) -> dict[str, Any] | None:
+    if not isinstance(report, dict):
+        return None
+    stored_fingerprint = report.get("dataset_fingerprint")
+    if stored_fingerprint and state.features and state.labels:
+        try:
+            current_fingerprint = calibration_slice_dataset_fingerprint(state.features, state.labels)
         except ValueError:
             return None
         if current_fingerprint != stored_fingerprint:
@@ -1475,6 +1531,8 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     sample_review_report = metadata.get("sample_review")
     error_atlas_report = metadata.get("error_atlas")
     reliability_atlas_report = metadata.get("reliability_atlas")
+    calibration_slice_report = metadata.get("calibration_slice_diagnostics")
+    external_holdout_report = metadata.get("external_holdout")
     shadow_replay_report = metadata.get("shadow_replay")
     threshold_report = metadata.get("threshold_diagnostics")
     threshold_stability_report = metadata.get("threshold_stability")
@@ -1520,6 +1578,14 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
         and reliability_atlas_report.get("dataset_fingerprint")
     ):
         _log(window, "Skipped stored reliability atlas because it was created for a different loaded dataset.")
+    state.latest_calibration_slice_report = _compatible_calibration_slice_report(calibration_slice_report, state)
+    if (
+        isinstance(calibration_slice_report, dict)
+        and state.latest_calibration_slice_report is None
+        and calibration_slice_report.get("dataset_fingerprint")
+    ):
+        _log(window, "Skipped stored calibration slices because they were created for a different loaded dataset.")
+    state.latest_external_holdout_report = external_holdout_report if isinstance(external_holdout_report, dict) else None
     state.latest_shadow_replay_report = _compatible_shadow_replay_report(shadow_replay_report, state)
     if (
         isinstance(shadow_replay_report, dict)
@@ -1647,6 +1713,8 @@ def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
         sample_review_report=state.latest_sample_review_report,
         error_atlas_report=state.latest_error_atlas_report,
         reliability_atlas_report=state.latest_reliability_atlas_report,
+        calibration_slice_report=state.latest_calibration_slice_report,
+        external_holdout_report=state.latest_external_holdout_report,
         shadow_replay_report=state.latest_shadow_replay_report,
         threshold_report=state.latest_threshold_report,
         threshold_stability_report=state.latest_threshold_stability_report,
@@ -1781,6 +1849,8 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_sample_review_report = None
         state.latest_error_atlas_report = None
         state.latest_reliability_atlas_report = None
+        state.latest_calibration_slice_report = None
+        state.latest_external_holdout_report = None
         state.latest_shadow_replay_report = None
         state.latest_threshold_report = None
         state.latest_threshold_stability_report = None
@@ -1829,6 +1899,8 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_sample_review_report = None
         state.latest_error_atlas_report = None
         state.latest_reliability_atlas_report = None
+        state.latest_calibration_slice_report = None
+        state.latest_external_holdout_report = None
         state.latest_shadow_replay_report = None
         state.latest_threshold_report = None
         state.latest_threshold_stability_report = None
@@ -1901,6 +1973,8 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_sample_review_report = None
         state.latest_error_atlas_report = None
         state.latest_reliability_atlas_report = None
+        state.latest_calibration_slice_report = None
+        state.latest_external_holdout_report = None
         state.latest_shadow_replay_report = None
         state.latest_threshold_report = None
         state.latest_threshold_stability_report = None
@@ -2465,6 +2539,57 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                 f"[{item.get('priority', '-')}/{item.get('category', '-')}] "
                 f"{item.get('title', '-')}: {item.get('action', '-')}",
             )
+    elif kind == "calibration_slices":
+        state.latest_calibration_slice_report = result
+        state.latest_promotion_gate_report = None
+        _log(window, format_calibration_slice_summary(result))
+        for item in result.get("slices", [])[:5]:
+            _log(
+                window,
+                f"  x{int(item['feature_index']) + 1}[{float(item['left']):.3f},{float(item['right']):.3f}]: "
+                f"n={int(item['count'])}, prev={float(item['label_prevalence']):.4f}, "
+                f"mean_p={float(item['mean_probability']):.4f}, "
+                f"gap={float(item['signed_confidence_gap']):.4f}, "
+                f"impact={float(item['weighted_calibration_impact']):.4f}, "
+                f"dir={item.get('calibration_direction', '-')}",
+            )
+        for item in result.get("recommendations", [])[:3]:
+            _log(
+                window,
+                f"  {int(item.get('rank', 0))}. "
+                f"[{item.get('priority', '-')}/{item.get('category', '-')}] "
+                f"{item.get('title', '-')}: {item.get('action', '-')}",
+            )
+    elif kind == "external_holdout":
+        state.latest_external_holdout_report = result
+        state.latest_promotion_gate_report = None
+        _log(window, format_external_holdout_summary(result))
+        metrics = result.get("metrics", {})
+        _log(
+            window,
+            "  metrics: "
+            f"precision={float(metrics.get('precision', 0.0)):.4f}, "
+            f"recall={float(metrics.get('recall', 0.0)):.4f}, "
+            f"loss={float(metrics.get('validation_loss', 0.0)):.4f}",
+        )
+        comparison = result.get("reference_comparison") or {}
+        if comparison:
+            feature = comparison.get("top_shift_feature")
+            feature_text = "-" if feature is None else f"x{int(feature) + 1}"
+            _log(
+                window,
+                "  reference shift: "
+                f"top={feature_text}, "
+                f"std_mean_shift={float(comparison.get('max_standardized_mean_shift', 0.0)):.4f}, "
+                f"prevalence_shift={float(comparison.get('label_prevalence_shift', 0.0)):.4f}",
+            )
+        for item in result.get("recommendations", [])[:3]:
+            _log(
+                window,
+                f"  {int(item.get('rank', 0))}. "
+                f"[{item.get('priority', '-')}/{item.get('category', '-')}] "
+                f"{item.get('title', '-')}: {item.get('action', '-')}",
+            )
     elif kind == "shadow_replay":
         state.latest_shadow_replay_report = result
         state.latest_promotion_gate_report = None
@@ -2584,6 +2709,8 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_sample_review_report = None
         state.latest_error_atlas_report = None
         state.latest_reliability_atlas_report = None
+        state.latest_calibration_slice_report = None
+        state.latest_external_holdout_report = None
         state.latest_shadow_replay_report = None
         state.latest_threshold_report = None
         state.latest_threshold_stability_report = None
@@ -2640,6 +2767,8 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_sample_review_report = None
         state.latest_error_atlas_report = None
         state.latest_reliability_atlas_report = None
+        state.latest_calibration_slice_report = None
+        state.latest_external_holdout_report = None
         state.latest_shadow_replay_report = None
         state.latest_threshold_report = None
         state.latest_threshold_stability_report = None
@@ -2791,6 +2920,8 @@ def _invalidate_model_artifacts(state: AppState) -> None:
     state.latest_sample_review_report = None
     state.latest_error_atlas_report = None
     state.latest_reliability_atlas_report = None
+    state.latest_calibration_slice_report = None
+    state.latest_external_holdout_report = None
     state.latest_shadow_replay_report = None
     state.latest_threshold_report = None
     state.latest_threshold_stability_report = None
@@ -2838,6 +2969,7 @@ def _set_busy(window, busy: bool) -> None:
         "-IMPORT_PRESET-",
         "-SAVE_PRESET-",
         "-LOAD_CSV-",
+        "-EVALUATE_HOLDOUT-",
         "-SAVE_DATASET-",
         "-LOAD_DATASET-",
         "-CLEAR_DATA-",
@@ -2900,6 +3032,7 @@ def _set_busy(window, busy: bool) -> None:
         "-FEATURE_SEPARABILITY-",
         "-NEIGHBORHOOD_HARDNESS-",
         "-RELIABILITY-",
+        "-CALIBRATION_SLICES-",
         "-MPS_BOND_SWEEP-",
         "-EXPORT_TRIALS-",
         "-SLOT_SIMILARITY-",
@@ -3224,6 +3357,8 @@ def _activate_model_slot(window, state: AppState, values: dict[str, Any]) -> Non
     state.latest_sample_review_report = None
     state.latest_error_atlas_report = None
     state.latest_reliability_atlas_report = None
+    state.latest_calibration_slice_report = None
+    state.latest_external_holdout_report = None
     state.latest_shadow_replay_report = None
     state.latest_threshold_report = None
     state.latest_threshold_stability_report = None
@@ -3342,6 +3477,8 @@ def _load_registry(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_sample_review_report = None
         state.latest_error_atlas_report = None
         state.latest_reliability_atlas_report = None
+        state.latest_calibration_slice_report = None
+        state.latest_external_holdout_report = None
         state.latest_shadow_replay_report = None
         state.latest_threshold_report = None
         state.latest_threshold_stability_report = None
@@ -3395,6 +3532,8 @@ def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_sample_review_report = None
     state.latest_error_atlas_report = None
     state.latest_reliability_atlas_report = None
+    state.latest_calibration_slice_report = None
+    state.latest_external_holdout_report = None
     state.latest_shadow_replay_report = None
     state.latest_threshold_report = None
     state.latest_threshold_stability_report = None
@@ -3486,6 +3625,8 @@ def _build_stacked_ensemble(window, state: AppState, values: dict[str, Any]) -> 
     state.latest_sample_review_report = None
     state.latest_error_atlas_report = None
     state.latest_reliability_atlas_report = None
+    state.latest_calibration_slice_report = None
+    state.latest_external_holdout_report = None
     state.latest_shadow_replay_report = None
     state.latest_threshold_report = None
     state.latest_threshold_stability_report = None
@@ -3782,6 +3923,8 @@ def _start_promotion_gate(window, state: AppState) -> None:
             trial_inspector_report=state.latest_trial_inspector_report,
             error_atlas_report=state.latest_error_atlas_report,
             reliability_atlas_report=state.latest_reliability_atlas_report,
+            calibration_slice_report=state.latest_calibration_slice_report,
+            external_holdout_report=state.latest_external_holdout_report,
             shadow_replay_report=state.latest_shadow_replay_report,
             canary_suite_report=state.latest_canary_suite_report,
             policy_guard_report=state.latest_policy_guard_report,
@@ -3820,6 +3963,24 @@ def _start_reliability_atlas(window, state: AppState) -> None:
         return "reliability_atlas", report
 
     _start_worker(window, state, "Building reliability atlas...", task)
+
+
+def _start_calibration_slices(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    if state.model is None:
+        raise ValueError("Train or load a model before running calibration slices.")
+    dataset = validate_dataset(state.features, state.labels, min_samples=4, require_two_classes=False)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_calibration_slice_diagnostics(
+            state.model,
+            dataset.features,
+            dataset.labels,
+            preprocessor=state.preprocessor,
+        )
+        return "calibration_slices", report
+
+    _start_worker(window, state, "Scanning localized calibration slices...", task)
 
 
 def _start_shadow_replay(window, state: AppState) -> None:
@@ -4011,6 +4172,8 @@ def _merge_slots(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_sample_review_report = None
         state.latest_error_atlas_report = None
         state.latest_reliability_atlas_report = None
+        state.latest_calibration_slice_report = None
+        state.latest_external_holdout_report = None
         state.latest_shadow_replay_report = None
         state.latest_threshold_report = None
         state.latest_threshold_stability_report = None

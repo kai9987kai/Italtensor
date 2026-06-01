@@ -105,6 +105,10 @@ def test_prior_shift_validates_inputs_and_probabilities():
         run_prior_shift_diagnostics(ProbabilityModel(), np.asarray([[0.1], [np.inf]], dtype=np.float32), labels)
     with pytest.raises(ValueError, match="prevalence grid"):
         run_prior_shift_diagnostics(ProbabilityModel(), features, labels, prevalence_grid=[float("nan")])
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        run_prior_shift_diagnostics(ProbabilityModel(), features, labels, prevalence_grid=[-0.1])
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        run_prior_shift_diagnostics(ProbabilityModel(), features, labels, prevalence_grid=[1.1])
     with pytest.raises(ValueError, match="threshold"):
         run_prior_shift_diagnostics(ProbabilityModel(), features, labels, threshold=1.5)
 

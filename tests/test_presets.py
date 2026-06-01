@@ -199,6 +199,7 @@ def test_experimental_builtin_presets_are_available():
         "Interaction surface lab",
         "Calibration repair lab",
         "Reliability atlas lab",
+        "Calibration slice lab",
         "Permutation null lab",
         "Population drift lab",
         "Prior shift lab",
@@ -411,6 +412,26 @@ def test_shadow_replay_lab_preset_preserves_order_and_late_regime():
     assert any(example["name"] == "Late replay review" for example in metadata["prediction_examples"])
     assert float(dataset.features[:55, 2].mean()) < -0.8
     assert float(dataset.features[-20:, 2].mean()) > 0.8
+
+
+def test_calibration_slice_lab_preset_has_local_miscalibration_pocket():
+    metadata = preset_metadata("Calibration slice lab")
+    dataset = generate_builtin_preset("Calibration slice lab", sample_count=160, seed=10)
+    pocket_mask = dataset.features[:, 1] > 0.5
+
+    assert metadata["input_dim"] == 5
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == [
+        "raw_score",
+        "calibration_pocket",
+        "support_signal",
+        "pocket_noise",
+        "background_noise",
+    ]
+    assert any(example["name"] == "Overconfident pocket review" for example in metadata["prediction_examples"])
+    assert int(np.sum(pocket_mask)) >= 25
+    assert float(dataset.features[pocket_mask, 0].mean()) > 0.6
+    assert float(np.mean(dataset.labels[pocket_mask] == 1)) < 0.3
 
 
 def test_threshold_stability_lab_preset_has_boundary_band():

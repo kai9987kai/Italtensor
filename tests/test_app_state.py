@@ -15,6 +15,7 @@ from italtensor.app import (
     _activate_model_slot,
     _build_ensemble,
     _compare_models,
+    _compatible_calibration_slice_report,
     _compatible_capacity_planner_report,
     _compatible_prior_shift_report,
     _compatible_rank_lift_report,
@@ -34,6 +35,7 @@ from italtensor.app import (
 from italtensor.data import DataValidationError, validate_dataset
 from italtensor.modeling import ModelConfig
 from italtensor.capacity_planner import capacity_planner_dataset_fingerprint
+from italtensor.calibration_slices import calibration_slice_dataset_fingerprint
 from italtensor.preprocessing import FeatureStandardizer
 from italtensor.prior_shift import prior_shift_dataset_fingerprint
 from italtensor.rank_lift import rank_lift_dataset_fingerprint
@@ -94,6 +96,8 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         latest_sample_review_report={"summary": {"label_issue_count": 1}},
         latest_error_atlas_report={"summary": {"error_count": 1}},
         latest_reliability_atlas_report={"summary": {"risk_level": "medium"}},
+        latest_calibration_slice_report={"summary": {"risk_level": "high"}},
+        latest_external_holdout_report={"summary": {"verdict": "holdout_shift_review"}},
         latest_shadow_replay_report={"summary": {"verdict": "ordered_degradation_review"}},
         latest_threshold_report={"summary": {"best_f1": 1.0}},
         latest_threshold_stability_report={"summary": {"verdict": "threshold_stability_review"}},
@@ -146,6 +150,8 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
     assert state.latest_sample_review_report is None
     assert state.latest_error_atlas_report is None
     assert state.latest_reliability_atlas_report is None
+    assert state.latest_calibration_slice_report is None
+    assert state.latest_external_holdout_report is None
     assert state.latest_shadow_replay_report is None
     assert state.latest_threshold_report is None
     assert state.latest_threshold_stability_report is None
@@ -236,6 +242,8 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
         latest_dataset_triage_report={"summary": {"readiness_score": 72.0}},
         latest_error_atlas_report={"summary": {"error_count": 2}},
         latest_reliability_atlas_report={"summary": {"risk_level": "medium"}},
+        latest_calibration_slice_report={"summary": {"risk_level": "high"}},
+        latest_external_holdout_report={"summary": {"verdict": "holdout_shift_review"}},
         latest_shadow_replay_report={"summary": {"verdict": "ordered_degradation_review"}},
         latest_experiment_advisor_report={"summary": {"recommended_next_step": "Run auto experiments"}},
         latest_threshold_stability_report={"summary": {"verdict": "threshold_stability_review"}},
@@ -262,6 +270,8 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
     assert payload["dataset_triage"]["summary"]["readiness_score"] == 72.0
     assert payload["error_atlas"]["summary"]["error_count"] == 2
     assert payload["reliability_atlas"]["summary"]["risk_level"] == "medium"
+    assert payload["calibration_slice_diagnostics"]["summary"]["risk_level"] == "high"
+    assert payload["external_holdout"]["summary"]["verdict"] == "holdout_shift_review"
     assert payload["shadow_replay"]["summary"]["verdict"] == "ordered_degradation_review"
     assert payload["threshold_stability"]["summary"]["verdict"] == "threshold_stability_review"
     assert payload["capacity_planner"]["summary"]["verdict"] == "actionable_capacity_plan"
@@ -293,6 +303,8 @@ def test_training_preserves_dataset_only_diagnostics():
         latest_dataset_triage_report={"summary": {"readiness_score": 77.0}},
         latest_error_atlas_report={"summary": {"error_count": 1}},
         latest_reliability_atlas_report={"summary": {"risk_level": "medium"}},
+        latest_calibration_slice_report={"summary": {"risk_level": "high"}},
+        latest_external_holdout_report={"summary": {"verdict": "holdout_shift_review"}},
         latest_shadow_replay_report={"summary": {"verdict": "ordered_degradation_review"}},
         latest_threshold_stability_report={"summary": {"verdict": "threshold_stability_review"}},
         latest_capacity_planner_report={"summary": {"verdict": "actionable_capacity_plan"}},
@@ -325,6 +337,8 @@ def test_training_preserves_dataset_only_diagnostics():
     assert state.latest_dataset_triage_report == {"summary": {"readiness_score": 77.0}}
     assert state.latest_error_atlas_report is None
     assert state.latest_reliability_atlas_report is None
+    assert state.latest_calibration_slice_report is None
+    assert state.latest_external_holdout_report is None
     assert state.latest_shadow_replay_report is None
     assert state.latest_threshold_stability_report is None
     assert state.latest_capacity_planner_report is None
@@ -351,6 +365,21 @@ def test_compatible_reliability_atlas_report_rejects_mismatched_dataset():
 
     assert _compatible_reliability_atlas_report(matching, state) == matching
     assert _compatible_reliability_atlas_report(mismatched, state) is None
+
+
+def test_compatible_calibration_slice_report_rejects_mismatched_dataset():
+    state = AppState(features=[[0.1], [0.9]], labels=[0, 1], input_dim=1)
+    matching = {
+        "dataset_fingerprint": calibration_slice_dataset_fingerprint(state.features, state.labels),
+        "summary": {"risk_level": "low"},
+    }
+    mismatched = {
+        "dataset_fingerprint": calibration_slice_dataset_fingerprint([[0.2], [0.8]], [0, 1]),
+        "summary": {"risk_level": "medium"},
+    }
+
+    assert _compatible_calibration_slice_report(matching, state) == matching
+    assert _compatible_calibration_slice_report(mismatched, state) is None
 
 
 def test_compatible_shadow_replay_report_rejects_mismatched_or_reordered_dataset():
@@ -1849,6 +1878,107 @@ def test_handle_worker_done_stores_reliability_atlas_without_mutating_model():
     assert state.busy is False
     assert "Reliability atlas" in window["-LOG-"].value
     assert "Run Calibration repair" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_calibration_slices_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(
+        model=object(),
+        latest_metrics={"f1": 0.9},
+        latest_threshold=0.4,
+        latest_promotion_gate_report={"summary": {"verdict": "old"}},
+        busy=True,
+    )
+    model = state.model
+    report = {
+        "summary": {
+            "risk_level": "high",
+            "slice_count": 2,
+            "worst_slice": "x2[0, 1]",
+            "max_absolute_confidence_gap": 0.42,
+            "max_weighted_calibration_impact": 0.12,
+            "recommendation": "Review x2[0, 1].",
+        },
+        "slices": [
+            {
+                "feature_index": 1,
+                "left": 0.0,
+                "right": 1.0,
+                "count": 6,
+                "label_prevalence": 0.25,
+                "mean_probability": 0.67,
+                "signed_confidence_gap": 0.42,
+                "weighted_calibration_impact": 0.12,
+                "calibration_direction": "overconfident",
+            }
+        ],
+        "recommendations": [
+            {
+                "rank": 1,
+                "priority": "high",
+                "category": "calibration",
+                "title": "Review local calibration",
+                "action": "Review x2[0, 1].",
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("calibration_slices", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_calibration_slice_report == report
+    assert state.latest_promotion_gate_report is None
+    assert state.latest_threshold == 0.4
+    assert state.busy is False
+    assert "Calibration slices" in window["-LOG-"].value
+    assert "Review x2[0, 1]" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_external_holdout_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(
+        model=object(),
+        latest_metrics={"f1": 0.9},
+        latest_threshold=0.4,
+        latest_promotion_gate_report={"summary": {"verdict": "old"}},
+        busy=True,
+    )
+    model = state.model
+    report = {
+        "sample_count": 8,
+        "metrics": {"f1": 0.76, "balanced_accuracy": 0.75, "precision": 0.8, "recall": 0.7, "validation_loss": 0.4},
+        "probability_diagnostics": {"expected_calibration_error": 0.08},
+        "reference_comparison": {
+            "top_shift_feature": 1,
+            "max_standardized_mean_shift": 1.2,
+            "label_prevalence_shift": 0.25,
+        },
+        "summary": {
+            "verdict": "holdout_shift_review",
+            "recommendation": "Compare holdout rows with the loaded dataset.",
+        },
+        "recommendations": [
+            {
+                "rank": 1,
+                "priority": "medium",
+                "category": "external_validation",
+                "title": "External holdout review",
+                "action": "Compare holdout rows with the loaded dataset.",
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("external_holdout", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_external_holdout_report == report
+    assert state.latest_promotion_gate_report is None
+    assert state.latest_threshold == 0.4
+    assert state.busy is False
+    assert "External holdout" in window["-LOG-"].value
+    assert "reference shift" in window["-LOG-"].value
 
 
 def test_handle_worker_done_stores_shadow_replay_without_mutating_model():
