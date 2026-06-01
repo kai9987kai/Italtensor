@@ -1485,6 +1485,61 @@ def _prior_shift_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, 
     return _shuffle(features, labels, rng)
 
 
+def _external_holdout_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    shifted = max(6, int(round(total * 0.35)))
+    stable_positive = max(6, int(round(total * 0.25)))
+    stable_negative = max(6, int(round(total * 0.30)))
+    boundary = max(0, total - shifted - stable_positive - stable_negative)
+    shifted_labels = rng.binomial(1, 0.35, size=shifted).astype(np.int32)
+    shifted_rows = np.column_stack(
+        [
+            rng.normal(np.where(shifted_labels == 1, 0.95, -0.35), 0.25, size=shifted),
+            rng.normal(np.where(shifted_labels == 1, 0.45, -0.20), 0.25, size=shifted),
+            rng.normal(1.25, 0.22, size=shifted),
+            rng.normal(0.60, 0.20, size=shifted),
+            rng.normal(0.0, 0.35, size=shifted),
+        ]
+    )
+    positive_rows = np.column_stack(
+        [
+            rng.normal(1.05, 0.28, size=stable_positive),
+            rng.normal(0.55, 0.25, size=stable_positive),
+            rng.normal(0.0, 0.25, size=stable_positive),
+            rng.normal(0.75, 0.20, size=stable_positive),
+            rng.normal(0.0, 0.35, size=stable_positive),
+        ]
+    )
+    negative_rows = np.column_stack(
+        [
+            rng.normal(-0.95, 0.28, size=stable_negative),
+            rng.normal(-0.45, 0.25, size=stable_negative),
+            rng.normal(0.0, 0.25, size=stable_negative),
+            rng.normal(-0.55, 0.20, size=stable_negative),
+            rng.normal(0.0, 0.35, size=stable_negative),
+        ]
+    )
+    boundary_labels = rng.binomial(1, 0.45, size=boundary).astype(np.int32)
+    boundary_rows = np.column_stack(
+        [
+            rng.normal(np.where(boundary_labels == 1, 0.35, -0.25), 0.30, size=boundary),
+            rng.normal(0.0, 0.30, size=boundary),
+            rng.normal(0.65, 0.35, size=boundary),
+            rng.normal(0.15, 0.35, size=boundary),
+            rng.normal(0.0, 0.35, size=boundary),
+        ]
+    )
+    features = np.vstack([shifted_rows, positive_rows, negative_rows, boundary_rows]).astype(np.float32)
+    labels = np.concatenate(
+        [
+            shifted_labels,
+            np.ones(stable_positive, dtype=np.int32),
+            np.zeros(stable_negative, dtype=np.int32),
+            boundary_labels,
+        ]
+    )
+    return _shuffle(features, labels, rng)
+
+
 def _adversarial_validation_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
     reference_count = total // 2
     current_count = total - reference_count

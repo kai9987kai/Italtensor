@@ -225,7 +225,7 @@ def _next_step(verdict: str) -> str:
     if verdict == "holdout_failure":
         return "Do not promote yet; investigate external holdout errors before saving the model."
     if verdict == "holdout_calibration_review":
-        return "Run calibration repair or calibration slices against the external holdout before using probabilities."
+        return "Run calibration diagnostics on representative evaluation rows, then re-score this external holdout before using probabilities."
     if verdict == "holdout_shift_review":
         return "Compare holdout rows with the loaded dataset and validate whether this shift matches deployment."
     if verdict == "holdout_performance_review":

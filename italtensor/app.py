@@ -433,6 +433,11 @@ def _layout(sg):
             sg.Input(key="-CSV_PATH-", expand_x=True),
             sg.FileBrowse(file_types=(("CSV files", "*.csv"), ("All files", "*.*"))),
             sg.Button("Load CSV", key="-LOAD_CSV-"),
+        ],
+        [sg.Text("External holdout CSV")],
+        [
+            sg.Input(key="-HOLDOUT_CSV_PATH-", expand_x=True),
+            sg.FileBrowse(file_types=(("CSV files", "*.csv"), ("All files", "*.*"))),
             sg.Button("Evaluate holdout", key="-EVALUATE_HOLDOUT-"),
         ],
         [sg.Text("Dataset JSON")],
@@ -799,7 +804,7 @@ def _start_external_holdout(window, state: AppState, values: dict[str, Any]) -> 
     _ensure_not_busy(state)
     if state.model is None or state.input_dim is None:
         raise ValueError("Train or load a model before evaluating an external holdout.")
-    holdout = load_csv_dataset(_required_path(values["-CSV_PATH-"], "holdout CSV path"), expected_dim=state.input_dim)
+    holdout = load_csv_dataset(_required_path(values["-HOLDOUT_CSV_PATH-"], "holdout CSV path"), expected_dim=state.input_dim)
     reference = (
         validate_dataset(state.features, state.labels, min_samples=1, require_two_classes=False)
         if state.features and state.labels
@@ -2541,6 +2546,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
             )
     elif kind == "calibration_slices":
         state.latest_calibration_slice_report = result
+        state.latest_experiment_advisor_report = None
         state.latest_promotion_gate_report = None
         _log(window, format_calibration_slice_summary(result))
         for item in result.get("slices", [])[:5]:
@@ -2562,6 +2568,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
             )
     elif kind == "external_holdout":
         state.latest_external_holdout_report = result
+        state.latest_experiment_advisor_report = None
         state.latest_promotion_gate_report = None
         _log(window, format_external_holdout_summary(result))
         metrics = result.get("metrics", {})
@@ -3884,6 +3891,8 @@ def _start_experiment_advisor(window, state: AppState) -> None:
             ood_sentinel_report=state.latest_ood_sentinel_report,
             threshold_report=state.latest_threshold_report,
             calibration_repair_report=state.latest_calibration_repair_report,
+            calibration_slice_report=state.latest_calibration_slice_report,
+            external_holdout_report=state.latest_external_holdout_report,
             decision_curve_report=state.latest_decision_curve_report,
             selective_risk_report=state.latest_selective_risk_report,
             stress_report=state.latest_stress_report,

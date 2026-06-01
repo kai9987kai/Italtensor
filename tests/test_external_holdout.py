@@ -26,9 +26,9 @@ class OutOfRangeModel:
 
 
 def test_external_holdout_scores_labeled_csv_shape_without_mutating_reference():
-    holdout_features = np.asarray([[0.05, 0.0], [0.15, 0.0], [0.85, 1.0], [0.95, 1.0]], dtype=np.float32)
+    holdout_features = np.asarray([[0.05, 1.0], [0.15, 1.0], [0.85, 1.0], [0.95, 1.0]], dtype=np.float32)
     holdout_labels = np.asarray([0, 0, 1, 1], dtype=np.int32)
-    reference_features = np.asarray([[-0.5, 0.0], [-0.2, 0.0], [0.5, 0.0], [0.8, 0.0]], dtype=np.float32)
+    reference_features = np.asarray([[0.05, 0.0], [0.15, 0.0], [0.85, 0.0], [0.95, 0.0]], dtype=np.float32)
     reference_labels = np.asarray([0, 0, 1, 1], dtype=np.int32)
 
     report = run_external_holdout_evaluation(

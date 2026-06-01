@@ -28,6 +28,8 @@ from italtensor.app import (
     _import_reviewed_labels,
     _export_report,
     _save_preset,
+    _start_external_holdout,
+    _start_experiment_advisor,
     _start_promotion_gate,
     _run_shap_analysis,
     _run_decision_boundary,
@@ -1287,6 +1289,37 @@ def test_handle_worker_done_stores_experiment_advisor_without_mutating_model():
     assert "Promote threshold tuning" in window["-LOG-"].value
 
 
+def test_start_experiment_advisor_forwards_holdout_and_calibration_slice_reports():
+    window = FakeWindow()
+    calibration_slice_report = {"summary": {"risk_level": "high", "worst_slice": "x1[0, 1]"}}
+    external_holdout_report = {"summary": {"verdict": "holdout_failure", "f1": 0.42}}
+    state = AppState(
+        features=[[0.0], [1.0]],
+        labels=[0, 1],
+        input_dim=1,
+        latest_metrics={"f1": 0.8},
+        latest_calibration_slice_report=calibration_slice_report,
+        latest_external_holdout_report=external_holdout_report,
+    )
+    captured = {}
+
+    def fake_build_advisor(**kwargs):
+        captured.update(kwargs)
+        return {"summary": {"recommendation_count": 0}, "recommendations": []}
+
+    def fake_start_worker(worker_window, worker_state, status, task):
+        assert "advisor" in status.lower()
+        _handle_worker_done(worker_window, worker_state, task())
+
+    with patch("italtensor.app.build_experiment_advisor", side_effect=fake_build_advisor):
+        with patch("italtensor.app._start_worker", side_effect=fake_start_worker):
+            _start_experiment_advisor(window, state)
+
+    assert captured["calibration_slice_report"] is calibration_slice_report
+    assert captured["external_holdout_report"] is external_holdout_report
+    assert state.latest_experiment_advisor_report["summary"]["recommendation_count"] == 0
+
+
 def test_handle_worker_done_stores_trial_inspector_without_mutating_model():
     window = FakeWindow()
     state = AppState(model=object(), latest_metrics={"f1": 0.7}, latest_threshold=0.4, busy=True)
@@ -1532,6 +1565,7 @@ def test_handle_worker_done_stores_threshold_stability_without_mutating_model():
         model=object(),
         latest_metrics={"f1": 0.9},
         latest_threshold=0.4,
+        latest_experiment_advisor_report={"summary": {"recommended_next_step": "old"}},
         latest_promotion_gate_report={"summary": {"verdict": "old"}},
         busy=True,
     )
@@ -1928,6 +1962,7 @@ def test_handle_worker_done_stores_calibration_slices_without_mutating_model():
     assert state.model is model
     assert state.latest_metrics == {"f1": 0.9}
     assert state.latest_calibration_slice_report == report
+    assert state.latest_experiment_advisor_report is None
     assert state.latest_promotion_gate_report is None
     assert state.latest_threshold == 0.4
     assert state.busy is False
@@ -1941,6 +1976,7 @@ def test_handle_worker_done_stores_external_holdout_without_mutating_model():
         model=object(),
         latest_metrics={"f1": 0.9},
         latest_threshold=0.4,
+        latest_experiment_advisor_report={"summary": {"recommended_next_step": "old"}},
         latest_promotion_gate_report={"summary": {"verdict": "old"}},
         busy=True,
     )
@@ -1974,11 +2010,42 @@ def test_handle_worker_done_stores_external_holdout_without_mutating_model():
     assert state.model is model
     assert state.latest_metrics == {"f1": 0.9}
     assert state.latest_external_holdout_report == report
+    assert state.latest_experiment_advisor_report is None
     assert state.latest_promotion_gate_report is None
     assert state.latest_threshold == 0.4
     assert state.busy is False
     assert "External holdout" in window["-LOG-"].value
     assert "reference shift" in window["-LOG-"].value
+
+
+def test_start_external_holdout_uses_separate_csv_path_without_replacing_dataset(tmp_path):
+    class HoldoutProbabilityModel:
+        def predict(self, samples, verbose=0):
+            return np.asarray(samples, dtype=np.float32)[:, :1]
+
+    path = tmp_path / "holdout.csv"
+    path.write_text("score,marker,label\n0.05,1.0,0\n0.95,1.0,1\n", encoding="utf-8")
+    window = FakeWindow()
+    state = AppState(
+        features=[[0.1, 0.0], [0.9, 0.0]],
+        labels=[0, 1],
+        input_dim=2,
+        model=HoldoutProbabilityModel(),
+        latest_threshold=0.5,
+    )
+
+    def fake_start_worker(worker_window, worker_state, status, task):
+        assert "external holdout" in status.lower()
+        _handle_worker_done(worker_window, worker_state, task())
+
+    with patch("italtensor.app._start_worker", side_effect=fake_start_worker):
+        _start_external_holdout(window, state, {"-HOLDOUT_CSV_PATH-": str(path)})
+
+    assert state.features == [[0.1, 0.0], [0.9, 0.0]]
+    assert state.labels == [0, 1]
+    assert state.latest_external_holdout_report["sample_count"] == 2
+    assert state.latest_external_holdout_report["metrics"]["f1"] == 1.0
+    assert "External holdout" in window["-LOG-"].value
 
 
 def test_handle_worker_done_stores_shadow_replay_without_mutating_model():

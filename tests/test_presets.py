@@ -203,6 +203,7 @@ def test_experimental_builtin_presets_are_available():
         "Permutation null lab",
         "Population drift lab",
         "Prior shift lab",
+        "External holdout lab",
         "Adversarial validation lab",
         "Chronological holdout lab",
         "Shadow replay lab",
@@ -656,6 +657,25 @@ def test_prior_shift_lab_preset_has_base_rate_simulation_risk():
     assert 0.24 <= positive_rate <= 0.36
     false_positive_shoulder = dataset.features[dataset.labels == 0, 2]
     assert float(np.mean(false_positive_shoulder > 0.7)) > 0.10
+    assert float(np.corrcoef(dataset.features[:, 0], dataset.labels)[0, 1]) > 0.45
+
+
+def test_external_holdout_lab_preset_has_shifted_deployment_marker():
+    metadata = preset_metadata("External holdout lab")
+    dataset = generate_builtin_preset("External holdout lab", sample_count=160, seed=15)
+
+    assert metadata["input_dim"] == 5
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == [
+        "deployment_score",
+        "stable_support",
+        "shift_marker",
+        "prevalence_marker",
+        "background_noise",
+    ]
+    assert any(example["name"] == "Shifted holdout review" for example in metadata["prediction_examples"])
+    assert int(np.sum(dataset.features[:, 2] > 0.9)) >= 40
+    assert 0.35 <= float(np.mean(dataset.labels == 1)) <= 0.60
     assert float(np.corrcoef(dataset.features[:, 0], dataset.labels)[0, 1]) > 0.45
 
 

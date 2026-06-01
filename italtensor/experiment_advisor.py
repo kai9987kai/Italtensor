@@ -22,6 +22,8 @@ def build_experiment_advisor(
     ood_sentinel_report: dict[str, Any] | None = None,
     threshold_report: dict[str, Any] | None = None,
     calibration_repair_report: dict[str, Any] | None = None,
+    calibration_slice_report: dict[str, Any] | None = None,
+    external_holdout_report: dict[str, Any] | None = None,
     decision_curve_report: dict[str, Any] | None = None,
     selective_risk_report: dict[str, Any] | None = None,
     stress_report: dict[str, Any] | None = None,
@@ -116,8 +118,11 @@ def build_experiment_advisor(
 
     _add_report_recommendations(
         add,
+        metrics=metrics,
         threshold_report=threshold_report,
         calibration_repair_report=calibration_repair_report,
+        calibration_slice_report=calibration_slice_report,
+        external_holdout_report=external_holdout_report,
         decision_curve_report=decision_curve_report,
         selective_risk_report=selective_risk_report,
         stress_report=stress_report,
@@ -259,8 +264,11 @@ def _add_metric_recommendations(
 def _add_report_recommendations(
     add: Any,
     *,
+    metrics: dict[str, float | int],
     threshold_report: dict[str, Any] | None,
     calibration_repair_report: dict[str, Any] | None,
+    calibration_slice_report: dict[str, Any] | None,
+    external_holdout_report: dict[str, Any] | None,
     decision_curve_report: dict[str, Any] | None,
     selective_risk_report: dict[str, Any] | None,
     stress_report: dict[str, Any] | None,
@@ -271,6 +279,69 @@ def _add_report_recommendations(
     prototype_audit_report: dict[str, Any] | None,
     ood_sentinel_report: dict[str, Any] | None,
 ) -> None:
+    if metrics and not external_holdout_report:
+        add(
+            score=54.0,
+            priority="medium",
+            category="external_validation",
+            title="Run an external holdout check before final save",
+            reason="The active model has validation metrics, but no separate labeled CSV has been scored as external evidence.",
+            action="Use Evaluate holdout with a labeled CSV that was not used for training, tuning, or threshold selection.",
+            source="missing_external_holdout",
+            expected_signal="External holdout F1, calibration, and shift checks should agree with the internal validation story.",
+        )
+    if external_holdout_report:
+        summary = external_holdout_report.get("summary", {})
+        verdict = str(summary.get("verdict", "holdout_performance_review"))
+        f1 = float(summary.get("f1", 0.0) or 0.0)
+        if verdict == "holdout_failure":
+            add(
+                score=98.0,
+                priority="high",
+                category="external_validation",
+                title="Stop and investigate external holdout failure",
+                reason=f"The external holdout verdict is failure with F1={f1:.3f}.",
+                action=str(summary.get("recommendation") or "Inspect holdout errors before saving or promoting this model."),
+                source="external_holdout",
+                expected_signal="After remediation, holdout F1 and balanced accuracy should recover without retuning on the holdout.",
+            )
+        elif verdict != "holdout_pass":
+            add(
+                score=72.0,
+                priority="medium",
+                category="external_validation",
+                title="Review external holdout evidence",
+                reason=f"The external holdout verdict is {verdict}.",
+                action=str(summary.get("recommendation") or "Compare holdout errors, calibration, and shift against internal validation."),
+                source="external_holdout",
+                expected_signal="Holdout evidence should either confirm deployment readiness or identify the dataset shift to resolve.",
+            )
+    if calibration_slice_report:
+        summary = calibration_slice_report.get("summary", {})
+        risk = str(summary.get("risk_level", "low"))
+        worst = str(summary.get("worst_slice", "none"))
+        gap = float(summary.get("max_absolute_confidence_gap", 0.0) or 0.0)
+        if risk == "high":
+            add(
+                score=78.0,
+                priority="high",
+                category="calibration",
+                title="Repair or explain localized calibration risk",
+                reason=f"Calibration slices flag {worst} with confidence gap {gap:.3f}.",
+                action=str(summary.get("recommendation") or "Run calibration repair and inspect the worst local slice."),
+                source="calibration_slices",
+                expected_signal="The worst local confidence gap should shrink or be documented as a known limitation.",
+            )
+        elif risk == "medium":
+            add(
+                score=59.0,
+                priority="medium",
+                category="calibration",
+                title="Inspect local probability trust before deployment",
+                reason=f"Calibration slices flag {worst} for review.",
+                action=str(summary.get("recommendation") or "Inspect the worst local calibration slice before using probabilities."),
+                source="calibration_slices",
+            )
     if calibration_repair_report:
         summary = calibration_repair_report.get("summary", {})
         if float(summary.get("best_brier_improvement", 0.0)) >= 0.03 or float(summary.get("best_ece_improvement", 0.0)) >= 0.03:
