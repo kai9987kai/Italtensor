@@ -135,6 +135,8 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
         threshold_report={"summary": {"best_f1_threshold": 0.3}},
         threshold_stability_report={"summary": {"verdict": "threshold_stability_review", "threshold_spread": 0.2}},
         capacity_planner_report={"summary": {"verdict": "actionable_capacity_plan", "best_k": 4}},
+        rank_lift_report={"summary": {"verdict": "concentrated_ranking", "top_10_lift": 3.0}},
+        prior_shift_report={"summary": {"verdict": "prevalence_shift_risk", "min_ppv": 0.2}},
         model_response_report={"summary": {"top_feature": 0}},
         pairwise_interaction_report={"summary": {"top_pair": [0, 1]}},
         slice_report={"summary": {"worst_slice": "x1[0, 1]"}},
@@ -184,6 +186,8 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
     assert metadata["threshold_diagnostics"]["summary"]["best_f1_threshold"] == 0.3
     assert metadata["threshold_stability"]["summary"]["verdict"] == "threshold_stability_review"
     assert metadata["capacity_planner"]["summary"]["best_k"] == 4
+    assert metadata["rank_lift"]["summary"]["top_10_lift"] == 3.0
+    assert metadata["prior_shift"]["summary"]["min_ppv"] == 0.2
     assert metadata["model_response_diagnostics"]["summary"]["top_feature"] == 0
     assert metadata["pairwise_interaction_diagnostics"]["summary"]["top_pair"] == [0, 1]
     assert metadata["slice_diagnostics"]["summary"]["worst_slice"] == "x1[0, 1]"

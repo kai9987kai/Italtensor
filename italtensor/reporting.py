@@ -38,6 +38,7 @@ def build_experiment_report(
     threshold_stability_report: dict[str, Any] | None = None,
     capacity_planner_report: dict[str, Any] | None = None,
     rank_lift_report: dict[str, Any] | None = None,
+    prior_shift_report: dict[str, Any] | None = None,
     model_response_report: dict[str, Any] | None = None,
     pairwise_interaction_report: dict[str, Any] | None = None,
     slice_report: dict[str, Any] | None = None,
@@ -101,6 +102,7 @@ def build_experiment_report(
         "threshold_stability": threshold_stability_report or None,
         "capacity_planner": capacity_planner_report or None,
         "rank_lift": rank_lift_report or None,
+        "prior_shift": prior_shift_report or None,
         "model_response_diagnostics": model_response_report or None,
         "pairwise_interaction_diagnostics": pairwise_interaction_report or None,
         "slice_diagnostics": slice_report or None,
@@ -158,6 +160,7 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     threshold_stability = report.get("threshold_stability") or {}
     capacity_planner = report.get("capacity_planner") or {}
     rank_lift = report.get("rank_lift") or {}
+    prior_shift = report.get("prior_shift") or {}
     model_response = report.get("model_response_diagnostics") or {}
     pairwise_interactions = report.get("pairwise_interaction_diagnostics") or {}
     slice_diagnostics = report.get("slice_diagnostics") or {}
@@ -839,6 +842,37 @@ def format_markdown_report(report: dict[str, Any]) -> str:
                 f"rate={_format_value(item.get('response_rate', '-'))}, "
                 f"lift={_format_value(item.get('lift', '-'))}, "
                 f"cum_capture={_format_value(item.get('cumulative_positive_capture', '-'))}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Prior Shift / Prevalence"])
+    if prior_shift:
+        summary = prior_shift.get("summary", {})
+        current = prior_shift.get("current", {})
+        lines.extend(
+            [
+                f"- Verdict: {summary.get('verdict', '-')}",
+                f"- Observed prevalence: {_format_value(summary.get('observed_prevalence', '-'))}",
+                f"- Sensitivity: {_format_value(summary.get('sensitivity', '-'))}",
+                f"- Specificity: {_format_value(summary.get('specificity', '-'))}",
+                f"- Current PPV: {_format_value(summary.get('current_ppv', '-'))}",
+                f"- Current NPV: {_format_value(summary.get('current_npv', '-'))}",
+                f"- Min simulated PPV: {_format_value(summary.get('min_ppv', '-'))}",
+                f"- Max alerts / 1000: {_format_value(summary.get('max_predicted_positive_per_1000', '-'))}",
+                f"- Max false positives / 1000: {_format_value(summary.get('max_false_positive_per_1000', '-'))}",
+                f"- Recommendation: {summary.get('recommended_next_step') or 'none'}",
+                f"- Current confusion: TP={current.get('true_positive', '-')}, FP={current.get('false_positive', '-')}, "
+                f"FN={current.get('false_negative', '-')}, TN={current.get('true_negative', '-')}",
+            ]
+        )
+        for item in prior_shift.get("points", [])[:8]:
+            lines.append(
+                f"- prevalence={_format_value(item.get('prevalence', '-'))}: "
+                f"PPV={_format_value(item.get('positive_predictive_value', '-'))}, "
+                f"NPV={_format_value(item.get('negative_predictive_value', '-'))}, "
+                f"alerts/1000={_format_value(item.get('expected_predicted_positive', '-'))}, "
+                f"FP/1000={_format_value(item.get('expected_false_positive', '-'))}"
             )
     else:
         lines.append("- None")

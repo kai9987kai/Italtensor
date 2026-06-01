@@ -69,6 +69,11 @@ from .rank_lift import (
     rank_lift_dataset_fingerprint,
     run_rank_lift_diagnostics,
 )
+from .prior_shift import (
+    format_prior_shift_summary,
+    prior_shift_dataset_fingerprint,
+    run_prior_shift_diagnostics,
+)
 from .registry import ModelSlot
 from .sample_review import format_sample_review_summary, run_sample_review
 from .schema_guard import (
@@ -150,6 +155,7 @@ class AppState:
     latest_threshold_stability_report: dict[str, Any] | None = None
     latest_capacity_planner_report: dict[str, Any] | None = None
     latest_rank_lift_report: dict[str, Any] | None = None
+    latest_prior_shift_report: dict[str, Any] | None = None
     latest_calibration_repair_report: dict[str, Any] | None = None
     latest_model_response_report: dict[str, Any] | None = None
     latest_pairwise_interaction_report: dict[str, Any] | None = None
@@ -275,6 +281,8 @@ def run_app() -> None:
                 _start_capacity_planner(window, state)
             elif event == "-RANK_LIFT-":
                 _start_rank_lift(window, state)
+            elif event == "-PRIOR_SHIFT-":
+                _start_prior_shift(window, state)
             elif event == "-SAMPLE_REVIEW-":
                 _start_sample_review(window, state)
             elif event == "-ERROR_ATLAS-":
@@ -626,6 +634,7 @@ def _layout(sg):
             sg.Button("Threshold stability", key="-THRESHOLD_STABILITY-", expand_x=True),
             sg.Button("Capacity planner", key="-CAPACITY_PLANNER-", expand_x=True),
             sg.Button("Rank lift", key="-RANK_LIFT-", expand_x=True),
+            sg.Button("Prior shift", key="-PRIOR_SHIFT-", expand_x=True),
         ],
         [
             sg.Button("Decision curve", key="-DECISION_CURVE-", expand_x=True),
@@ -1073,6 +1082,25 @@ def _start_rank_lift(window, state: AppState) -> None:
     _start_worker(window, state, "Running rank lift diagnostics...", task)
 
 
+def _start_prior_shift(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    if state.model is None:
+        raise ValueError("Train or load a model before running prior shift diagnostics.")
+    dataset = validate_dataset(state.features, state.labels, min_samples=1, require_two_classes=False)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_prior_shift_diagnostics(
+            state.model,
+            dataset.features,
+            dataset.labels,
+            preprocessor=state.preprocessor,
+            threshold=state.latest_threshold,
+        )
+        return "prior_shift", report
+
+    _start_worker(window, state, "Simulating deployment prevalence shift...", task)
+
+
 def _start_sample_review(window, state: AppState) -> None:
     _ensure_not_busy(state)
     if state.model is None:
@@ -1281,6 +1309,7 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         threshold_stability_report=state.latest_threshold_stability_report,
         capacity_planner_report=state.latest_capacity_planner_report,
         rank_lift_report=state.latest_rank_lift_report,
+        prior_shift_report=state.latest_prior_shift_report,
         model_response_report=state.latest_model_response_report,
         pairwise_interaction_report=state.latest_pairwise_interaction_report,
         slice_report=state.latest_slice_report,
@@ -1379,6 +1408,20 @@ def _compatible_rank_lift_report(report: Any, state: AppState) -> dict[str, Any]
     return report
 
 
+def _compatible_prior_shift_report(report: Any, state: AppState) -> dict[str, Any] | None:
+    if not isinstance(report, dict):
+        return None
+    stored_fingerprint = report.get("dataset_fingerprint")
+    if stored_fingerprint and state.features and state.labels:
+        try:
+            current_fingerprint = prior_shift_dataset_fingerprint(state.features, state.labels)
+        except ValueError:
+            return None
+        if current_fingerprint != stored_fingerprint:
+            return None
+    return report
+
+
 def _compatible_schema_guard_report(report: Any, state: AppState) -> dict[str, Any] | None:
     if not isinstance(report, dict):
         return None
@@ -1437,6 +1480,7 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     threshold_stability_report = metadata.get("threshold_stability")
     capacity_planner_report = metadata.get("capacity_planner")
     rank_lift_report = metadata.get("rank_lift")
+    prior_shift_report = metadata.get("prior_shift")
     model_response_report = metadata.get("model_response_diagnostics")
     pairwise_interaction_report = metadata.get("pairwise_interaction_diagnostics")
     slice_report = metadata.get("slice_diagnostics")
@@ -1508,6 +1552,13 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
         and rank_lift_report.get("dataset_fingerprint")
     ):
         _log(window, "Skipped stored rank lift because it was created for a different loaded dataset.")
+    state.latest_prior_shift_report = _compatible_prior_shift_report(prior_shift_report, state)
+    if (
+        isinstance(prior_shift_report, dict)
+        and state.latest_prior_shift_report is None
+        and prior_shift_report.get("dataset_fingerprint")
+    ):
+        _log(window, "Skipped stored prior shift because it was created for a different loaded dataset.")
     state.latest_model_response_report = model_response_report if isinstance(model_response_report, dict) else None
     state.latest_pairwise_interaction_report = (
         pairwise_interaction_report if isinstance(pairwise_interaction_report, dict) else None
@@ -1601,6 +1652,7 @@ def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
         threshold_stability_report=state.latest_threshold_stability_report,
         capacity_planner_report=state.latest_capacity_planner_report,
         rank_lift_report=state.latest_rank_lift_report,
+        prior_shift_report=state.latest_prior_shift_report,
         model_response_report=state.latest_model_response_report,
         pairwise_interaction_report=state.latest_pairwise_interaction_report,
         slice_report=state.latest_slice_report,
@@ -1734,6 +1786,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_threshold_stability_report = None
         state.latest_capacity_planner_report = None
         state.latest_rank_lift_report = None
+        state.latest_prior_shift_report = None
         state.latest_model_response_report = None
         state.latest_pairwise_interaction_report = None
         state.latest_slice_report = None
@@ -1781,6 +1834,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_threshold_stability_report = None
         state.latest_capacity_planner_report = None
         state.latest_rank_lift_report = None
+        state.latest_prior_shift_report = None
         state.latest_model_response_report = None
         state.latest_pairwise_interaction_report = None
         state.latest_slice_report = None
@@ -1852,6 +1906,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_threshold_stability_report = None
         state.latest_capacity_planner_report = None
         state.latest_rank_lift_report = None
+        state.latest_prior_shift_report = None
         state.latest_model_response_report = None
         state.latest_pairwise_interaction_report = None
         state.latest_slice_report = None
@@ -2094,6 +2149,37 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                 f"n={int(item['count'])}, positives={int(item['positive_count'])}, "
                 f"rate={float(item['response_rate']):.4f}, lift={float(item['lift']):.4f}, "
                 f"cum_capture={float(item['cumulative_positive_capture']):.4f}",
+            )
+        for item in result.get("recommendations", [])[:3]:
+            _log(
+                window,
+                f"  {int(item.get('rank', 0))}. "
+                f"[{item.get('priority', '-')}/{item.get('category', '-')}] "
+                f"{item.get('title', '-')}: {item.get('action', '-')}",
+            )
+
+    elif kind == "prior_shift":
+        state.latest_prior_shift_report = result
+        state.latest_promotion_gate_report = None
+        _log(window, format_prior_shift_summary(result))
+        current = result.get("current", {})
+        _log(
+            window,
+            "  current: "
+            f"prev={float(current.get('observed_prevalence', 0.0)):.4f}, "
+            f"sens={float(current.get('sensitivity', 0.0)):.4f}, "
+            f"spec={float(current.get('specificity', 0.0)):.4f}, "
+            f"PPV={float(current.get('positive_predictive_value', 0.0)):.4f}, "
+            f"NPV={float(current.get('negative_predictive_value', 0.0)):.4f}",
+        )
+        for item in result.get("points", [])[:6]:
+            _log(
+                window,
+                f"  prev={float(item['prevalence']):.3f}: "
+                f"PPV={float(item['positive_predictive_value']):.4f}, "
+                f"NPV={float(item['negative_predictive_value']):.4f}, "
+                f"alerts/1000={float(item['expected_predicted_positive']):.1f}, "
+                f"FP/1000={float(item['expected_false_positive']):.1f}",
             )
         for item in result.get("recommendations", [])[:3]:
             _log(
@@ -2503,6 +2589,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_threshold_stability_report = None
         state.latest_capacity_planner_report = None
         state.latest_rank_lift_report = None
+        state.latest_prior_shift_report = None
         state.latest_model_response_report = None
         state.latest_pairwise_interaction_report = None
         state.latest_slice_report = None
@@ -2558,6 +2645,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_threshold_stability_report = None
         state.latest_capacity_planner_report = None
         state.latest_rank_lift_report = None
+        state.latest_prior_shift_report = None
         state.latest_model_response_report = None
         state.latest_pairwise_interaction_report = None
         state.latest_slice_report = None
@@ -2708,6 +2796,7 @@ def _invalidate_model_artifacts(state: AppState) -> None:
     state.latest_threshold_stability_report = None
     state.latest_capacity_planner_report = None
     state.latest_rank_lift_report = None
+    state.latest_prior_shift_report = None
     state.latest_model_response_report = None
     state.latest_pairwise_interaction_report = None
     state.latest_slice_report = None
@@ -2789,6 +2878,7 @@ def _set_busy(window, busy: bool) -> None:
         "-THRESHOLD_STABILITY-",
         "-CAPACITY_PLANNER-",
         "-RANK_LIFT-",
+        "-PRIOR_SHIFT-",
         "-DECISION_CURVE-",
         "-CONFORMAL_SETS-",
         "-CALIBRATION_REPAIR-",
@@ -3139,6 +3229,7 @@ def _activate_model_slot(window, state: AppState, values: dict[str, Any]) -> Non
     state.latest_threshold_stability_report = None
     state.latest_capacity_planner_report = None
     state.latest_rank_lift_report = None
+    state.latest_prior_shift_report = None
     state.latest_model_response_report = None
     state.latest_pairwise_interaction_report = None
     state.latest_slice_report = None
@@ -3256,6 +3347,7 @@ def _load_registry(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_threshold_stability_report = None
         state.latest_capacity_planner_report = None
         state.latest_rank_lift_report = None
+        state.latest_prior_shift_report = None
         state.latest_model_response_report = None
         state.latest_pairwise_interaction_report = None
         state.latest_slice_report = None
@@ -3308,6 +3400,7 @@ def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_threshold_stability_report = None
     state.latest_capacity_planner_report = None
     state.latest_rank_lift_report = None
+    state.latest_prior_shift_report = None
     state.latest_model_response_report = None
     state.latest_pairwise_interaction_report = None
     state.latest_slice_report = None
@@ -3398,6 +3491,7 @@ def _build_stacked_ensemble(window, state: AppState, values: dict[str, Any]) -> 
     state.latest_threshold_stability_report = None
     state.latest_capacity_planner_report = None
     state.latest_rank_lift_report = None
+    state.latest_prior_shift_report = None
     state.latest_model_response_report = None
     state.latest_pairwise_interaction_report = None
     state.latest_slice_report = None
@@ -3695,6 +3789,8 @@ def _start_promotion_gate(window, state: AppState) -> None:
             threshold_report=state.latest_threshold_report,
             threshold_stability_report=state.latest_threshold_stability_report,
             capacity_planner_report=state.latest_capacity_planner_report,
+            rank_lift_report=state.latest_rank_lift_report,
+            prior_shift_report=state.latest_prior_shift_report,
             calibration_repair_report=state.latest_calibration_repair_report,
             stress_report=state.latest_stress_report,
             permutation_null_report=state.latest_permutation_null_report,
@@ -3920,6 +4016,7 @@ def _merge_slots(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_threshold_stability_report = None
         state.latest_capacity_planner_report = None
         state.latest_rank_lift_report = None
+        state.latest_prior_shift_report = None
         state.latest_model_response_report = None
         state.latest_pairwise_interaction_report = None
         state.latest_slice_report = None

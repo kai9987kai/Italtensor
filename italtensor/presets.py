@@ -342,6 +342,22 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="prior_shift_lab",
+        name="Prior shift lab",
+        description="A moderate-prevalence validation dataset with false-positive shoulders for deployment base-rate simulation.",
+        default_samples=220,
+        min_samples=20,
+        input_dim=5,
+        recommended_feature_map="linear",
+        feature_names=("screening_score", "support_signal", "false_positive_shoulder", "deployment_mix", "background_noise"),
+        training_defaults={"epochs": 80, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Likely negative base-rate row", "features": [-0.75, -0.25, 0.0, -0.8, 0.0], "expected_label": 0},
+            {"name": "False-positive shoulder review", "features": [0.65, -0.35, 1.2, 0.1, 0.0], "expected_label": None},
+            {"name": "Likely positive base-rate row", "features": [1.0, 0.6, -0.2, 0.8, 0.0], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
         key="adversarial_validation_lab",
         name="Adversarial validation lab",
         description="Ordered reference/current rows with multivariate drift for domain-classifier detection.",
@@ -828,6 +844,8 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _permutation_null_lab(total, rng)
     elif preset.key == "population_drift_lab":
         features, labels = _population_drift_lab(total, rng)
+    elif preset.key == "prior_shift_lab":
+        features, labels = _prior_shift_lab(total, rng)
     elif preset.key == "adversarial_validation_lab":
         features, labels = _adversarial_validation_lab(total, rng)
     elif preset.key == "chronological_holdout_lab":
@@ -1347,6 +1365,34 @@ def _population_drift_lab(total: int, rng: np.random.Generator) -> tuple[np.ndar
     return features, labels.astype(np.int32)
 
 
+def _prior_shift_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    positive_count = max(12, int(round(total * 0.30)))
+    shoulder_count = max(12, int(round(total * 0.18)))
+    negative_count = total - positive_count - shoulder_count
+    if negative_count < 4:
+        negative_count = 4
+        shoulder_count = max(2, total - positive_count - negative_count)
+
+    positives = rng.normal(
+        loc=(1.0, 0.65, -0.25, 0.8, 0.0),
+        scale=(0.30, 0.30, 0.35, 0.25, 1.0),
+        size=(positive_count, 5),
+    )
+    shoulders = rng.normal(
+        loc=(0.62, -0.30, 1.15, 0.05, 0.0),
+        scale=(0.22, 0.35, 0.26, 0.30, 1.0),
+        size=(shoulder_count, 5),
+    )
+    negatives = rng.normal(
+        loc=(-0.55, -0.25, 0.0, -0.65, 0.0),
+        scale=(0.45, 0.45, 0.50, 0.28, 1.0),
+        size=(negative_count, 5),
+    )
+    features = np.vstack([positives, shoulders, negatives]).astype(np.float32)
+    labels = np.asarray([1] * positive_count + [0] * shoulder_count + [0] * negative_count, dtype=np.int32)
+    return _shuffle(features, labels, rng)
+
+
 def _adversarial_validation_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
     reference_count = total // 2
     current_count = total - reference_count
@@ -1543,6 +1589,43 @@ def _capacity_planner_lab(total: int, rng: np.random.Generator) -> tuple[np.ndar
     )
     features = np.vstack([positives, false_alarms, negatives]).astype(np.float32)
     labels = np.asarray([1] * positive_count + [0] * false_alarm_count + [0] * negative_count, dtype=np.int32)
+    return _shuffle(features, labels, rng)
+
+
+def _rank_lift_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    positive_count = max(10, int(round(total * 0.14)))
+    decoy_count = max(10, int(round(total * 0.18)))
+    tail_count = total - positive_count - decoy_count
+    if tail_count < 4:
+        tail_count = 4
+        decoy_count = max(2, total - positive_count - tail_count)
+
+    positives = rng.normal(
+        loc=(1.25, 0.75, -0.20, 0.0, 1.0),
+        scale=(0.22, 0.28, 0.35, 1.0, 0.20),
+        size=(positive_count, 5),
+    )
+    decoys = rng.normal(
+        loc=(0.82, -0.45, 1.25, 0.0, 0.45),
+        scale=(0.22, 0.34, 0.28, 1.0, 0.30),
+        size=(decoy_count, 5),
+    )
+    tail = rng.normal(
+        loc=(-0.55, -0.20, 0.0, 0.0, -0.85),
+        scale=(0.42, 0.44, 0.55, 1.0, 0.24),
+        size=(tail_count, 5),
+    )
+    if positive_count >= 3:
+        positives[:3, :] = np.asarray(
+            [
+                [1.40, 0.85, -0.25, 0.0, 1.0],
+                [1.22, 0.70, -0.10, 0.0, 0.9],
+                [1.05, 0.65, 0.10, 0.0, 0.8],
+            ],
+            dtype=np.float64,
+        )
+    features = np.vstack([positives, decoys, tail]).astype(np.float32)
+    labels = np.asarray([1] * positive_count + [0] * decoy_count + [0] * tail_count, dtype=np.int32)
     return _shuffle(features, labels, rng)
 
 

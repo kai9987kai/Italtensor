@@ -160,6 +160,29 @@ def test_promotion_gate_blocks_non_actionable_capacity_plan():
     assert any(item["title"] == "Capacity planner is not actionable" for item in report["checks"])
 
 
+def test_promotion_gate_cautions_on_weak_rank_lift():
+    report = build_promotion_gate(
+        sample_count=120,
+        input_dim=3,
+        labels=[0, 1] * 60,
+        config=ModelConfig(feature_map="linear"),
+        metrics={"f1": 0.86, "accuracy": 0.88, "balanced_accuracy": 0.86, "brier_score": 0.14, "ece": 0.04},
+        trial_history=[{"metrics": {"f1": 0.82}}, {"metrics": {"f1": 0.86}}, {"metrics": {"f1": 0.84}}],
+        dataset_triage_report={"summary": {"risk_level": "low", "readiness_score": 90.0, "blocking_issue_count": 0}},
+        trial_inspector_report={"valid_trial_count": 3, "summary": {"leader_margin_f1": 0.04}},
+        rank_lift_report={
+            "summary": {
+                "verdict": "diffuse_ranking",
+                "top_10_lift": 0.9,
+                "normalized_gains_auc": 0.02,
+            }
+        },
+    )
+
+    assert report["summary"]["verdict"] == "needs_review"
+    assert any(item["title"] == "Rank-lift evidence is weak" for item in report["checks"])
+
+
 def test_promotion_gate_blocks_high_risk_schema_guard():
     report = build_promotion_gate(
         sample_count=120,

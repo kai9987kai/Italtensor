@@ -16,6 +16,8 @@ from italtensor.app import (
     _build_ensemble,
     _compare_models,
     _compatible_capacity_planner_report,
+    _compatible_prior_shift_report,
+    _compatible_rank_lift_report,
     _compatible_reliability_atlas_report,
     _compatible_schema_guard_report,
     _compatible_shadow_replay_report,
@@ -33,6 +35,8 @@ from italtensor.data import DataValidationError, validate_dataset
 from italtensor.modeling import ModelConfig
 from italtensor.capacity_planner import capacity_planner_dataset_fingerprint
 from italtensor.preprocessing import FeatureStandardizer
+from italtensor.prior_shift import prior_shift_dataset_fingerprint
+from italtensor.rank_lift import rank_lift_dataset_fingerprint
 from italtensor.reliability_atlas import reliability_dataset_fingerprint
 from italtensor.schema_guard import schema_guard_dataset_fingerprint
 from italtensor.shadow_replay import shadow_replay_dataset_fingerprint
@@ -94,6 +98,8 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         latest_threshold_report={"summary": {"best_f1": 1.0}},
         latest_threshold_stability_report={"summary": {"verdict": "threshold_stability_review"}},
         latest_capacity_planner_report={"summary": {"verdict": "actionable_capacity_plan"}},
+        latest_rank_lift_report={"summary": {"verdict": "concentrated_ranking"}},
+        latest_prior_shift_report={"summary": {"verdict": "prevalence_shift_risk"}},
         latest_model_response_report={"summary": {"top_feature": 0}},
         latest_pairwise_interaction_report={"summary": {"top_pair": [0, 1]}},
         latest_slice_report={"summary": {"worst_f1_delta": -0.5}},
@@ -144,6 +150,8 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
     assert state.latest_threshold_report is None
     assert state.latest_threshold_stability_report is None
     assert state.latest_capacity_planner_report is None
+    assert state.latest_rank_lift_report is None
+    assert state.latest_prior_shift_report is None
     assert state.latest_model_response_report is None
     assert state.latest_pairwise_interaction_report is None
     assert state.latest_slice_report is None
@@ -232,6 +240,8 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
         latest_experiment_advisor_report={"summary": {"recommended_next_step": "Run auto experiments"}},
         latest_threshold_stability_report={"summary": {"verdict": "threshold_stability_review"}},
         latest_capacity_planner_report={"summary": {"verdict": "actionable_capacity_plan"}},
+        latest_rank_lift_report={"summary": {"verdict": "concentrated_ranking"}},
+        latest_prior_shift_report={"summary": {"verdict": "prevalence_shift_risk"}},
         latest_canary_suite_report={"summary": {"verdict": "canary_pass"}},
         latest_policy_guard_report={"summary": {"verdict": "policy_review"}},
         latest_trial_inspector_report={"summary": {"best_trial_index": 2}},
@@ -255,6 +265,8 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
     assert payload["shadow_replay"]["summary"]["verdict"] == "ordered_degradation_review"
     assert payload["threshold_stability"]["summary"]["verdict"] == "threshold_stability_review"
     assert payload["capacity_planner"]["summary"]["verdict"] == "actionable_capacity_plan"
+    assert payload["rank_lift"]["summary"]["verdict"] == "concentrated_ranking"
+    assert payload["prior_shift"]["summary"]["verdict"] == "prevalence_shift_risk"
     assert payload["canary_suite"]["summary"]["verdict"] == "canary_pass"
     assert payload["policy_guard"]["summary"]["verdict"] == "policy_review"
     assert payload["experiment_advisor"]["summary"]["recommended_next_step"] == "Run auto experiments"
@@ -284,6 +296,8 @@ def test_training_preserves_dataset_only_diagnostics():
         latest_shadow_replay_report={"summary": {"verdict": "ordered_degradation_review"}},
         latest_threshold_stability_report={"summary": {"verdict": "threshold_stability_review"}},
         latest_capacity_planner_report={"summary": {"verdict": "actionable_capacity_plan"}},
+        latest_rank_lift_report={"summary": {"verdict": "useful_ranking"}},
+        latest_prior_shift_report={"summary": {"verdict": "prior_shift_review"}},
         latest_canary_suite_report={"summary": {"verdict": "canary_pass"}},
         latest_policy_guard_report={"summary": {"verdict": "policy_pass"}},
         latest_experiment_advisor_report={"summary": {"recommended_next_step": "Old advice"}},
@@ -314,6 +328,8 @@ def test_training_preserves_dataset_only_diagnostics():
     assert state.latest_shadow_replay_report is None
     assert state.latest_threshold_stability_report is None
     assert state.latest_capacity_planner_report is None
+    assert state.latest_rank_lift_report is None
+    assert state.latest_prior_shift_report is None
     assert state.latest_canary_suite_report is None
     assert state.latest_policy_guard_report is None
     assert state.latest_experiment_advisor_report is None
@@ -380,6 +396,36 @@ def test_compatible_capacity_planner_report_rejects_mismatched_dataset():
 
     assert _compatible_capacity_planner_report(matching, state) == matching
     assert _compatible_capacity_planner_report(mismatched, state) is None
+
+
+def test_compatible_rank_lift_report_rejects_mismatched_dataset():
+    state = AppState(features=[[0.1], [0.9], [0.2], [0.8]], labels=[0, 1, 0, 1], input_dim=1)
+    matching = {
+        "dataset_fingerprint": rank_lift_dataset_fingerprint(state.features, state.labels),
+        "summary": {"verdict": "concentrated_ranking"},
+    }
+    mismatched = {
+        "dataset_fingerprint": rank_lift_dataset_fingerprint([[0.1], [0.8], [0.2], [0.9]], state.labels),
+        "summary": {"verdict": "diffuse_ranking"},
+    }
+
+    assert _compatible_rank_lift_report(matching, state) == matching
+    assert _compatible_rank_lift_report(mismatched, state) is None
+
+
+def test_compatible_prior_shift_report_rejects_mismatched_dataset():
+    state = AppState(features=[[0.1], [0.9], [0.2], [0.8]], labels=[0, 1, 0, 1], input_dim=1)
+    matching = {
+        "dataset_fingerprint": prior_shift_dataset_fingerprint(state.features, state.labels),
+        "summary": {"verdict": "prior_shift_review"},
+    }
+    mismatched = {
+        "dataset_fingerprint": prior_shift_dataset_fingerprint([[0.1], [0.8], [0.2], [0.9]], state.labels),
+        "summary": {"verdict": "prevalence_shift_risk"},
+    }
+
+    assert _compatible_prior_shift_report(matching, state) == matching
+    assert _compatible_prior_shift_report(mismatched, state) is None
 
 
 def test_compatible_schema_guard_report_accepts_reordered_dataset_but_rejects_mismatched_features():
@@ -1539,6 +1585,127 @@ def test_handle_worker_done_stores_capacity_planner_without_mutating_model():
     assert state.busy is False
     assert "Capacity planner" in window["-LOG-"].value
     assert "Plan top 10 rows" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_rank_lift_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(
+        model=object(),
+        latest_metrics={"f1": 0.9},
+        latest_threshold=0.4,
+        latest_promotion_gate_report={"summary": {"verdict": "old"}},
+        busy=True,
+    )
+    model = state.model
+    report = {
+        "summary": {
+            "verdict": "concentrated_ranking",
+            "prevalence": 0.2,
+            "top_10_lift": 4.0,
+            "top_20_positive_capture": 0.7,
+            "normalized_gains_auc": 0.8,
+            "score_gini": 0.4,
+            "recommended_next_step": "Validate top-decile lift.",
+        },
+        "points": [
+            {
+                "top_fraction": 0.1,
+                "k": 10,
+                "precision_at_k": 0.8,
+                "positive_capture": 0.4,
+                "lift": 4.0,
+                "probability_mass_capture": 0.35,
+            }
+        ],
+        "deciles_table": [
+            {
+                "bucket": 1,
+                "count": 10,
+                "positive_count": 8,
+                "response_rate": 0.8,
+                "lift": 4.0,
+                "cumulative_positive_capture": 0.4,
+            }
+        ],
+        "recommendations": [
+            {
+                "rank": 1,
+                "priority": "low",
+                "category": "ranking",
+                "title": "Validate concentrated top-ranked signal",
+                "action": "Validate top-decile lift.",
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("rank_lift", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_rank_lift_report == report
+    assert state.latest_promotion_gate_report is None
+    assert state.latest_threshold == 0.4
+    assert state.busy is False
+    assert "Rank lift" in window["-LOG-"].value
+    assert "Validate top-decile lift" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_prior_shift_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(
+        model=object(),
+        latest_metrics={"f1": 0.9},
+        latest_threshold=0.4,
+        latest_promotion_gate_report={"summary": {"verdict": "old"}},
+        busy=True,
+    )
+    model = state.model
+    report = {
+        "summary": {
+            "verdict": "prevalence_shift_risk",
+            "observed_prevalence": 0.3,
+            "min_ppv": 0.15,
+            "max_predicted_positive_per_1000": 250.0,
+            "max_false_positive_per_1000": 220.0,
+            "recommended_next_step": "Validate deployment prevalence.",
+        },
+        "current": {
+            "observed_prevalence": 0.3,
+            "sensitivity": 0.8,
+            "specificity": 0.75,
+            "positive_predictive_value": 0.58,
+            "negative_predictive_value": 0.88,
+        },
+        "points": [
+            {
+                "prevalence": 0.02,
+                "positive_predictive_value": 0.15,
+                "negative_predictive_value": 0.99,
+                "expected_predicted_positive": 250.0,
+                "expected_false_positive": 220.0,
+            }
+        ],
+        "recommendations": [
+            {
+                "rank": 1,
+                "priority": "high",
+                "category": "prevalence",
+                "title": "Validate base-rate shift before operational use",
+                "action": "Validate deployment prevalence.",
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("prior_shift", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_prior_shift_report == report
+    assert state.latest_promotion_gate_report is None
+    assert state.latest_threshold == 0.4
+    assert state.busy is False
+    assert "Prior shift" in window["-LOG-"].value
+    assert "Validate deployment prevalence" in window["-LOG-"].value
 
 
 def test_predict_logs_schema_guard_vector_warning():

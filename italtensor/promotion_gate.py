@@ -27,6 +27,8 @@ def build_promotion_gate(
     threshold_report: dict[str, Any] | None = None,
     threshold_stability_report: dict[str, Any] | None = None,
     capacity_planner_report: dict[str, Any] | None = None,
+    rank_lift_report: dict[str, Any] | None = None,
+    prior_shift_report: dict[str, Any] | None = None,
     calibration_repair_report: dict[str, Any] | None = None,
     stress_report: dict[str, Any] | None = None,
     permutation_null_report: dict[str, Any] | None = None,
@@ -248,6 +250,59 @@ def build_promotion_gate(
                     evidence=f"recall={recall:.3f}, lift={lift:.3f}, utility={utility:.3f}.",
                     action="Adjust capacity or improve ranking before using this as an operational action queue.",
                     penalty=6.0,
+                )
+        if rank_lift_report:
+            summary = rank_lift_report.get("summary", {})
+            verdict = str(summary.get("verdict", "rank_lift_review"))
+            top_10_lift = float(summary.get("top_10_lift", 0.0) or 0.0)
+            gains_auc = float(summary.get("normalized_gains_auc", 0.0) or 0.0)
+            if verdict in {"diffuse_ranking", "flat_scores"}:
+                add(
+                    severity="caution",
+                    category="ranking",
+                    title="Rank-lift evidence is weak",
+                    status="review",
+                    evidence=f"verdict={verdict}, top10_lift={top_10_lift:.3f}, gains_auc={gains_auc:.3f}.",
+                    action="Improve ranking signal or validate a larger review budget before promotion.",
+                    penalty=6.0,
+                )
+            elif verdict == "no_positive_evidence":
+                add(
+                    severity="caution",
+                    category="ranking",
+                    title="Rank-lift evidence has no positives",
+                    status="missing",
+                    evidence="Rank-lift diagnostics found no positive rows.",
+                    action="Add labeled positives before using gains or lift as promotion evidence.",
+                    penalty=4.0,
+                )
+        if prior_shift_report:
+            summary = prior_shift_report.get("summary", {})
+            verdict = str(summary.get("verdict", "prior_shift_review"))
+            min_ppv = float(summary.get("min_ppv", 0.0) or 0.0)
+            max_fp = float(summary.get("max_false_positive_per_1000", 0.0) or 0.0)
+            if verdict == "prevalence_shift_risk":
+                add(
+                    severity="caution",
+                    category="prevalence",
+                    title="Prior-shift simulation shows base-rate risk",
+                    status="review",
+                    evidence=f"min_ppv={min_ppv:.3f}, max_false_positives_per_1000={max_fp:.1f}.",
+                    action=str(
+                        summary.get("recommended_next_step")
+                        or "Validate prevalence, threshold, and review capacity on deployment-like rows."
+                    ),
+                    penalty=7.0,
+                )
+            elif verdict in {"prior_shift_review", "no_two_class_evidence"}:
+                add(
+                    severity="caution",
+                    category="prevalence",
+                    title="Prior-shift evidence needs review",
+                    status="review",
+                    evidence=f"verdict={verdict}, min_ppv={min_ppv:.3f}, max_false_positives_per_1000={max_fp:.1f}.",
+                    action=str(summary.get("recommended_next_step") or "Review prior-shift sensitivity before promotion."),
+                    penalty=5.0,
                 )
 
     _add_triage_checks(add, dataset_triage_report)
@@ -731,10 +786,12 @@ def _must_include(checks: list[dict[str, Any]], metrics: dict[str, float | int],
         items.append("trial history")
     if any(check["category"] == "calibration" for check in checks) or "ece" in metrics or "brier_score" in metrics:
         items.append("calibration note")
-    if any(check["category"] in {"drift", "temporal", "robustness"} for check in checks):
+    if any(check["category"] in {"drift", "temporal", "robustness", "prevalence"} for check in checks):
         items.append("deployment-risk note")
     if any(check["category"] == "schema" for check in checks):
         items.append("feature-schema note")
+    if any(check["category"] == "ranking" for check in checks):
+        items.append("ranking/lift note")
     if any(check["severity"] == "blocker" for check in checks):
         items.append("blocked-use warning")
     return items

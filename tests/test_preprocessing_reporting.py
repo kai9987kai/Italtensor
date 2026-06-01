@@ -226,6 +226,41 @@ def test_report_export_json_and_markdown(tmp_path):
             ],
             "top_rows": [{"rank": 1, "row_index": 0, "label": 1, "probability": 0.9}],
         },
+        rank_lift_report={
+            "summary": {
+                "verdict": "concentrated_ranking",
+                "prevalence": 0.5,
+                "top_10_lift": 2.0,
+                "top_10_positive_capture": 0.5,
+                "top_20_lift": 2.0,
+                "top_20_positive_capture": 0.5,
+                "normalized_gains_auc": 0.8,
+                "score_gini": 0.3,
+                "recommended_next_step": "Validate top-decile lift.",
+            },
+            "points": [
+                {
+                    "top_fraction": 0.25,
+                    "k": 1,
+                    "precision_at_k": 1.0,
+                    "positive_capture": 0.5,
+                    "lift": 2.0,
+                    "probability_mass_capture": 0.4,
+                }
+            ],
+            "deciles_table": [
+                {
+                    "bucket": 1,
+                    "rank_start": 1,
+                    "rank_end": 1,
+                    "count": 1,
+                    "positive_count": 1,
+                    "response_rate": 1.0,
+                    "lift": 2.0,
+                    "cumulative_positive_capture": 0.5,
+                }
+            ],
+        },
         decision_curve_report={
             "prevalence": 0.5,
             "summary": {
@@ -893,6 +928,7 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["threshold_diagnostics"]["summary"]["best_f1_threshold"] == 0.3
     assert saved_json["threshold_stability"]["summary"]["verdict"] == "threshold_stability_review"
     assert saved_json["capacity_planner"]["summary"]["best_k"] == 2
+    assert saved_json["rank_lift"]["summary"]["verdict"] == "concentrated_ranking"
     assert saved_json["decision_curve_diagnostics"]["summary"]["best_threshold"] == 0.4
     assert saved_json["posthoc_conformal_diagnostics"]["summary"]["recommended_alpha"] == 0.1
     assert saved_json["posthoc_calibration_repair_diagnostics"]["summary"]["recommended_method"] == "platt"
@@ -937,6 +973,9 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "## Reliability Atlas" in saved_markdown
     assert "## Capacity Planner" in saved_markdown
     assert "budget=0.5000" in saved_markdown
+    assert "## Rank Lift / Gains" in saved_markdown
+    assert "Top 10% lift" in saved_markdown
+    assert "Validate top-decile lift" in saved_markdown
     assert "Run Calibration repair" in saved_markdown
     assert "## Shadow Replay Diagnostics" in saved_markdown
     assert "Inspect degraded replay windows" in saved_markdown

@@ -201,11 +201,13 @@ def test_experimental_builtin_presets_are_available():
         "Reliability atlas lab",
         "Permutation null lab",
         "Population drift lab",
+        "Prior shift lab",
         "Adversarial validation lab",
         "Chronological holdout lab",
         "Shadow replay lab",
         "Threshold stability lab",
         "Capacity planner lab",
+        "Rank lift lab",
         "Cost-sensitive screening",
         "Decision utility tradeoff",
         "Selective abstention triage",
@@ -613,6 +615,44 @@ def test_monotonic_policy_lab_preset_has_policy_checks():
     assert any(example["name"] == "Policy boundary review" for example in metadata["prediction_examples"])
     assert float(np.corrcoef(dataset.features[:, 0], dataset.labels)[0, 1]) > 0.45
     assert float(np.corrcoef(dataset.features[:, 1], dataset.labels)[0, 1]) < -0.25
+
+
+def test_prior_shift_lab_preset_has_base_rate_simulation_risk():
+    metadata = preset_metadata("Prior shift lab")
+    dataset = generate_builtin_preset("Prior shift lab", sample_count=160, seed=14)
+
+    assert metadata["input_dim"] == 5
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == [
+        "screening_score",
+        "support_signal",
+        "false_positive_shoulder",
+        "deployment_mix",
+        "background_noise",
+    ]
+    assert any(example["name"] == "False-positive shoulder review" for example in metadata["prediction_examples"])
+    positive_rate = float(np.mean(dataset.labels == 1))
+    assert 0.24 <= positive_rate <= 0.36
+    false_positive_shoulder = dataset.features[dataset.labels == 0, 2]
+    assert float(np.mean(false_positive_shoulder > 0.7)) > 0.10
+    assert float(np.corrcoef(dataset.features[:, 0], dataset.labels)[0, 1]) > 0.45
+
+
+def test_rank_lift_lab_preset_has_concentrated_ranking_signal():
+    metadata = preset_metadata("Rank lift lab")
+    dataset = generate_builtin_preset("Rank lift lab", sample_count=160, seed=13)
+
+    assert metadata["input_dim"] == 5
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == ["rank_score", "support_signal", "decoy_score", "tail_noise", "review_band"]
+    assert any(example["name"] == "Decoy high-score review" for example in metadata["prediction_examples"])
+    positive_rate = float(np.mean(dataset.labels == 1))
+    assert 0.10 <= positive_rate <= 0.20
+    top_k = max(1, int(round(dataset.features.shape[0] * 0.10)))
+    top_by_rank_score = np.argsort(-dataset.features[:, 0])[:top_k]
+    top_positive_rate = float(np.mean(dataset.labels[top_by_rank_score] == 1))
+    assert top_positive_rate > positive_rate * 2.0
+    assert float(np.mean(dataset.features[dataset.labels == 0, 2])) > 0.15
 
 
 def test_experiment_advisor_lab_preset_has_imbalanced_nonlinear_boundary():
