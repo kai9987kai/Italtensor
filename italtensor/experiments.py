@@ -1024,7 +1024,7 @@ def train_single_model_cv(
             class_weight=class_weight,
         )
         
-        if isinstance(model, NumpyBinaryClassifier):
+        if isinstance(model, (NumpyBinaryClassifier, MPSBinaryClassifier)):
             uncal_val_probs = predict_probability(model, x_val_std)
             a, b = fit_platt_scaling(uncal_val_probs, y_val)
             model.calibration_a = a
@@ -1240,7 +1240,7 @@ def train_distilled_model(
     )
     
     # Calibrate distilled student on hard labels
-    if isinstance(student_model, NumpyBinaryClassifier):
+    if isinstance(student_model, (NumpyBinaryClassifier, MPSBinaryClassifier)):
         uncal_val_probs = predict_probability(student_model, x_val_std)
         a, b = fit_platt_scaling(uncal_val_probs, y_val_hard)
         student_model.calibration_a = a

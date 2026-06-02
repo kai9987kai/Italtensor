@@ -176,3 +176,115 @@ def render_evaluation_curves(y_true: np.ndarray, y_prob: np.ndarray) -> str:
     )
 
     return f"{roc_ascii}\n\n{pr_ascii}"
+
+
+def render_loss_history(
+    history: dict[str, list[float]],
+    width: int = 50,
+    height: int = 15,
+) -> str:
+    """Plot training (and optionally validation) loss history on a beautiful ASCII grid mapping."""
+    loss_vals = history.get("loss")
+    if not loss_vals:
+        return "No loss history to display."
+
+    val_loss_vals = history.get("val_loss", [])
+    epochs = len(loss_vals)
+    if epochs == 0:
+        return "Empty loss history."
+
+    # Collect all losses to find min and max limits
+    all_losses = [float(l) for l in loss_vals] + [float(vl) for vl in val_loss_vals]
+    min_loss = min(all_losses)
+    max_loss = max(all_losses)
+    loss_range = max_loss - min_loss
+    if loss_range < 1e-6:
+        loss_range = 1.0
+
+    grid = np.full((height, width), " ", dtype=object)
+
+    # Draw horizontal dashed grid lines at 0.25, 0.5, 0.75 heights
+    for r in range(height):
+        y_val = r / (height - 1)
+        if abs(y_val - 0.25) < 0.04 or abs(y_val - 0.5) < 0.04 or abs(y_val - 0.75) < 0.04:
+            for c in range(width):
+                grid[r, c] = "."
+
+    # Map and plot the training loss coordinates
+    for i, loss in enumerate(loss_vals):
+        x_pct = i / (epochs - 1) if epochs > 1 else 0.0
+        y_pct = (loss - min_loss) / loss_range
+        c = int(round(x_pct * (width - 1)))
+        r = int(round(y_pct * (height - 1)))
+        c = np.clip(c, 0, width - 1)
+        r = np.clip(r, 0, height - 1)
+        grid[r, c] = "*"
+
+    # Map and plot validation loss coordinates
+    for i, val_loss in enumerate(val_loss_vals):
+        x_pct = i / (epochs - 1) if epochs > 1 else 0.0
+        y_pct = (val_loss - min_loss) / loss_range
+        c = int(round(x_pct * (width - 1)))
+        r = int(round(y_pct * (height - 1)))
+        c = np.clip(c, 0, width - 1)
+        r = np.clip(r, 0, height - 1)
+        if grid[r, c] == "*":
+            grid[r, c] = "x"
+        else:
+            grid[r, c] = "+"
+
+    # Build text layout
+    lines = ["Training Convergence History (Loss vs Epochs):"]
+    lines.append("-" * (width + 15))
+
+    # Add border and y-axis ticks
+    for r in range(height - 1, -1, -1):
+        tick_val = min_loss + (r / (height - 1)) * loss_range
+        row_str = "".join(grid[r, :])
+        lines.append(f"{tick_val:>5.2f} | {row_str} |")
+
+    lines.append("-" * (width + 15))
+
+    # x-axis ticks
+    # Show epoch numbers at start, 25%, 50%, 75%, and end
+    e_start = 1
+    e_25 = max(1, int(round(0.25 * epochs)))
+    e_50 = max(1, int(round(0.5 * epochs)))
+    e_75 = max(1, int(round(0.75 * epochs)))
+    e_end = epochs
+
+    pos_0 = 8
+    pos_25 = 8 + int(round(0.25 * (width - 1)))
+    pos_50 = 8 + int(round(0.5 * (width - 1)))
+    pos_75 = 8 + int(round(0.75 * (width - 1)))
+    pos_100 = 8 + (width - 1)
+
+    tick_labels = {
+        pos_0: str(e_start),
+        pos_25: str(e_25),
+        pos_50: str(e_50),
+        pos_75: str(e_75),
+        pos_100: str(e_end)
+    }
+
+    out_ticks = []
+    curr_pos = 0
+    for pos in sorted(tick_labels.keys()):
+        label = tick_labels[pos]
+        target_pos = pos - len(label) // 2
+        if target_pos > curr_pos:
+            out_ticks.append(" " * (target_pos - curr_pos))
+            curr_pos = target_pos
+        out_ticks.append(label)
+        curr_pos += len(label)
+
+    lines.append("".join(out_ticks))
+    
+    legend = "Legend:  * = Training Loss"
+    if len(val_loss_vals) > 0:
+        legend += " | + = Validation Loss | x = Intersection"
+    lines.append(legend)
+    lines.append(f"Epochs: {epochs} (Final Loss: {loss_vals[-1]:.4f}" + (f", Final Val Loss: {val_loss_vals[-1]:.4f}" if len(val_loss_vals) > 0 else "") + ")")
+    lines.append("-" * (width + 15))
+
+    return "\n".join(lines)
