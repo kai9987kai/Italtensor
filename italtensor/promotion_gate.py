@@ -26,6 +26,7 @@ def build_promotion_gate(
     canary_suite_report: dict[str, Any] | None = None,
     policy_guard_report: dict[str, Any] | None = None,
     schema_guard_report: dict[str, Any] | None = None,
+    leakage_sentinel_report: dict[str, Any] | None = None,
     threshold_report: dict[str, Any] | None = None,
     threshold_stability_report: dict[str, Any] | None = None,
     capacity_planner_report: dict[str, Any] | None = None,
@@ -380,6 +381,7 @@ def build_promotion_gate(
     _add_canary_checks(add, canary_suite_report)
     _add_policy_checks(add, policy_guard_report)
     _add_schema_checks(add, schema_guard_report)
+    _add_leakage_checks(add, leakage_sentinel_report)
 
     checks = _rank_checks(checks)
     score = max(0.0, 100.0 - sum(float(item["penalty"]) for item in checks))
@@ -818,6 +820,41 @@ def _add_repair_and_robustness_checks(
                 action="Promote only if abstention/review capacity is operationally acceptable.",
                 penalty=6.0,
             )
+
+
+def _add_leakage_checks(add: Any, leakage_sentinel_report: dict[str, Any] | None) -> None:
+    if not leakage_sentinel_report:
+        return
+    summary = leakage_sentinel_report.get("summary", {})
+    risk = str(summary.get("risk_level", "low"))
+    top = summary.get("top_feature")
+    top_text = "-" if top is None else f"x{int(top) + 1}"
+    score = float(summary.get("max_risk_score", 0.0) or 0.0)
+    high_count = int(summary.get("high_risk_feature_count", 0) or 0)
+    medium_count = int(summary.get("medium_risk_feature_count", 0) or 0)
+    if risk == "high":
+        add(
+            severity="blocker",
+            category="leakage",
+            title="Possible target leakage is unresolved",
+            status="fail",
+            evidence=f"top={top_text}, score={score:.3f}, high_risk_features={high_count}.",
+            action=str(
+                summary.get("recommendation")
+                or "Quarantine possible leakage features before saving this as a final model."
+            ),
+            penalty=24.0,
+        )
+    elif risk == "medium":
+        add(
+            severity="caution",
+            category="leakage",
+            title="Possible proxy-shortcut feature needs review",
+            status="review",
+            evidence=f"top={top_text}, score={score:.3f}, medium_risk_features={medium_count}.",
+            action=str(summary.get("recommendation") or "Review proxy-shortcut risk before promotion."),
+            penalty=8.0,
+        )
 
 
 def _rank_checks(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:

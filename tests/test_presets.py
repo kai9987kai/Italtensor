@@ -6,9 +6,11 @@ import pytest
 from italtensor.app import AppState, _replace_dataset
 from italtensor.data import DataValidationError, validate_dataset
 from italtensor.experiments import split_train_validation
+from italtensor.leakage_sentinel import run_leakage_sentinel
 from italtensor.modeling import ModelConfig
 from italtensor.preprocessing import FeatureStandardizer
 from italtensor.presets import BUILT_IN_PRESETS, generate_builtin_preset, load_preset_file, preset_metadata, save_preset_file
+from italtensor.validation_plan import run_validation_plan
 
 
 def test_preset_round_trip_preserves_dataset_and_metadata(tmp_path):
@@ -222,11 +224,14 @@ def test_experimental_builtin_presets_are_available():
         "Separability lens lab",
         "Neighborhood hardness lab",
         "Dataset triage lab",
+        "Validation plan lab",
         "Schema guard lab",
         "Canary regression lab",
         "Monotonic policy lab",
         "Experiment advisor lab",
         "Proxy leakage lab",
+        "Leakage sentinel lab",
+        "MPS locality lab",
         "Promotion gate lab",
     }.issubset(names)
 
@@ -248,6 +253,37 @@ def test_sparse_interaction_preset_applies_feature_selection_defaults():
     assert metadata["recommended_feature_map"] == "quadratic"
     assert metadata["training_defaults"]["l1_penalty"] == 0.001
     assert metadata["training_defaults"]["feature_selection_k"] == 6
+
+
+def test_mps_locality_lab_preset_uses_mps_defaults():
+    metadata = preset_metadata("MPS locality lab")
+    dataset = generate_builtin_preset("MPS locality lab", sample_count=80, seed=9)
+
+    assert metadata["input_dim"] == 6
+    assert metadata["training_defaults"]["backend"] == "mps"
+    assert metadata["training_defaults"]["mps_bond_dim"] == 4
+    assert metadata["feature_names"][:4] == ["left_gate", "left_partner", "right_gate", "right_partner"]
+    assert any(example["name"] == "Order-sensitivity review" for example in metadata["prediction_examples"])
+    assert dataset.sample_count == 80
+    assert set(dataset.labels.tolist()) == {0, 1}
+
+
+def test_validation_plan_lab_preset_preserves_ordered_split_risk():
+    metadata = preset_metadata("Validation plan lab")
+    dataset = generate_builtin_preset("Validation plan lab", sample_count=120, seed=11)
+    report = run_validation_plan(dataset.features, dataset.labels)
+
+    assert metadata["input_dim"] == 5
+    assert metadata["training_defaults"]["use_cv"] is True
+    assert metadata["feature_names"] == [
+        "stable_margin",
+        "support_signal",
+        "regime_shift",
+        "prevalence_marker",
+        "background_noise",
+    ]
+    assert report["summary"]["recommended_strategy"] == "chronological_holdout"
+    assert report["summary"]["row_order_risk"] is True
 
 
 def test_deployment_drift_preset_has_shifted_prediction_example():
@@ -277,6 +313,25 @@ def test_spurious_shortcut_preset_has_conflict_example():
     assert metadata["input_dim"] == 3
     assert metadata["feature_names"] == ["stable_signal", "context_noise", "shortcut_signal"]
     assert any(example["name"] == "Shortcut conflict" for example in metadata["prediction_examples"])
+
+
+def test_leakage_sentinel_lab_preset_has_direct_label_code():
+    metadata = preset_metadata("Leakage sentinel lab")
+    dataset = generate_builtin_preset("Leakage sentinel lab", sample_count=120, seed=12)
+    report = run_leakage_sentinel(dataset.features, dataset.labels)
+
+    assert metadata["input_dim"] == 5
+    assert metadata["feature_names"] == [
+        "stable_signal",
+        "proxy_bucket",
+        "label_code",
+        "review_timestamp",
+        "background_noise",
+    ]
+    assert any(example["name"] == "Proxy conflict review" for example in metadata["prediction_examples"])
+    assert report["summary"]["risk_level"] == "high"
+    assert report["summary"]["top_feature"] == 2
+    assert "direct_label_copy_candidate" in report["features"][0]["risk_flags"]
 
 
 def test_subgroup_blind_spot_preset_recommends_interactions():

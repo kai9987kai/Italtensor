@@ -33,12 +33,14 @@ def test_dataset_triage_runs_components_and_ranks_actions():
     assert report["class_counts"] == {"0": 6, "1": 6}
     assert set(report) >= {
         "dataset_audit",
+        "leakage_sentinel",
         "feature_separability",
         "prototype_audit",
         "neighborhood_hardness",
         "ood_sentinel",
     }
     assert report["dataset_audit"]["label_conflict_count"] >= 1
+    assert report["leakage_sentinel"]["summary"]["risk_level"] in {"medium", "high"}
     assert report["feature_separability"]["summary"]["redundant_pair_count"] >= 1
     assert report["neighborhood_hardness"]["summary"]["label_issue_candidate_count"] >= 1
     assert report["ood_sentinel"]["model_used"] is False
@@ -54,6 +56,7 @@ def test_dataset_triage_is_deterministic():
     second = run_dataset_triage(np.asarray(features, dtype=np.float32), np.asarray(labels, dtype=np.int32))
 
     assert first["summary"] == second["summary"]
+    assert first["leakage_sentinel"]["summary"] == second["leakage_sentinel"]["summary"]
     assert first["feature_separability"]["summary"] == second["feature_separability"]["summary"]
     assert first["neighborhood_hardness"]["summary"] == second["neighborhood_hardness"]["summary"]
 

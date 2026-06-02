@@ -7,6 +7,7 @@ import numpy as np
 from .audit import audit_dataset
 from .data import validate_dataset
 from .feature_separability import run_feature_separability_diagnostics
+from .leakage_sentinel import run_leakage_sentinel
 from .neighborhood_hardness import run_neighborhood_hardness_diagnostics
 from .ood_sentinel import run_ood_sentinel
 from .prototype_audit import run_prototype_audit
@@ -31,12 +32,14 @@ def run_dataset_triage(
         raise ValueError("Dataset triage needs at least two rows per class.")
 
     dataset_audit = audit_dataset(dataset.features, dataset.labels)
+    leakage_sentinel = run_leakage_sentinel(dataset.features, dataset.labels)
     feature_separability = run_feature_separability_diagnostics(dataset.features, dataset.labels)
     prototype_audit = run_prototype_audit(dataset.features, dataset.labels)
     neighborhood_hardness = run_neighborhood_hardness_diagnostics(dataset.features, dataset.labels)
     ood_sentinel = run_ood_sentinel(None, dataset.features, dataset.labels)
     summary = _triage_summary(
         dataset_audit=dataset_audit,
+        leakage_sentinel=leakage_sentinel,
         feature_separability=feature_separability,
         prototype_audit=prototype_audit,
         neighborhood_hardness=neighborhood_hardness,
@@ -48,6 +51,7 @@ def run_dataset_triage(
         "class_counts": class_counts,
         "summary": summary,
         "dataset_audit": dataset_audit,
+        "leakage_sentinel": leakage_sentinel,
         "feature_separability": feature_separability,
         "prototype_audit": prototype_audit,
         "neighborhood_hardness": neighborhood_hardness,
@@ -77,6 +81,7 @@ def format_dataset_triage_summary(report: dict[str, Any]) -> str:
 def _triage_summary(
     *,
     dataset_audit: dict[str, Any],
+    leakage_sentinel: dict[str, Any],
     feature_separability: dict[str, Any],
     prototype_audit: dict[str, Any],
     neighborhood_hardness: dict[str, Any],
@@ -117,6 +122,22 @@ def _triage_summary(
         add(min(10.0, 3.0 * constant_count), "Remove or explain constant feature columns.")
     if high_correlation_count:
         add(min(8.0, 2.0 * high_correlation_count), "Inspect highly correlated features for redundancy.")
+
+    leakage_summary = leakage_sentinel.get("summary", {})
+    leakage_risk = str(leakage_summary.get("risk_level", "low"))
+    high_leakage = int(leakage_summary.get("high_risk_feature_count", 0))
+    medium_leakage = int(leakage_summary.get("medium_risk_feature_count", 0))
+    if leakage_risk == "high":
+        add(
+            min(30.0, 20.0 + 5.0 * high_leakage),
+            str(leakage_summary.get("recommendation") or "Quarantine possible target-leakage features before training."),
+            blocking=True,
+        )
+    elif leakage_risk == "medium" or medium_leakage:
+        add(
+            min(12.0, 6.0 + 2.0 * medium_leakage),
+            str(leakage_summary.get("recommendation") or "Review possible proxy-shortcut features before model selection."),
+        )
 
     separability_summary = feature_separability.get("summary", {})
     near_perfect = int(separability_summary.get("near_perfect_feature_count", 0))

@@ -176,6 +176,37 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="mps_locality_lab",
+        name="MPS locality lab",
+        description="Adjacent interacting feature sites for testing MPS site-order sensitivity.",
+        default_samples=160,
+        min_samples=24,
+        input_dim=6,
+        recommended_feature_map="linear",
+        feature_names=(
+            "left_gate",
+            "left_partner",
+            "right_gate",
+            "right_partner",
+            "bridge_noise",
+            "decoy_noise",
+        ),
+        training_defaults={
+            "epochs": 50,
+            "batch_size": 16,
+            "trials": 8,
+            "feature_map": "linear",
+            "backend": "mps",
+            "mps_bond_dim": 4,
+            "mps_physical_dim": 4,
+        },
+        prediction_examples=(
+            {"name": "Local negative", "features": [-1.0, 1.0, -0.8, 0.8, 0.0, 0.0], "expected_label": 0},
+            {"name": "Local positive", "features": [1.0, 1.0, 0.8, 0.8, 0.0, 0.0], "expected_label": 1},
+            {"name": "Order-sensitivity review", "features": [1.0, -1.0, 0.8, 0.8, 0.0, 0.0], "expected_label": None},
+        ),
+    ),
+    PresetInfo(
         key="deployment_drift_probe",
         name="Deployment drift probe",
         description="Compact training distribution with examples that make shifted batch rows easy to flag.",
@@ -676,6 +707,22 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="validation_plan_lab",
+        name="Validation plan lab",
+        description="Ordered reference/current rows that make split-choice and chronological holdout risk visible.",
+        default_samples=160,
+        min_samples=24,
+        input_dim=5,
+        recommended_feature_map="linear",
+        feature_names=("stable_margin", "support_signal", "regime_shift", "prevalence_marker", "background_noise"),
+        training_defaults={"epochs": 70, "batch_size": 16, "trials": 12, "feature_map": "linear", "use_cv": True},
+        prediction_examples=(
+            {"name": "Reference-like negative", "features": [-1.0, -0.4, -0.8, -1.0, 0.0], "expected_label": 0},
+            {"name": "Current review row", "features": [0.2, 0.0, 1.2, 1.0, 0.0], "expected_label": None},
+            {"name": "Current-like positive", "features": [1.0, 0.4, 1.2, 1.0, 0.0], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
         key="schema_guard_lab",
         name="Schema guard lab",
         description="A feature-contract dataset with wide scales, low-cardinality codes, dead sensors, sparse spikes, and tail probes.",
@@ -792,6 +839,22 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="leakage_sentinel_lab",
+        name="Leakage sentinel lab",
+        description="A pre-training leakage dataset with a direct label-code candidate and a conflicted proxy bucket.",
+        default_samples=180,
+        min_samples=20,
+        input_dim=5,
+        recommended_feature_map="linear",
+        feature_names=("stable_signal", "proxy_bucket", "label_code", "review_timestamp", "background_noise"),
+        training_defaults={"epochs": 60, "batch_size": 16, "trials": 10, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Stable negative with label code", "features": [-0.9, 10.0, 0.0, -0.6, 0.0], "expected_label": 0},
+            {"name": "Stable positive with label code", "features": [0.9, 20.0, 1.0, 0.6, 0.0], "expected_label": 1},
+            {"name": "Proxy conflict review", "features": [0.8, 10.0, 1.0, 0.2, 0.0], "expected_label": None},
+        ),
+    ),
+    PresetInfo(
         key="promotion_gate_lab",
         name="Promotion gate lab",
         description="A promotion-readiness dataset with imbalance, shortcut conflicts, tails, and boundary rows.",
@@ -854,6 +917,8 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _noisy_labels(total, rng)
     elif preset.key == "sparse_interaction_signal":
         features, labels = _sparse_interaction_signal(total, rng)
+    elif preset.key == "mps_locality_lab":
+        features, labels = _mps_locality_lab(total, rng)
     elif preset.key == "deployment_drift_probe":
         features, labels = _deployment_drift_probe(total, rng)
     elif preset.key == "active_learning_margin":
@@ -918,6 +983,8 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _neighborhood_hardness_lab(total, rng)
     elif preset.key == "dataset_triage_lab":
         features, labels = _dataset_triage_lab(total, rng)
+    elif preset.key == "validation_plan_lab":
+        features, labels = _validation_plan_lab(total, rng)
     elif preset.key == "schema_guard_lab":
         features, labels = _schema_guard_lab(total, rng)
     elif preset.key == "canary_regression_lab":
@@ -928,6 +995,8 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _experiment_advisor_lab(total, rng)
     elif preset.key == "proxy_leakage_lab":
         features, labels = _proxy_leakage_lab(total, rng)
+    elif preset.key == "leakage_sentinel_lab":
+        features, labels = _leakage_sentinel_lab(total, rng)
     elif preset.key == "promotion_gate_lab":
         features, labels = _promotion_gate_lab(total, rng)
     else:
@@ -1231,6 +1300,37 @@ def _sparse_interaction_signal(total: int, rng: np.random.Generator) -> tuple[np
     labels = (score > np.median(score)).astype(np.int32)
     features[:, 2] = features[:, 0] * 0.75 + rng.normal(0.0, 0.2, size=total)
     return features.astype(np.float32), labels
+
+
+def _mps_locality_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    left_gate = rng.normal(0.0, 1.0, size=total)
+    left_partner = 0.45 * left_gate + rng.normal(0.0, 0.85, size=total)
+    right_gate = rng.normal(0.0, 1.0, size=total)
+    right_partner = 0.45 * right_gate + rng.normal(0.0, 0.85, size=total)
+    bridge_noise = rng.normal(0.0, 1.0, size=total)
+    decoy_noise = rng.normal(0.0, 1.0, size=total)
+    local_left = left_gate * left_partner
+    local_right = right_gate * right_partner
+    latent = (
+        1.2 * local_left
+        + 1.0 * local_right
+        + 0.25 * left_gate
+        - 0.20 * right_partner
+        + 0.15 * bridge_noise
+        + rng.normal(0.0, 0.45, size=total)
+    )
+    labels = (latent > np.median(latent)).astype(np.int32)
+    features = np.column_stack(
+        [
+            left_gate,
+            left_partner,
+            right_gate,
+            right_partner,
+            bridge_noise,
+            decoy_noise,
+        ]
+    ).astype(np.float32)
+    return _shuffle(features, labels, rng)
 
 
 def _deployment_drift_probe(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
@@ -2100,6 +2200,34 @@ def _dataset_triage_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarra
     return _shuffle(features, labels, rng)
 
 
+def _validation_plan_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    reference_count = total // 2
+    current_count = total - reference_count
+    reference_labels = rng.binomial(1, 0.25, size=reference_count).astype(np.int32)
+    current_labels = rng.binomial(1, 0.75, size=current_count).astype(np.int32)
+    labels = np.concatenate([reference_labels, current_labels]).astype(np.int32)
+    signed = np.where(labels == 1, 1.0, -1.0)
+    stable_margin = signed * 0.85 + rng.normal(0.0, 0.35, size=total)
+    support_signal = signed * 0.35 + rng.normal(0.0, 0.55, size=total)
+    regime_shift = np.concatenate(
+        [
+            rng.normal(-0.75, 0.25, size=reference_count),
+            rng.normal(1.20, 0.25, size=current_count),
+        ]
+    )
+    prevalence_marker = np.concatenate(
+        [
+            rng.normal(-0.80, 0.25, size=reference_count),
+            rng.normal(0.90, 0.25, size=current_count),
+        ]
+    )
+    background_noise = rng.normal(0.0, 1.0, size=total)
+    features = np.column_stack(
+        [stable_margin, support_signal, regime_shift, prevalence_marker, background_noise]
+    ).astype(np.float32)
+    return features, labels
+
+
 def _schema_guard_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
     continuous_signal = rng.normal(0.0, 1.0, size=total)
     wide_scale_amount = rng.lognormal(mean=5.0, sigma=0.55, size=total)
@@ -2246,6 +2374,40 @@ def _proxy_leakage_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray
     proxy_code[conflict_indices] *= -1.0
     background_noise = rng.normal(0.0, 1.0, size=total)
     features = np.column_stack([real_signal, weak_signal, proxy_code, background_noise]).astype(np.float32)
+    return _shuffle(features, labels, rng)
+
+
+def _leakage_sentinel_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    stable_signal = rng.normal(0.0, 1.0, size=total)
+    support_signal = rng.normal(0.0, 0.7, size=total)
+    latent = stable_signal + 0.35 * support_signal + rng.normal(0.0, 0.45, size=total)
+    labels = (latent > np.median(latent)).astype(np.int32)
+    label_code = labels.astype(np.float64)
+    proxy_bucket = np.where(labels == 1, 20.0, 10.0)
+    proxy_bucket += rng.choice([0.0, 1.0], size=total, p=[0.80, 0.20])
+    conflict_count = max(4, total // 10)
+    conflict_indices = rng.choice(total, size=conflict_count, replace=False)
+    proxy_bucket[conflict_indices] = np.where(labels[conflict_indices] == 1, 10.0, 20.0)
+    review_timestamp = np.linspace(-1.0, 1.0, total) + 0.15 * label_code + rng.normal(0.0, 0.05, size=total)
+    background_noise = rng.normal(0.0, 1.0, size=total)
+    if total >= 20:
+        features_override = np.asarray(
+            [
+                [-0.9, 10.0, 0.0, -0.6, 0.0],
+                [0.9, 20.0, 1.0, 0.6, 0.0],
+                [0.8, 10.0, 1.0, 0.2, 0.0],
+                [-0.8, 20.0, 0.0, -0.2, 0.0],
+            ],
+            dtype=np.float64,
+        )
+        labels_override = np.asarray([0, 1, 1, 0], dtype=np.int32)
+        stable_signal[:4] = features_override[:, 0]
+        proxy_bucket[:4] = features_override[:, 1]
+        label_code[:4] = features_override[:, 2]
+        review_timestamp[:4] = features_override[:, 3]
+        background_noise[:4] = features_override[:, 4]
+        labels[:4] = labels_override
+    features = np.column_stack([stable_signal, proxy_bucket, label_code, review_timestamp, background_noise]).astype(np.float32)
     return _shuffle(features, labels, rng)
 
 

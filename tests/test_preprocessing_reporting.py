@@ -803,6 +803,32 @@ def test_report_export_json_and_markdown(tmp_path):
                 }
             ],
         },
+        leakage_sentinel_report={
+            "sample_count": 4,
+            "input_dim": 2,
+            "summary": {
+                "risk_level": "high",
+                "top_feature": 1,
+                "max_risk_score": 0.97,
+                "high_risk_feature_count": 1,
+                "medium_risk_feature_count": 0,
+                "direct_label_copy_candidate_count": 1,
+                "low_cardinality_label_mapping_count": 1,
+                "recommendation": "Quarantine x2.",
+            },
+            "features": [
+                {
+                    "feature_index": 1,
+                    "risk_level": "high",
+                    "risk_score": 0.97,
+                    "auc": 1.0,
+                    "best_balanced_accuracy": 1.0,
+                    "label_mapping_balanced_accuracy": 1.0,
+                    "unique_count": 2,
+                    "risk_flags": ["direct_label_copy_candidate"],
+                }
+            ],
+        },
         prototype_audit_report={
             "sample_count": 4,
             "input_dim": 2,
@@ -907,6 +933,32 @@ def test_report_export_json_and_markdown(tmp_path):
                 ],
             },
         },
+        validation_plan_report={
+            "sample_count": 4,
+            "input_dim": 2,
+            "class_counts": {"0": 2, "1": 2},
+            "summary": {
+                "recommended_strategy": "stratified_kfold",
+                "risk_level": "medium",
+                "readiness_score": 76.0,
+                "minority_class_count": 2,
+                "imbalance_ratio": 1.0,
+                "kfold_splits": 2,
+                "validation_fraction": None,
+                "row_order_risk": False,
+                "warning": None,
+            },
+            "split_blueprint": {"shuffle": True, "stratify": True},
+            "row_order": {"prevalence_delta": 0.0, "max_standardized_mean_shift": 0.1},
+            "recommendations": [
+                {
+                    "rank": 1,
+                    "priority": "high",
+                    "category": "validation",
+                    "action": "Use stratified cross-validation.",
+                }
+            ],
+        },
         experiment_advisor_report={
             "summary": {
                 "recommendation_count": 1,
@@ -987,6 +1039,31 @@ def test_report_export_json_and_markdown(tmp_path):
             "recommended_f1": 0.8,
             "results": [{"bond_dim": 8, "f1": 0.8, "accuracy": 0.75, "brier_score": 0.2, "ece": 0.1}],
         },
+        mps_order_sweep_report={
+            "input_dim": 2,
+            "physical_dim": 4,
+            "bond_dim": 8,
+            "validation_samples": 2,
+            "orders_tested": ["original", "reversed"],
+            "recommended_order_name": "reversed",
+            "recommended_order": [1, 0],
+            "recommended_feature_order_1_based": [2, 1],
+            "recommended_f1": 0.85,
+            "original_f1": 0.75,
+            "best_delta_f1_vs_original": 0.1,
+            "material_gain": True,
+            "adoption_note": "This is site-order sensitivity evidence.",
+            "results": [
+                {
+                    "order_name": "reversed",
+                    "feature_order_1_based": [2, 1],
+                    "f1": 0.85,
+                    "accuracy": 0.8,
+                    "brier_score": 0.18,
+                    "ece": 0.08,
+                }
+            ],
+        },
     )
 
     json_path = export_experiment_report(tmp_path / "report.json", report)
@@ -1034,19 +1111,24 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["canary_suite"]["summary"]["verdict"] == "canary_review"
     assert saved_json["policy_guard"]["summary"]["verdict"] == "policy_review"
     assert saved_json["schema_guard"]["summary"]["risk_level"] == "medium"
+    assert saved_json["leakage_sentinel"]["summary"]["risk_level"] == "high"
     assert saved_json["prototype_audit"]["summary"]["top_boundary_row"] == 2
     assert saved_json["feature_separability"]["summary"]["top_feature"] == 1
     assert saved_json["neighborhood_hardness"]["summary"]["top_hard_row"] == 2
     assert saved_json["dataset_triage"]["summary"]["readiness_score"] == 71.0
+    assert saved_json["validation_plan"]["summary"]["recommended_strategy"] == "stratified_kfold"
     assert saved_json["experiment_advisor"]["summary"]["recommended_next_step"] == "Promote threshold tuning"
     assert saved_json["trial_inspector"]["summary"]["best_trial_index"] == 1
     assert saved_json["promotion_gate"]["summary"]["verdict"] == "needs_review"
     assert saved_json["mps_bond_sweep"]["recommended_bond_dim"] == 8
+    assert saved_json["mps_site_order_sweep"]["recommended_order_name"] == "reversed"
     assert saved_json["trial_history"][0]["config"]["feature_map"] == "rff"
     assert "Feature 0" in saved_markdown
     assert "## Dataset Audit" in saved_markdown
     assert "## Schema Guard" in saved_markdown
     assert "dead_sensor" in saved_markdown
+    assert "## Leakage Sentinel" in saved_markdown
+    assert "Quarantine x2" in saved_markdown
     assert "Trial 1" in saved_markdown
     assert "## Uncertainty" in saved_markdown
     assert "conformal_source" in saved_markdown
@@ -1109,9 +1191,13 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "## Feature Separability Lens" in saved_markdown
     assert "Near-perfect features" in saved_markdown
     assert "## Neighborhood Hardness" in saved_markdown
+    assert "## MPS Site-Order Sweep" in saved_markdown
+    assert "site-order sensitivity" in saved_markdown
     assert "Leave-one-out accuracy" in saved_markdown
     assert "## Dataset Triage" in saved_markdown
     assert "Readiness score" in saved_markdown
+    assert "## Validation Plan" in saved_markdown
+    assert "Use stratified cross-validation" in saved_markdown
     assert "## Experiment Advisor" in saved_markdown
     assert "Promote threshold tuning" in saved_markdown
     assert "## Trial Inspector" in saved_markdown

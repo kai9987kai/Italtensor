@@ -16,6 +16,7 @@ def build_experiment_advisor(
     metrics: dict[str, float | int] | None = None,
     trial_history: list[dict[str, Any]] | None = None,
     dataset_triage_report: dict[str, Any] | None = None,
+    leakage_sentinel_report: dict[str, Any] | None = None,
     feature_separability_report: dict[str, Any] | None = None,
     neighborhood_hardness_report: dict[str, Any] | None = None,
     prototype_audit_report: dict[str, Any] | None = None,
@@ -119,6 +120,7 @@ def build_experiment_advisor(
     _add_report_recommendations(
         add,
         metrics=metrics,
+        leakage_sentinel_report=leakage_sentinel_report or (dataset_triage_report or {}).get("leakage_sentinel"),
         threshold_report=threshold_report,
         calibration_repair_report=calibration_repair_report,
         calibration_slice_report=calibration_slice_report,
@@ -265,6 +267,7 @@ def _add_report_recommendations(
     add: Any,
     *,
     metrics: dict[str, float | int],
+    leakage_sentinel_report: dict[str, Any] | None,
     threshold_report: dict[str, Any] | None,
     calibration_repair_report: dict[str, Any] | None,
     calibration_slice_report: dict[str, Any] | None,
@@ -279,6 +282,36 @@ def _add_report_recommendations(
     prototype_audit_report: dict[str, Any] | None,
     ood_sentinel_report: dict[str, Any] | None,
 ) -> None:
+    if leakage_sentinel_report:
+        summary = leakage_sentinel_report.get("summary", {})
+        risk = str(summary.get("risk_level", "low"))
+        top = summary.get("top_feature")
+        top_text = "-" if top is None else f"x{int(top) + 1}"
+        score = float(summary.get("max_risk_score", 0.0) or 0.0)
+        if risk == "high":
+            add(
+                score=97.0,
+                priority="high",
+                category="leakage",
+                title="Quarantine possible target leakage before more training",
+                reason=f"Leakage sentinel flags {top_text} with risk score {score:.3f}.",
+                action=str(
+                    summary.get("recommendation")
+                    or "Remove or quarantine the flagged feature, then rerun triage and validation."
+                ),
+                source="leakage_sentinel",
+                expected_signal="After removal, validation F1 should remain plausible and external/holdout evidence should not collapse.",
+            )
+        elif risk == "medium":
+            add(
+                score=69.0,
+                priority="medium",
+                category="leakage",
+                title="Review possible proxy shortcut",
+                reason=f"Leakage sentinel marks {top_text} for proxy review.",
+                action=str(summary.get("recommendation") or "Confirm the feature is available at prediction time."),
+                source="leakage_sentinel",
+            )
     if metrics and not external_holdout_report:
         add(
             score=54.0,

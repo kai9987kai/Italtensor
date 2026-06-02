@@ -158,10 +158,12 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
         feature_separability_report={"summary": {"top_feature": 1}},
         neighborhood_hardness_report={"summary": {"top_hard_row": 6}},
         dataset_triage_report={"summary": {"readiness_score": 68.0, "risk_level": "medium"}},
+        validation_plan_report={"summary": {"recommended_strategy": "stratified_holdout", "readiness_score": 92.0}},
         experiment_advisor_report={"summary": {"recommended_next_step": "Run auto experiments"}},
         trial_inspector_report={"summary": {"best_trial_index": 1, "best_f1": 0.8}},
         promotion_gate_report={"summary": {"verdict": "needs_review", "promotion_score": 74.0}},
         mps_sweep_report={"recommended_bond_dim": 8},
+        mps_order_sweep_report={"recommended_order_name": "label_correlation", "recommended_feature_order_1_based": [2, 1]},
     )
     loaded, metadata = load_model_bundle(model_path)
     probabilities = predict_probability(loaded, [[1.0, 0.0]])
@@ -211,10 +213,12 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
     assert metadata["feature_separability"]["summary"]["top_feature"] == 1
     assert metadata["neighborhood_hardness"]["summary"]["top_hard_row"] == 6
     assert metadata["dataset_triage"]["summary"]["readiness_score"] == 68.0
+    assert metadata["validation_plan"]["summary"]["recommended_strategy"] == "stratified_holdout"
     assert metadata["experiment_advisor"]["summary"]["recommended_next_step"] == "Run auto experiments"
     assert metadata["trial_inspector"]["summary"]["best_trial_index"] == 1
     assert metadata["promotion_gate"]["summary"]["verdict"] == "needs_review"
     assert metadata["mps_bond_sweep"]["recommended_bond_dim"] == 8
+    assert metadata["mps_site_order_sweep"]["recommended_order_name"] == "label_correlation"
     assert probabilities.shape == (1,)
 
 

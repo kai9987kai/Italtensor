@@ -30,6 +30,7 @@ from italtensor.app import (
     _save_preset,
     _start_external_holdout,
     _start_experiment_advisor,
+    _start_leakage_sentinel,
     _start_promotion_gate,
     _run_shap_analysis,
     _run_decision_boundary,
@@ -121,14 +122,17 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         latest_canary_suite_report={"summary": {"verdict": "canary_pass"}},
         latest_policy_guard_report={"summary": {"verdict": "policy_pass"}},
         latest_schema_guard_report={"summary": {"risk_level": "medium"}},
+        latest_leakage_sentinel_report={"summary": {"risk_level": "high"}},
         latest_prototype_audit_report={"summary": {"top_boundary_row": 5}},
         latest_feature_separability_report={"summary": {"top_feature": 2}},
         latest_neighborhood_hardness_report={"summary": {"top_hard_row": 6}},
         latest_dataset_triage_report={"summary": {"readiness_score": 61.0}},
+        latest_validation_plan_report={"summary": {"recommended_strategy": "stratified_kfold"}},
         latest_experiment_advisor_report={"summary": {"recommended_next_step": "Run triage"}},
         latest_trial_inspector_report={"summary": {"best_trial_index": 1}},
         latest_promotion_gate_report={"summary": {"verdict": "needs_review"}},
         latest_mps_sweep_report={"recommended_bond_dim": 4},
+        latest_mps_order_sweep_report={"recommended_order_name": "label_correlation"},
     )
 
     _invalidate_model_artifacts(state)
@@ -175,14 +179,17 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
     assert state.latest_canary_suite_report is None
     assert state.latest_policy_guard_report is None
     assert state.latest_schema_guard_report is None
+    assert state.latest_leakage_sentinel_report is None
     assert state.latest_prototype_audit_report is None
     assert state.latest_feature_separability_report is None
     assert state.latest_neighborhood_hardness_report is None
     assert state.latest_dataset_triage_report is None
+    assert state.latest_validation_plan_report is None
     assert state.latest_experiment_advisor_report is None
     assert state.latest_trial_inspector_report is None
     assert state.latest_promotion_gate_report is None
     assert state.latest_mps_sweep_report is None
+    assert state.latest_mps_order_sweep_report is None
 
 
 def test_replace_dataset_invalidates_old_model_state():
@@ -254,6 +261,7 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
         latest_prior_shift_report={"summary": {"verdict": "prevalence_shift_risk"}},
         latest_canary_suite_report={"summary": {"verdict": "canary_pass"}},
         latest_policy_guard_report={"summary": {"verdict": "policy_review"}},
+        latest_leakage_sentinel_report={"summary": {"risk_level": "high"}},
         latest_trial_inspector_report={"summary": {"best_trial_index": 2}},
         latest_promotion_gate_report={"summary": {"verdict": "needs_review"}},
     )
@@ -281,6 +289,7 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
     assert payload["prior_shift"]["summary"]["verdict"] == "prevalence_shift_risk"
     assert payload["canary_suite"]["summary"]["verdict"] == "canary_pass"
     assert payload["policy_guard"]["summary"]["verdict"] == "policy_review"
+    assert payload["leakage_sentinel"]["summary"]["risk_level"] == "high"
     assert payload["experiment_advisor"]["summary"]["recommended_next_step"] == "Run auto experiments"
     assert payload["trial_inspector"]["summary"]["best_trial_index"] == 2
     assert payload["promotion_gate"]["summary"]["verdict"] == "needs_review"
@@ -314,6 +323,7 @@ def test_training_preserves_dataset_only_diagnostics():
         latest_prior_shift_report={"summary": {"verdict": "prior_shift_review"}},
         latest_canary_suite_report={"summary": {"verdict": "canary_pass"}},
         latest_policy_guard_report={"summary": {"verdict": "policy_pass"}},
+        latest_leakage_sentinel_report={"summary": {"risk_level": "high"}},
         latest_experiment_advisor_report={"summary": {"recommended_next_step": "Old advice"}},
         latest_trial_inspector_report={"summary": {"best_trial_index": 1}},
         latest_promotion_gate_report={"summary": {"verdict": "old"}},
@@ -348,6 +358,7 @@ def test_training_preserves_dataset_only_diagnostics():
     assert state.latest_prior_shift_report is None
     assert state.latest_canary_suite_report is None
     assert state.latest_policy_guard_report is None
+    assert state.latest_leakage_sentinel_report == {"summary": {"risk_level": "high"}}
     assert state.latest_experiment_advisor_report is None
     assert state.latest_trial_inspector_report is None
     assert state.latest_promotion_gate_report is None
@@ -882,6 +893,80 @@ def test_handle_worker_done_stores_bootstrap_stability_without_mutating_model():
     assert "Bootstrap stability" in window["-LOG-"].value
 
 
+def test_handle_worker_done_stores_mps_order_sweep_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, busy=True)
+    model = state.model
+    report = {
+        "recommended_order_name": "label_correlation",
+        "recommended_order": [2, 0, 1],
+        "recommended_feature_order_1_based": [3, 1, 2],
+        "recommended_f1": 0.92,
+        "original_f1": 0.72,
+        "best_delta_f1_vs_original": 0.2,
+        "material_gain": True,
+        "adoption_note": "This is site-order sensitivity evidence.",
+        "results": [
+            {
+                "order_name": "label_correlation",
+                "feature_order_1_based": [3, 1, 2],
+                "f1": 0.92,
+                "accuracy": 0.9,
+                "brier_score": 0.12,
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("mps_order_sweep", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_mps_order_sweep_report == report
+    assert state.busy is False
+    assert "MPS order sweep" in window["-LOG-"].value
+    assert "site-order sensitivity" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_validation_plan_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(
+        model=object(),
+        latest_metrics={"f1": 0.9},
+        latest_experiment_advisor_report={"summary": {"recommended_next_step": "old"}},
+        latest_promotion_gate_report={"summary": {"verdict": "old"}},
+        busy=True,
+    )
+    model = state.model
+    report = {
+        "summary": {
+            "recommended_strategy": "stratified_kfold",
+            "risk_level": "medium",
+            "readiness_score": 76.0,
+            "recommended_next_step": "Use 5 folds.",
+        },
+        "recommendations": [
+            {
+                "rank": 1,
+                "priority": "high",
+                "category": "validation",
+                "title": "Use stratified cross-validation",
+                "action": "Use 5 folds and report mean/spread.",
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("validation_plan", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_validation_plan_report == report
+    assert state.latest_experiment_advisor_report is None
+    assert state.latest_promotion_gate_report is None
+    assert state.busy is False
+    assert "Validation plan" in window["-LOG-"].value
+    assert "Use stratified cross-validation" in window["-LOG-"].value
+
+
 def test_handle_worker_done_stores_schema_guard_without_mutating_model():
     window = FakeWindow()
     state = AppState(model=object(), latest_metrics={"f1": 0.9}, latest_promotion_gate_report={"summary": {"verdict": "old"}}, busy=True)
@@ -1196,6 +1281,16 @@ def test_handle_worker_done_stores_dataset_triage_components_without_mutating_mo
             "blocking_issue_count": 1,
             "top_actions": ["Review same-feature rows with conflicting labels."],
         },
+        "leakage_sentinel": {
+            "summary": {
+                "risk_level": "high",
+                "top_feature": 1,
+                "max_risk_score": 0.95,
+                "recommendation": "Quarantine x2.",
+            },
+            "features": [],
+            "recommendations": [],
+        },
         "feature_separability": {
             "summary": {
                 "top_feature": 0,
@@ -1247,13 +1342,95 @@ def test_handle_worker_done_stores_dataset_triage_components_without_mutating_mo
     assert state.model is model
     assert state.latest_metrics == {"f1": 0.9}
     assert state.latest_dataset_triage_report == report
+    assert state.latest_leakage_sentinel_report == report["leakage_sentinel"]
     assert state.latest_feature_separability_report == report["feature_separability"]
     assert state.latest_prototype_audit_report == report["prototype_audit"]
     assert state.latest_neighborhood_hardness_report == report["neighborhood_hardness"]
     assert state.latest_ood_sentinel_report == report["ood_sentinel"]
     assert state.busy is False
     assert "Dataset triage" in window["-LOG-"].value
+    assert "Leakage sentinel" in window["-LOG-"].value
     assert "Review same-feature rows" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_leakage_sentinel_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(
+        model=object(),
+        latest_metrics={"f1": 0.9},
+        latest_threshold=0.4,
+        latest_experiment_advisor_report={"summary": {"recommended_next_step": "old"}},
+        latest_promotion_gate_report={"summary": {"verdict": "old"}},
+        busy=True,
+    )
+    model = state.model
+    report = {
+        "summary": {
+            "risk_level": "high",
+            "top_feature": 1,
+            "max_risk_score": 0.98,
+            "high_risk_feature_count": 1,
+            "medium_risk_feature_count": 0,
+            "recommendation": "Quarantine x2.",
+        },
+        "features": [
+            {
+                "feature_index": 1,
+                "risk_level": "high",
+                "risk_score": 0.98,
+                "auc": 1.0,
+                "label_mapping_balanced_accuracy": 1.0,
+                "unique_count": 2,
+                "risk_flags": ["direct_label_copy_candidate"],
+            }
+        ],
+        "recommendations": [
+            {
+                "rank": 1,
+                "priority": "high",
+                "category": "leakage",
+                "title": "Quarantine possible target leakage",
+                "action": "Quarantine x2.",
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("leakage_sentinel", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_leakage_sentinel_report == report
+    assert state.latest_experiment_advisor_report is None
+    assert state.latest_promotion_gate_report is None
+    assert state.busy is False
+    assert "Leakage sentinel" in window["-LOG-"].value
+    assert "Quarantine possible target leakage" in window["-LOG-"].value
+
+
+def test_start_leakage_sentinel_runs_in_worker_and_stores_report():
+    window = FakeWindow()
+    state = AppState(
+        features=[
+            [-1.0, 0.0],
+            [-0.8, 0.0],
+            [-0.6, 0.0],
+            [0.6, 1.0],
+            [0.8, 1.0],
+            [1.0, 1.0],
+        ],
+        labels=[0, 0, 0, 1, 1, 1],
+        input_dim=2,
+    )
+
+    def fake_start_worker(worker_window, worker_state, status, task):
+        assert "leakage" in status.lower()
+        _handle_worker_done(worker_window, worker_state, task())
+
+    with patch("italtensor.app._start_worker", side_effect=fake_start_worker):
+        _start_leakage_sentinel(window, state)
+
+    assert state.latest_leakage_sentinel_report["summary"]["risk_level"] == "high"
+    assert state.latest_leakage_sentinel_report["summary"]["top_feature"] == 1
 
 
 def test_handle_worker_done_stores_experiment_advisor_without_mutating_model():

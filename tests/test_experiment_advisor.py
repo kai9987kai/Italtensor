@@ -88,6 +88,28 @@ def test_experiment_advisor_recommends_external_holdout_when_metrics_exist():
     assert "separate labeled CSV" in holdout["reason"]
 
 
+def test_experiment_advisor_prioritizes_high_risk_leakage_before_training():
+    report = build_experiment_advisor(
+        sample_count=80,
+        input_dim=3,
+        labels=[0, 1] * 40,
+        leakage_sentinel_report={
+            "summary": {
+                "risk_level": "high",
+                "top_feature": 2,
+                "max_risk_score": 0.98,
+                "recommendation": "Quarantine x3.",
+            }
+        },
+    )
+
+    top = report["recommendations"][0]
+    assert top["source"] == "leakage_sentinel"
+    assert top["priority"] == "high"
+    assert top["category"] == "leakage"
+    assert "Quarantine x3" in top["action"]
+
+
 def test_experiment_advisor_prioritizes_external_holdout_failure():
     report = build_experiment_advisor(
         sample_count=120,

@@ -103,7 +103,12 @@ from .scoring import load_reviewed_prediction_csv, score_prediction_csv
 from .selective_risk import format_selective_risk_summary, run_selective_risk_diagnostics
 from .subgroup_disparity import format_subgroup_disparity_summary, run_subgroup_disparity_diagnostics
 from .audit import audit_dataset, format_audit_summary
-from .learning_curves import learning_curve_points
+from .learning_curves import format_learning_curve_summary, run_learning_curve_diagnostics
+from .leakage_sentinel import (
+    format_leakage_sentinel_summary,
+    leakage_sentinel_dataset_fingerprint,
+    run_leakage_sentinel,
+)
 from .slices import format_slice_summary, run_slice_diagnostics
 from .stress import format_stress_summary, run_stress_suite
 from .thresholds import format_threshold_summary, run_threshold_diagnostics
@@ -113,12 +118,18 @@ from .threshold_stability import (
     threshold_stability_dataset_fingerprint,
 )
 from .cartography import format_cartography_summary, run_dataset_cartography
-from .mps_diagnostics import format_mps_sweep_summary, run_mps_bond_sweep
+from .mps_diagnostics import (
+    format_mps_order_sweep_summary,
+    format_mps_sweep_summary,
+    run_mps_bond_sweep,
+    run_mps_order_sweep,
+)
 from .ood_sentinel import format_ood_sentinel_summary, run_ood_sentinel
 from .dataset_triage import format_dataset_triage_summary, run_dataset_triage
 from .experiment_advisor import build_experiment_advisor, format_experiment_advisor_summary
 from .trial_inspector import inspect_trial_history, format_trial_inspector_summary
 from .promotion_gate import build_promotion_gate, format_promotion_gate_summary
+from .validation_plan import format_validation_plan_summary, run_validation_plan
 from .bootstrap_stability import (
     format_bootstrap_stability_summary,
     run_bootstrap_stability_diagnostics,
@@ -174,20 +185,24 @@ class AppState:
     latest_population_drift_report: dict[str, Any] | None = None
     latest_adversarial_validation_report: dict[str, Any] | None = None
     latest_chronological_holdout_report: dict[str, Any] | None = None
+    latest_learning_curve_report: dict[str, Any] | None = None
     latest_cartography_report: dict[str, Any] | None = None
     latest_ood_sentinel_report: dict[str, Any] | None = None
     latest_bootstrap_stability_report: dict[str, Any] | None = None
     latest_canary_suite_report: dict[str, Any] | None = None
     latest_policy_guard_report: dict[str, Any] | None = None
     latest_schema_guard_report: dict[str, Any] | None = None
+    latest_leakage_sentinel_report: dict[str, Any] | None = None
     latest_prototype_audit_report: dict[str, Any] | None = None
     latest_feature_separability_report: dict[str, Any] | None = None
     latest_neighborhood_hardness_report: dict[str, Any] | None = None
     latest_dataset_triage_report: dict[str, Any] | None = None
+    latest_validation_plan_report: dict[str, Any] | None = None
     latest_experiment_advisor_report: dict[str, Any] | None = None
     latest_trial_inspector_report: dict[str, Any] | None = None
     latest_promotion_gate_report: dict[str, Any] | None = None
     latest_mps_sweep_report: dict[str, Any] | None = None
+    latest_mps_order_sweep_report: dict[str, Any] | None = None
     busy: bool = False
     status_message: str = "Ready"
     model_slots: list[ModelSlot] = field(default_factory=list)
@@ -303,8 +318,12 @@ def run_app() -> None:
                 _start_cartography(window, state)
             elif event == "-DATASET_TRIAGE-":
                 _start_dataset_triage(window, state)
+            elif event == "-VALIDATION_PLAN-":
+                _start_validation_plan(window, state)
             elif event == "-SCHEMA_GUARD-":
                 _start_schema_guard(window, state)
+            elif event == "-LEAKAGE_SENTINEL-":
+                _start_leakage_sentinel(window, state)
             elif event == "-CANARY_SUITE-":
                 _start_canary_suite(window, state)
             elif event == "-POLICY_GUARD-":
@@ -331,6 +350,8 @@ def run_app() -> None:
                 _start_calibration_slices(window, state)
             elif event == "-MPS_BOND_SWEEP-":
                 _start_mps_bond_sweep(window, state, values)
+            elif event == "-MPS_ORDER_SWEEP-":
+                _start_mps_order_sweep(window, state, values)
             elif event == "-SHAP_ANALYSIS-":
                 _run_shap_analysis(window, state, values)
             elif event == "-DECISION_BOUNDARY-":
@@ -624,7 +645,9 @@ def _layout(sg):
         [sg.Text("Automated Model & Dataset Diagnostics")],
         [
             sg.Button("Dataset triage", key="-DATASET_TRIAGE-", expand_x=True),
+            sg.Button("Validation plan", key="-VALIDATION_PLAN-", expand_x=True),
             sg.Button("Schema guard", key="-SCHEMA_GUARD-", expand_x=True),
+            sg.Button("Leakage sentinel", key="-LEAKAGE_SENTINEL-", expand_x=True),
             sg.Button("Canary suite", key="-CANARY_SUITE-", expand_x=True),
             sg.Button("Policy guard", key="-POLICY_GUARD-", expand_x=True),
             sg.Button("Experiment advisor", key="-EXPERIMENT_ADVISOR-", expand_x=True),
@@ -675,6 +698,7 @@ def _layout(sg):
             sg.Button("Separability lens", key="-FEATURE_SEPARABILITY-", expand_x=True),
             sg.Button("Neighborhood hardness", key="-NEIGHBORHOOD_HARDNESS-", expand_x=True),
             sg.Button("MPS bond sweep", key="-MPS_BOND_SWEEP-", expand_x=True),
+            sg.Button("MPS order sweep", key="-MPS_ORDER_SWEEP-", expand_x=True),
         ],
         [
             sg.Button("Export trials CSV", key="-EXPORT_TRIALS-", expand_x=True),
@@ -861,8 +885,8 @@ def _start_learning_curve(window, state: AppState, values: dict[str, Any]) -> No
     dataset = validate_dataset(state.features, state.labels, min_samples=8, require_two_classes=True)
     config = _config_from_values(values)
 
-    def task() -> tuple[str, list[dict[str, Any]]]:
-        return "learning_curve", learning_curve_points(dataset.features, dataset.labels, config)
+    def task() -> tuple[str, dict[str, Any]]:
+        return "learning_curve", run_learning_curve_diagnostics(dataset.features, dataset.labels, config)
 
     _start_worker(window, state, "Computing learning curve...", task)
 
@@ -1366,20 +1390,24 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         population_drift_report=state.latest_population_drift_report,
         adversarial_validation_report=state.latest_adversarial_validation_report,
         chronological_holdout_report=state.latest_chronological_holdout_report,
+        learning_curve_report=state.latest_learning_curve_report,
         cartography_report=state.latest_cartography_report,
         ood_sentinel_report=state.latest_ood_sentinel_report,
         bootstrap_stability_report=state.latest_bootstrap_stability_report,
         canary_suite_report=state.latest_canary_suite_report,
         policy_guard_report=state.latest_policy_guard_report,
         schema_guard_report=state.latest_schema_guard_report,
+        leakage_sentinel_report=state.latest_leakage_sentinel_report,
         prototype_audit_report=state.latest_prototype_audit_report,
         feature_separability_report=state.latest_feature_separability_report,
         neighborhood_hardness_report=state.latest_neighborhood_hardness_report,
         dataset_triage_report=state.latest_dataset_triage_report,
+        validation_plan_report=state.latest_validation_plan_report,
         experiment_advisor_report=state.latest_experiment_advisor_report,
         trial_inspector_report=state.latest_trial_inspector_report,
         promotion_gate_report=state.latest_promotion_gate_report,
         mps_sweep_report=state.latest_mps_sweep_report,
+        mps_order_sweep_report=state.latest_mps_order_sweep_report,
     )
     window["-MODEL_PATH-"].update(str(model_path))
     _log(window, f"Saved model to {model_path} and metadata to {metadata_path}.")
@@ -1497,6 +1525,20 @@ def _compatible_schema_guard_report(report: Any, state: AppState) -> dict[str, A
     return report
 
 
+def _compatible_leakage_sentinel_report(report: Any, state: AppState) -> dict[str, Any] | None:
+    if not isinstance(report, dict):
+        return None
+    stored_fingerprint = report.get("dataset_fingerprint")
+    if stored_fingerprint and state.features and state.labels:
+        try:
+            current_fingerprint = leakage_sentinel_dataset_fingerprint(state.features, state.labels)
+        except ValueError:
+            return None
+        if current_fingerprint != stored_fingerprint:
+            return None
+    return report
+
+
 def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     model, metadata = load_model_bundle(_required_path(values["-MODEL_PATH-"], "model path"))
     input_dim = metadata.get("input_dim")
@@ -1553,20 +1595,24 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     population_drift_report = metadata.get("population_drift_diagnostics")
     adversarial_validation_report = metadata.get("adversarial_validation_diagnostics")
     chronological_holdout_report = metadata.get("chronological_holdout_diagnostics")
+    learning_curve_report = metadata.get("learning_curve")
     cartography_report = metadata.get("dataset_cartography")
     ood_sentinel_report = metadata.get("ood_sentinel")
     bootstrap_stability_report = metadata.get("bootstrap_stability_diagnostics")
     canary_suite_report = metadata.get("canary_suite")
     policy_guard_report = metadata.get("policy_guard")
     schema_guard_report = metadata.get("schema_guard")
+    leakage_sentinel_report = metadata.get("leakage_sentinel")
     prototype_audit_report = metadata.get("prototype_audit")
     feature_separability_report = metadata.get("feature_separability")
     neighborhood_hardness_report = metadata.get("neighborhood_hardness")
     dataset_triage_report = metadata.get("dataset_triage")
+    validation_plan_report = metadata.get("validation_plan")
     experiment_advisor_report = metadata.get("experiment_advisor")
     trial_inspector_report = metadata.get("trial_inspector")
     promotion_gate_report = metadata.get("promotion_gate")
     mps_sweep_report = metadata.get("mps_bond_sweep")
+    mps_order_sweep_report = metadata.get("mps_site_order_sweep") or metadata.get("mps_order_sweep")
     state.latest_ablation_report = ablation_report if isinstance(ablation_report, dict) else None
     state.latest_decision_curve_report = decision_curve_report if isinstance(decision_curve_report, dict) else None
     state.latest_conformal_set_report = conformal_set_report if isinstance(conformal_set_report, dict) else None
@@ -1651,6 +1697,7 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_chronological_holdout_report = (
         chronological_holdout_report if isinstance(chronological_holdout_report, dict) else None
     )
+    state.latest_learning_curve_report = learning_curve_report if isinstance(learning_curve_report, dict) else None
     state.latest_cartography_report = cartography_report if isinstance(cartography_report, dict) else None
     state.latest_ood_sentinel_report = ood_sentinel_report if isinstance(ood_sentinel_report, dict) else None
     state.latest_bootstrap_stability_report = (
@@ -1665,6 +1712,13 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
         and schema_guard_report.get("dataset_fingerprint")
     ):
         _log(window, "Skipped stored schema guard because it was created for a different loaded dataset.")
+    state.latest_leakage_sentinel_report = _compatible_leakage_sentinel_report(leakage_sentinel_report, state)
+    if (
+        isinstance(leakage_sentinel_report, dict)
+        and state.latest_leakage_sentinel_report is None
+        and leakage_sentinel_report.get("dataset_fingerprint")
+    ):
+        _log(window, "Skipped stored leakage sentinel because it was created for a different loaded dataset.")
     state.latest_prototype_audit_report = prototype_audit_report if isinstance(prototype_audit_report, dict) else None
     state.latest_feature_separability_report = (
         feature_separability_report if isinstance(feature_separability_report, dict) else None
@@ -1673,9 +1727,13 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
         neighborhood_hardness_report if isinstance(neighborhood_hardness_report, dict) else None
     )
     state.latest_dataset_triage_report = dataset_triage_report if isinstance(dataset_triage_report, dict) else None
+    state.latest_validation_plan_report = validation_plan_report if isinstance(validation_plan_report, dict) else None
     if state.latest_dataset_triage_report is not None:
         state.latest_feature_separability_report = state.latest_feature_separability_report or _dict_or_none(
             state.latest_dataset_triage_report.get("feature_separability")
+        )
+        state.latest_leakage_sentinel_report = state.latest_leakage_sentinel_report or _dict_or_none(
+            state.latest_dataset_triage_report.get("leakage_sentinel")
         )
         state.latest_prototype_audit_report = state.latest_prototype_audit_report or _dict_or_none(
             state.latest_dataset_triage_report.get("prototype_audit")
@@ -1692,6 +1750,9 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_trial_inspector_report = trial_inspector_report if isinstance(trial_inspector_report, dict) else None
     state.latest_promotion_gate_report = promotion_gate_report if isinstance(promotion_gate_report, dict) else None
     state.latest_mps_sweep_report = mps_sweep_report if isinstance(mps_sweep_report, dict) else None
+    state.latest_mps_order_sweep_report = (
+        mps_order_sweep_report if isinstance(mps_order_sweep_report, dict) else None
+    )
     _log(window, f"Loaded model expecting {state.input_dim} features.")
 
 
@@ -1735,20 +1796,24 @@ def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
         population_drift_report=state.latest_population_drift_report,
         adversarial_validation_report=state.latest_adversarial_validation_report,
         chronological_holdout_report=state.latest_chronological_holdout_report,
+        learning_curve_report=state.latest_learning_curve_report,
         cartography_report=state.latest_cartography_report,
         ood_sentinel_report=state.latest_ood_sentinel_report,
         bootstrap_stability_report=state.latest_bootstrap_stability_report,
         canary_suite_report=state.latest_canary_suite_report,
         policy_guard_report=state.latest_policy_guard_report,
         schema_guard_report=state.latest_schema_guard_report,
+        leakage_sentinel_report=state.latest_leakage_sentinel_report,
         prototype_audit_report=state.latest_prototype_audit_report,
         feature_separability_report=state.latest_feature_separability_report,
         neighborhood_hardness_report=state.latest_neighborhood_hardness_report,
         dataset_triage_report=state.latest_dataset_triage_report,
+        validation_plan_report=state.latest_validation_plan_report,
         experiment_advisor_report=state.latest_experiment_advisor_report,
         trial_inspector_report=state.latest_trial_inspector_report,
         promotion_gate_report=state.latest_promotion_gate_report,
         mps_sweep_report=state.latest_mps_sweep_report,
+        mps_order_sweep_report=state.latest_mps_order_sweep_report,
     )
     path = export_experiment_report(_required_path(values["-REPORT_PATH-"], "report path"), report)
     _log(window, f"Exported report to {path}.")
@@ -1871,6 +1936,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_population_drift_report = None
         state.latest_adversarial_validation_report = None
         state.latest_chronological_holdout_report = None
+        state.latest_learning_curve_report = None
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
@@ -1880,6 +1946,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_trial_inspector_report = None
         state.latest_promotion_gate_report = None
         state.latest_mps_sweep_report = None
+        state.latest_mps_order_sweep_report = None
         _log(window, f"Training complete: {_format_metrics(training_result.metrics)}")
         _log(window, _format_calibration(training_result.metrics))
         _log(window, _format_uncertainty(training_result.uncertainty))
@@ -1921,6 +1988,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_population_drift_report = None
         state.latest_adversarial_validation_report = None
         state.latest_chronological_holdout_report = None
+        state.latest_learning_curve_report = None
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
@@ -1930,6 +1998,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_trial_inspector_report = None
         state.latest_promotion_gate_report = None
         state.latest_mps_sweep_report = None
+        state.latest_mps_order_sweep_report = None
 
         _log(window, f"AutoML Tuning Complete! Best validation F1: {best_result.metrics.get('f1', 0.0):.4f}")
         _log(window, _format_calibration(best_result.metrics))
@@ -1995,6 +2064,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_population_drift_report = None
         state.latest_adversarial_validation_report = None
         state.latest_chronological_holdout_report = None
+        state.latest_learning_curve_report = None
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
@@ -2004,6 +2074,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_trial_inspector_report = None
         state.latest_promotion_gate_report = None
         state.latest_mps_sweep_report = None
+        state.latest_mps_order_sweep_report = None
         _log(window, f"Best config: {_format_config(best.config)}")
         _log(window, f"Best metrics: {_format_metrics(best.metrics)}")
         _log(window, _format_calibration(best.metrics))
@@ -2013,7 +2084,9 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         path, count = result
         _log(window, f"Exported {count} batch prediction(s) to {path}.")
     elif kind == "learning_curve":
-        for point in result:
+        state.latest_learning_curve_report = result
+        _log(window, format_learning_curve_summary(result))
+        for point in result.get("points", []):
             _log(
                 window,
                 f"Curve fraction={point['train_fraction']:.2f} "
@@ -2335,6 +2408,31 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                 f"[{item.get('priority', '-')}/{item.get('category', '-')}] "
                 f"{item.get('title', '-')}: {item.get('action', '-')}",
             )
+    elif kind == "leakage_sentinel":
+        state.latest_leakage_sentinel_report = result
+        state.latest_experiment_advisor_report = None
+        state.latest_promotion_gate_report = None
+        _log(window, format_leakage_sentinel_summary(result))
+        for item in result.get("features", [])[:6]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            mapping = item.get("label_mapping_balanced_accuracy")
+            mapping_text = "-" if mapping is None else f"{float(mapping):.4f}"
+            _log(
+                window,
+                f"  x{int(item['feature_index']) + 1}: "
+                f"risk={item.get('risk_level', '-')}, "
+                f"score={float(item.get('risk_score', 0.0)):.4f}, "
+                f"AUC={float(item.get('auc', 0.0)):.4f}, "
+                f"map_bal_acc={mapping_text}, "
+                f"unique={int(item.get('unique_count', 0))}, flags={flags}",
+            )
+        for item in result.get("recommendations", [])[:3]:
+            _log(
+                window,
+                f"  {int(item.get('rank', 0))}. "
+                f"[{item.get('priority', '-')}/{item.get('category', '-')}] "
+                f"{item.get('title', '-')}: {item.get('action', '-')}",
+            )
     elif kind == "canary_suite":
         state.latest_canary_suite_report = result
         state.latest_promotion_gate_report = None
@@ -2423,13 +2521,18 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
             )
     elif kind == "dataset_triage":
         state.latest_dataset_triage_report = result
+        state.latest_leakage_sentinel_report = result.get("leakage_sentinel")
         state.latest_feature_separability_report = result.get("feature_separability")
         state.latest_prototype_audit_report = result.get("prototype_audit")
         state.latest_neighborhood_hardness_report = result.get("neighborhood_hardness")
         state.latest_ood_sentinel_report = result.get("ood_sentinel")
+        state.latest_experiment_advisor_report = None
+        state.latest_promotion_gate_report = None
         _log(window, format_dataset_triage_summary(result))
         for action in result.get("summary", {}).get("top_actions", [])[:5]:
             _log(window, f"  action: {action}")
+        if isinstance(state.latest_leakage_sentinel_report, dict):
+            _log(window, "  " + format_leakage_sentinel_summary(state.latest_leakage_sentinel_report))
         if isinstance(state.latest_feature_separability_report, dict):
             _log(window, "  " + format_feature_separability_summary(state.latest_feature_separability_report))
         if isinstance(state.latest_prototype_audit_report, dict):
@@ -2438,6 +2541,18 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
             _log(window, "  " + format_neighborhood_hardness_summary(state.latest_neighborhood_hardness_report))
         if isinstance(state.latest_ood_sentinel_report, dict):
             _log(window, "  " + format_ood_sentinel_summary(state.latest_ood_sentinel_report))
+    elif kind == "validation_plan":
+        state.latest_validation_plan_report = result
+        state.latest_experiment_advisor_report = None
+        state.latest_promotion_gate_report = None
+        _log(window, format_validation_plan_summary(result))
+        for item in result.get("recommendations", [])[:5]:
+            _log(
+                window,
+                f"  {int(item.get('rank', 0))}. "
+                f"[{item.get('priority', '-')}/{item.get('category', '-')}] "
+                f"{item.get('title', '-')}: {item.get('action', '-')}",
+            )
     elif kind == "experiment_advisor":
         state.latest_experiment_advisor_report = result
         _log(window, format_experiment_advisor_summary(result))
@@ -2486,6 +2601,18 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                 f"  chi={int(row['bond_dim'])}: F1={float(row['f1']):.4f}, "
                 f"Brier={float(row['brier_score']):.4f}, ECE={float(row['ece']):.4f}",
             )
+    elif kind == "mps_order_sweep":
+        state.latest_mps_order_sweep_report = result
+        _log(window, format_mps_order_sweep_summary(result))
+        for row in result.get("results", []):
+            _log(
+                window,
+                f"  order={row.get('order_name', '-')}: F1={float(row.get('f1') or 0.0):.4f}, "
+                f"acc={float(row.get('accuracy') or 0.0):.4f}, "
+                f"Brier={float(row.get('brier_score') or 0.0):.4f}, "
+                f"features={row.get('feature_order_1_based', [])}",
+            )
+        _log(window, str(result.get("adoption_note", "")))
     elif kind == "sample_review":
         state.latest_sample_review_report = result
         _log(window, format_sample_review_summary(result))
@@ -2733,6 +2860,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_population_drift_report = None
         state.latest_adversarial_validation_report = None
         state.latest_chronological_holdout_report = None
+        state.latest_learning_curve_report = None
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
@@ -2742,6 +2870,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_trial_inspector_report = None
         state.latest_promotion_gate_report = None
         state.latest_mps_sweep_report = None
+        state.latest_mps_order_sweep_report = None
         for item in result:
             slot = ModelSlot(
                 model=item.model,
@@ -2791,6 +2920,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_population_drift_report = None
         state.latest_adversarial_validation_report = None
         state.latest_chronological_holdout_report = None
+        state.latest_learning_curve_report = None
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
@@ -2800,6 +2930,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_trial_inspector_report = None
         state.latest_promotion_gate_report = None
         state.latest_mps_sweep_report = None
+        state.latest_mps_order_sweep_report = None
         
         # Auto-store in slots
         slot = ModelSlot(
@@ -2944,20 +3075,24 @@ def _invalidate_model_artifacts(state: AppState) -> None:
     state.latest_population_drift_report = None
     state.latest_adversarial_validation_report = None
     state.latest_chronological_holdout_report = None
+    state.latest_learning_curve_report = None
     state.latest_cartography_report = None
     state.latest_ood_sentinel_report = None
     state.latest_bootstrap_stability_report = None
     state.latest_canary_suite_report = None
     state.latest_policy_guard_report = None
     state.latest_schema_guard_report = None
+    state.latest_leakage_sentinel_report = None
     state.latest_prototype_audit_report = None
     state.latest_feature_separability_report = None
     state.latest_neighborhood_hardness_report = None
     state.latest_dataset_triage_report = None
+    state.latest_validation_plan_report = None
     state.latest_experiment_advisor_report = None
     state.latest_trial_inspector_report = None
     state.latest_promotion_gate_report = None
     state.latest_mps_sweep_report = None
+    state.latest_mps_order_sweep_report = None
 
 
 def _refresh_state(window, state: AppState) -> None:
@@ -3027,7 +3162,9 @@ def _set_busy(window, busy: bool) -> None:
         "-PERMUTATION_NULL-",
         "-CARTOGRAPHY-",
         "-DATASET_TRIAGE-",
+        "-VALIDATION_PLAN-",
         "-SCHEMA_GUARD-",
+        "-LEAKAGE_SENTINEL-",
         "-CANARY_SUITE-",
         "-POLICY_GUARD-",
         "-EXPERIMENT_ADVISOR-",
@@ -3041,6 +3178,7 @@ def _set_busy(window, busy: bool) -> None:
         "-RELIABILITY-",
         "-CALIBRATION_SLICES-",
         "-MPS_BOND_SWEEP-",
+        "-MPS_ORDER_SWEEP-",
         "-EXPORT_TRIALS-",
         "-SLOT_SIMILARITY-",
         "-SHAP_ANALYSIS-",
@@ -3381,11 +3519,13 @@ def _activate_model_slot(window, state: AppState, values: dict[str, Any]) -> Non
     state.latest_population_drift_report = None
     state.latest_adversarial_validation_report = None
     state.latest_chronological_holdout_report = None
+    state.latest_learning_curve_report = None
     state.latest_cartography_report = None
     state.latest_ood_sentinel_report = None
     state.latest_bootstrap_stability_report = None
     state.latest_canary_suite_report = None
     state.latest_policy_guard_report = None
+    state.latest_leakage_sentinel_report = None
     state.latest_prototype_audit_report = None
     state.latest_feature_separability_report = None
     state.latest_neighborhood_hardness_report = None
@@ -3393,6 +3533,7 @@ def _activate_model_slot(window, state: AppState, values: dict[str, Any]) -> Non
     state.latest_trial_inspector_report = None
     state.latest_promotion_gate_report = None
     state.latest_mps_sweep_report = None
+    state.latest_mps_order_sweep_report = None
     _log(window, f"Activated slot '{slot.name}'. Predictions and weight analysis will now run on this model.")
     _update_slots_listbox(window, state)
 
@@ -3501,11 +3642,13 @@ def _load_registry(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_population_drift_report = None
         state.latest_adversarial_validation_report = None
         state.latest_chronological_holdout_report = None
+        state.latest_learning_curve_report = None
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
         state.latest_canary_suite_report = None
         state.latest_policy_guard_report = None
+        state.latest_leakage_sentinel_report = None
         state.latest_prototype_audit_report = None
         state.latest_feature_separability_report = None
         state.latest_neighborhood_hardness_report = None
@@ -3513,6 +3656,7 @@ def _load_registry(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_trial_inspector_report = None
         state.latest_promotion_gate_report = None
         state.latest_mps_sweep_report = None
+        state.latest_mps_order_sweep_report = None
     _update_slots_listbox(window, state)
     _log(window, f"Loaded {len(slots)} slot(s) from registry.")
 
@@ -3556,11 +3700,13 @@ def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_population_drift_report = None
     state.latest_adversarial_validation_report = None
     state.latest_chronological_holdout_report = None
+    state.latest_learning_curve_report = None
     state.latest_cartography_report = None
     state.latest_ood_sentinel_report = None
     state.latest_bootstrap_stability_report = None
     state.latest_canary_suite_report = None
     state.latest_policy_guard_report = None
+    state.latest_leakage_sentinel_report = None
     state.latest_prototype_audit_report = None
     state.latest_feature_separability_report = None
     state.latest_neighborhood_hardness_report = None
@@ -3568,6 +3714,7 @@ def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_trial_inspector_report = None
     state.latest_promotion_gate_report = None
     state.latest_mps_sweep_report = None
+    state.latest_mps_order_sweep_report = None
     
     state.latest_config = ModelConfig(
         lr_schedule="constant",
@@ -3649,11 +3796,13 @@ def _build_stacked_ensemble(window, state: AppState, values: dict[str, Any]) -> 
     state.latest_population_drift_report = None
     state.latest_adversarial_validation_report = None
     state.latest_chronological_holdout_report = None
+    state.latest_learning_curve_report = None
     state.latest_cartography_report = None
     state.latest_ood_sentinel_report = None
     state.latest_bootstrap_stability_report = None
     state.latest_canary_suite_report = None
     state.latest_policy_guard_report = None
+    state.latest_leakage_sentinel_report = None
     state.latest_prototype_audit_report = None
     state.latest_feature_separability_report = None
     state.latest_neighborhood_hardness_report = None
@@ -3661,6 +3810,7 @@ def _build_stacked_ensemble(window, state: AppState, values: dict[str, Any]) -> 
     state.latest_trial_inspector_report = None
     state.latest_promotion_gate_report = None
     state.latest_mps_sweep_report = None
+    state.latest_mps_order_sweep_report = None
     probs = ensemble.predict(dataset.features).reshape(-1)
     metrics = evaluate_predictions(dataset.labels, probs, threshold=0.5)
     state.latest_metrics = metrics
@@ -3802,6 +3952,17 @@ def _start_dataset_triage(window, state: AppState) -> None:
     _start_worker(window, state, "Running dataset triage workflow...", task)
 
 
+def _start_validation_plan(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    dataset = validate_dataset(state.features, state.labels, min_samples=1, require_two_classes=False)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_validation_plan(dataset.features, dataset.labels)
+        return "validation_plan", report
+
+    _start_worker(window, state, "Building validation plan...", task)
+
+
 def _start_schema_guard(window, state: AppState) -> None:
     _ensure_not_busy(state)
     dataset = validate_dataset(state.features, state.labels, min_samples=2, require_two_classes=False)
@@ -3811,6 +3972,17 @@ def _start_schema_guard(window, state: AppState) -> None:
         return "schema_guard", report
 
     _start_worker(window, state, "Inferring numeric feature schema guard...", task)
+
+
+def _start_leakage_sentinel(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    dataset = validate_dataset(state.features, state.labels, min_samples=6, require_two_classes=True)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_leakage_sentinel(dataset.features, dataset.labels)
+        return "leakage_sentinel", report
+
+    _start_worker(window, state, "Scanning for leakage and proxy-shortcut risk...", task)
 
 
 def _start_canary_suite(window, state: AppState) -> None:
@@ -3885,6 +4057,7 @@ def _start_experiment_advisor(window, state: AppState) -> None:
             metrics=state.latest_metrics,
             trial_history=state.trial_history,
             dataset_triage_report=state.latest_dataset_triage_report,
+            leakage_sentinel_report=state.latest_leakage_sentinel_report,
             feature_separability_report=state.latest_feature_separability_report,
             neighborhood_hardness_report=state.latest_neighborhood_hardness_report,
             prototype_audit_report=state.latest_prototype_audit_report,
@@ -3938,6 +4111,7 @@ def _start_promotion_gate(window, state: AppState) -> None:
             canary_suite_report=state.latest_canary_suite_report,
             policy_guard_report=state.latest_policy_guard_report,
             schema_guard_report=state.latest_schema_guard_report,
+            leakage_sentinel_report=state.latest_leakage_sentinel_report,
             threshold_report=state.latest_threshold_report,
             threshold_stability_report=state.latest_threshold_stability_report,
             capacity_planner_report=state.latest_capacity_planner_report,
@@ -4022,6 +4196,19 @@ def _start_mps_bond_sweep(window, state: AppState, values: dict[str, Any]) -> No
         return "mps_sweep", report
 
     _start_worker(window, state, "Running MPS bond-dimension sweep...", task)
+
+
+def _start_mps_order_sweep(window, state: AppState, values: dict[str, Any]) -> None:
+    _ensure_not_busy(state)
+    dataset = validate_dataset(state.features, state.labels, min_samples=8, require_two_classes=True)
+    config = _config_from_values(values)
+    config = ModelConfig.from_dict({**config.to_dict(), "backend": "mps"})
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_mps_order_sweep(dataset.features, dataset.labels, config)
+        return "mps_order_sweep", report
+
+    _start_worker(window, state, "Running MPS site-order sweep...", task)
 
 
 def _export_trials(window, state: AppState, values: dict[str, Any]) -> None:
@@ -4198,11 +4385,13 @@ def _merge_slots(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_population_drift_report = None
         state.latest_adversarial_validation_report = None
         state.latest_chronological_holdout_report = None
+        state.latest_learning_curve_report = None
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
         state.latest_canary_suite_report = None
         state.latest_policy_guard_report = None
+        state.latest_leakage_sentinel_report = None
         state.latest_prototype_audit_report = None
         state.latest_feature_separability_report = None
         state.latest_neighborhood_hardness_report = None
@@ -4210,6 +4399,7 @@ def _merge_slots(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_trial_inspector_report = None
         state.latest_promotion_gate_report = None
         state.latest_mps_sweep_report = None
+        state.latest_mps_order_sweep_report = None
         state.latest_config = ModelConfig(
             lr_schedule="constant",
             gradient_clip=0.0,

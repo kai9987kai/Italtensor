@@ -286,6 +286,31 @@ def test_promotion_gate_blocks_high_risk_schema_guard():
     assert any(item["title"] == "Schema guard reports feature-contract blockers" for item in report["checks"])
 
 
+def test_promotion_gate_blocks_high_risk_leakage_sentinel():
+    report = build_promotion_gate(
+        sample_count=120,
+        input_dim=3,
+        labels=[0, 1] * 60,
+        config=ModelConfig(feature_map="linear"),
+        metrics={"f1": 0.86, "accuracy": 0.88, "balanced_accuracy": 0.86, "brier_score": 0.14, "ece": 0.04},
+        trial_history=[{"metrics": {"f1": 0.82}}, {"metrics": {"f1": 0.86}}, {"metrics": {"f1": 0.84}}],
+        dataset_triage_report={"summary": {"risk_level": "low", "readiness_score": 90.0, "blocking_issue_count": 0}},
+        trial_inspector_report={"valid_trial_count": 3, "summary": {"leader_margin_f1": 0.04}},
+        leakage_sentinel_report={
+            "summary": {
+                "risk_level": "high",
+                "top_feature": 2,
+                "max_risk_score": 0.98,
+                "high_risk_feature_count": 1,
+                "recommendation": "Quarantine x3.",
+            }
+        },
+    )
+
+    assert report["summary"]["verdict"] == "blocked"
+    assert any(item["title"] == "Possible target leakage is unresolved" for item in report["checks"])
+
+
 def test_promotion_gate_blocks_canary_regression_failures():
     report = build_promotion_gate(
         sample_count=120,

@@ -50,20 +50,24 @@ def build_experiment_report(
     population_drift_report: dict[str, Any] | None = None,
     adversarial_validation_report: dict[str, Any] | None = None,
     chronological_holdout_report: dict[str, Any] | None = None,
+    learning_curve_report: dict[str, Any] | None = None,
     cartography_report: dict[str, Any] | None = None,
     ood_sentinel_report: dict[str, Any] | None = None,
     bootstrap_stability_report: dict[str, Any] | None = None,
     canary_suite_report: dict[str, Any] | None = None,
     policy_guard_report: dict[str, Any] | None = None,
     schema_guard_report: dict[str, Any] | None = None,
+    leakage_sentinel_report: dict[str, Any] | None = None,
     prototype_audit_report: dict[str, Any] | None = None,
     feature_separability_report: dict[str, Any] | None = None,
     neighborhood_hardness_report: dict[str, Any] | None = None,
     dataset_triage_report: dict[str, Any] | None = None,
+    validation_plan_report: dict[str, Any] | None = None,
     experiment_advisor_report: dict[str, Any] | None = None,
     trial_inspector_report: dict[str, Any] | None = None,
     promotion_gate_report: dict[str, Any] | None = None,
     mps_sweep_report: dict[str, Any] | None = None,
+    mps_order_sweep_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     label_array = np.asarray(labels, dtype=np.int32)
     dataset_available = bool(sample_count and label_array.size)
@@ -116,20 +120,24 @@ def build_experiment_report(
         "population_drift_diagnostics": population_drift_report or None,
         "adversarial_validation_diagnostics": adversarial_validation_report or None,
         "chronological_holdout_diagnostics": chronological_holdout_report or None,
+        "learning_curve": learning_curve_report or None,
         "dataset_cartography": cartography_report or None,
         "ood_sentinel": ood_sentinel_report or None,
         "bootstrap_stability_diagnostics": bootstrap_stability_report or None,
         "canary_suite": canary_suite_report or None,
         "policy_guard": policy_guard_report or None,
         "schema_guard": schema_guard_report or None,
+        "leakage_sentinel": leakage_sentinel_report or None,
         "prototype_audit": prototype_audit_report or None,
         "feature_separability": feature_separability_report or None,
         "neighborhood_hardness": neighborhood_hardness_report or None,
         "dataset_triage": dataset_triage_report or None,
+        "validation_plan": validation_plan_report or None,
         "experiment_advisor": experiment_advisor_report or None,
         "trial_inspector": trial_inspector_report or None,
         "promotion_gate": promotion_gate_report or None,
         "mps_bond_sweep": mps_sweep_report or None,
+        "mps_site_order_sweep": mps_order_sweep_report or None,
         "feature_importances": feature_importances,
         "trial_history": trial_history or [],
     }
@@ -176,20 +184,24 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     population_drift = report.get("population_drift_diagnostics") or {}
     adversarial_validation = report.get("adversarial_validation_diagnostics") or {}
     chronological_holdout = report.get("chronological_holdout_diagnostics") or {}
+    learning_curve = report.get("learning_curve") or {}
     cartography = report.get("dataset_cartography") or {}
     ood_sentinel = report.get("ood_sentinel") or {}
     bootstrap_stability = report.get("bootstrap_stability_diagnostics") or {}
     canary_suite = report.get("canary_suite") or {}
     policy_guard = report.get("policy_guard") or {}
     schema_guard = report.get("schema_guard") or {}
+    leakage_sentinel = report.get("leakage_sentinel") or {}
     prototype_audit = report.get("prototype_audit") or {}
     feature_separability = report.get("feature_separability") or {}
     neighborhood_hardness = report.get("neighborhood_hardness") or {}
     dataset_triage = report.get("dataset_triage") or {}
+    validation_plan = report.get("validation_plan") or {}
     experiment_advisor = report.get("experiment_advisor") or {}
     trial_inspector = report.get("trial_inspector") or {}
     promotion_gate = report.get("promotion_gate") or {}
     mps_sweep = report.get("mps_bond_sweep") or {}
+    mps_order_sweep = report.get("mps_site_order_sweep") or {}
     audit = dataset.get("audit") or {}
 
     lines = [
@@ -217,6 +229,37 @@ def format_markdown_report(report: dict[str, Any]) -> str:
                 f"- Warnings: {audit.get('warnings', [])}",
             ]
         )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Validation Plan"])
+    if validation_plan:
+        summary = validation_plan.get("summary", {})
+        blueprint = validation_plan.get("split_blueprint", {})
+        row_order = validation_plan.get("row_order", {})
+        lines.extend(
+            [
+                f"- Strategy: {summary.get('recommended_strategy', '-')}",
+                f"- Readiness score: {_format_value(summary.get('readiness_score', '-'))}/100",
+                f"- Risk level: {summary.get('risk_level', '-')}",
+                f"- Minority class count: {summary.get('minority_class_count', '-')}",
+                f"- Imbalance ratio: {_format_value(summary.get('imbalance_ratio', '-'))}",
+                f"- Validation fraction: {_format_value(summary.get('validation_fraction', '-'))}",
+                f"- K-fold splits: {summary.get('kfold_splits', '-')}",
+                f"- Row-order risk: {summary.get('row_order_risk', '-')}",
+                f"- Row-order prevalence delta: {_format_value(row_order.get('prevalence_delta', '-'))}",
+                f"- Max row-order feature shift: {_format_value(row_order.get('max_standardized_mean_shift', '-'))}",
+                f"- Shuffle: {blueprint.get('shuffle', '-')}",
+                f"- Stratify: {blueprint.get('stratify', '-')}",
+                f"- Warning: {summary.get('warning') or 'none'}",
+            ]
+        )
+        for item in validation_plan.get("recommendations", [])[:6]:
+            lines.append(
+                f"- Action {item.get('rank', '-')}: "
+                f"[{item.get('priority', '-')}/{item.get('category', '-')}] "
+                f"{item.get('action', '-')}"
+            )
     else:
         lines.append("- None")
 
@@ -259,6 +302,39 @@ def format_markdown_report(report: dict[str, Any]) -> str:
                 f"q01-q99=[{_format_value(item.get('q01', '-'))}, {_format_value(item.get('q99', '-'))}], "
                 f"unique={item.get('unique_count', '-')}, "
                 f"outliers={item.get('outlier_count', '-')}, flags={flags}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Leakage Sentinel"])
+    if leakage_sentinel:
+        summary = leakage_sentinel.get("summary", {})
+        top = summary.get("top_feature")
+        top_text = "-" if top is None else f"x{int(top) + 1}"
+        lines.extend(
+            [
+                f"- Risk level: {summary.get('risk_level', '-')}",
+                f"- Top feature: {top_text}",
+                f"- Max risk score: {_format_value(summary.get('max_risk_score', '-'))}",
+                f"- High-risk features: {summary.get('high_risk_feature_count', '-')}",
+                f"- Medium-risk features: {summary.get('medium_risk_feature_count', '-')}",
+                f"- Direct-copy candidates: {summary.get('direct_label_copy_candidate_count', '-')}",
+                f"- Low-cardinality mappings: {summary.get('low_cardinality_label_mapping_count', '-')}",
+                f"- Recommendation: {summary.get('recommendation') or 'none'}",
+            ]
+        )
+        for item in leakage_sentinel.get("features", [])[:8]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            mapping = item.get("label_mapping_balanced_accuracy")
+            mapping_text = "-" if mapping is None else _format_value(mapping)
+            lines.append(
+                f"- x{int(item.get('feature_index', 0)) + 1}: "
+                f"risk={item.get('risk_level', '-')}, "
+                f"score={_format_value(item.get('risk_score', '-'))}, "
+                f"AUC={_format_value(item.get('auc', '-'))}, "
+                f"threshold_bal_acc={_format_value(item.get('best_balanced_accuracy', '-'))}, "
+                f"mapping_bal_acc={mapping_text}, "
+                f"unique={item.get('unique_count', '-')}, flags={flags}"
             )
     else:
         lines.append("- None")
@@ -1162,6 +1238,33 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     else:
         lines.append("- None")
 
+    lines.extend(["", "## Learning Curve"])
+    if learning_curve:
+        summary = learning_curve.get("summary", {})
+        lines.extend(
+            [
+                f"- Verdict: {summary.get('verdict', '-')}",
+                f"- First F1: {_format_value(summary.get('first_f1', '-'))}",
+                f"- Final F1: {_format_value(summary.get('final_f1', '-'))}",
+                f"- Best F1: {_format_value(summary.get('best_f1', '-'))}",
+                f"- Best fraction: {_format_value(summary.get('best_fraction', '-'))}",
+                f"- F1 gain: {_format_value(summary.get('f1_gain', '-'))}",
+                f"- Best gap vs final: {_format_value(summary.get('best_gap_vs_final', '-'))}",
+                f"- Recommendation: {summary.get('recommended_next_step') or 'none'}",
+            ]
+        )
+        for item in learning_curve.get("points", [])[:8]:
+            lines.append(
+                f"- fraction={_format_value(item.get('train_fraction', '-'))}: "
+                f"samples={item.get('train_samples', '-')}, "
+                f"F1={_format_value(item.get('f1', '-'))}, "
+                f"accuracy={_format_value(item.get('accuracy', '-'))}, "
+                f"balanced_accuracy={_format_value(item.get('balanced_accuracy', '-'))}, "
+                f"loss={_format_value(item.get('validation_loss', '-'))}"
+            )
+    else:
+        lines.append("- None")
+
     lines.extend(["", "## Calibration Slice Diagnostics"])
     if calibration_slices:
         summary = calibration_slices.get("summary", {})
@@ -1468,6 +1571,36 @@ def format_markdown_report(report: dict[str, Any]) -> str:
         for item in mps_sweep.get("results", [])[:8]:
             lines.append(
                 f"- chi={item.get('bond_dim', '-')}: "
+                f"F1={_format_value(item.get('f1', '-'))}, "
+                f"accuracy={_format_value(item.get('accuracy', '-'))}, "
+                f"Brier={_format_value(item.get('brier_score', '-'))}, "
+                f"ECE={_format_value(item.get('ece', '-'))}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## MPS Site-Order Sweep"])
+    if mps_order_sweep:
+        lines.extend(
+            [
+                f"- Input dimension: {mps_order_sweep.get('input_dim', '-')}",
+                f"- Physical dimension: {mps_order_sweep.get('physical_dim', '-')}",
+                f"- Bond dimension: {mps_order_sweep.get('bond_dim', '-')}",
+                f"- Validation samples: {mps_order_sweep.get('validation_samples', '-')}",
+                f"- Orders tested: {mps_order_sweep.get('orders_tested', [])}",
+                f"- Recommended order: {mps_order_sweep.get('recommended_order_name', '-')}",
+                f"- Recommended feature order (1-based): {mps_order_sweep.get('recommended_feature_order_1_based', [])}",
+                f"- Recommended F1: {_format_value(mps_order_sweep.get('recommended_f1', '-'))}",
+                f"- Original F1: {_format_value(mps_order_sweep.get('original_f1', '-'))}",
+                f"- Delta vs original: {_format_value(mps_order_sweep.get('best_delta_f1_vs_original', '-'))}",
+                f"- Material gain: {mps_order_sweep.get('material_gain', '-')}",
+                f"- Adoption note: {mps_order_sweep.get('adoption_note', '-')}",
+            ]
+        )
+        for item in mps_order_sweep.get("results", [])[:8]:
+            lines.append(
+                f"- order={item.get('order_name', '-')}: "
+                f"features={item.get('feature_order_1_based', [])}, "
                 f"F1={_format_value(item.get('f1', '-'))}, "
                 f"accuracy={_format_value(item.get('accuracy', '-'))}, "
                 f"Brier={_format_value(item.get('brier_score', '-'))}, "
