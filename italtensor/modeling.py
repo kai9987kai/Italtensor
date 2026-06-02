@@ -24,6 +24,7 @@ class ModelConfig:
     backend: str = "auto"
     mps_bond_dim: int = 8
     mps_physical_dim: int = 4
+    optimizer: str = "adam"
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -43,6 +44,7 @@ class ModelConfig:
             "backend": self.backend,
             "mps_bond_dim": self.mps_bond_dim,
             "mps_physical_dim": self.mps_physical_dim,
+            "optimizer": self.optimizer,
         }
 
     @classmethod
@@ -64,6 +66,7 @@ class ModelConfig:
             backend=str(value.get("backend", "auto")),
             mps_bond_dim=int(value.get("mps_bond_dim", 8)),
             mps_physical_dim=int(value.get("mps_physical_dim", 4)),
+            optimizer=str(value.get("optimizer", "adam")),
         )
 
 
@@ -274,13 +277,22 @@ def train_numpy_model(
     base_lr = min(max(config.learning_rate, 1e-4), 0.1)
     lr_schedule = getattr(config, "lr_schedule", "constant")
     gradient_clip = getattr(config, "gradient_clip", 0.0)
+    optimizer = getattr(config, "optimizer", "adam").lower().strip()
     l2 = 1e-4
+    l1 = getattr(config, "l1_penalty", 0.0)
+
+    # Adam state
+    _beta1, _beta2, _eps = 0.9, 0.999, 1e-8
+    m_w = np.zeros_like(weights)
+    v_w = np.zeros_like(weights)
+    m_b = 0.0
+    v_b = 0.0
+
     history: dict[str, list[float]] = {"loss": []}
     if validation_data is not None:
         history["val_loss"] = []
         history["val_accuracy"] = []
 
-    l1 = getattr(config, "l1_penalty", 0.0)
     best_loss = float("inf")
     best_weights = weights.copy()
     best_bias = bias
@@ -305,7 +317,7 @@ def train_numpy_model(
         gradient_w = (x_train_mapped.T @ errors) / normalizer + l2 * weights
         gradient_b = float(errors.sum() / normalizer)
 
-        # Gradient clipping
+        # Gradient clipping (applied before optimizer step)
         if gradient_clip > 0.0:
             grad_norm = float(np.sqrt(np.sum(gradient_w**2) + gradient_b**2))
             if grad_norm > gradient_clip:
@@ -313,13 +325,27 @@ def train_numpy_model(
                 gradient_w = gradient_w * scale
                 gradient_b = gradient_b * scale
 
-        weights = weights - learning_rate * gradient_w
-        bias = bias - learning_rate * gradient_b
-
-        # Soft-thresholding operator for L1 regularization
+        # L1 soft-thresholding (proximal step — applied before parameter update)
         if l1 > 0:
             thresh = learning_rate * l1
             weights = np.sign(weights) * np.maximum(0.0, np.abs(weights) - thresh)
+
+        if optimizer == "adam":
+            t = epoch + 1  # 1-indexed for bias correction
+            m_w = _beta1 * m_w + (1.0 - _beta1) * gradient_w
+            v_w = _beta2 * v_w + (1.0 - _beta2) * (gradient_w ** 2)
+            m_b = _beta1 * m_b + (1.0 - _beta1) * gradient_b
+            v_b = _beta2 * v_b + (1.0 - _beta2) * (gradient_b ** 2)
+            m_w_hat = m_w / (1.0 - _beta1 ** t)
+            v_w_hat = v_w / (1.0 - _beta2 ** t)
+            m_b_hat = m_b / (1.0 - _beta1 ** t)
+            v_b_hat = v_b / (1.0 - _beta2 ** t)
+            weights = weights - learning_rate * m_w_hat / (np.sqrt(v_w_hat) + _eps)
+            bias = bias - learning_rate * m_b_hat / (np.sqrt(v_b_hat) + _eps)
+        else:
+            # Plain SGD fallback
+            weights = weights - learning_rate * gradient_w
+            bias = bias - learning_rate * gradient_b
 
         train_loss = _binary_loss(y_train, _sigmoid(x_train_mapped @ weights + bias), sample_weights, l2, weights)
         if l1 > 0:

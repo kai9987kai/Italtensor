@@ -509,6 +509,8 @@ def _layout(sg):
             sg.Input("0.001", key="-LEARNING_RATE-", size=(6, 1)),
             sg.Text("LR Sched"),
             sg.Combo(["constant", "cosine", "step_decay"], default_value="constant", readonly=True, key="-LR_SCHEDULE-", size=(10, 1)),
+            sg.Text("Optimizer"),
+            sg.Combo(["adam", "sgd"], default_value="adam", readonly=True, key="-OPTIMIZER-", size=(6, 1), tooltip="adam: adaptive learning rates (recommended); sgd: plain gradient descent"),
             sg.Text("Grad Clip"),
             sg.Input("0.0", key="-GRADIENT_CLIP-", size=(6, 1)),
         ],
@@ -1309,6 +1311,7 @@ def _config_from_values(values: dict[str, Any]) -> ModelConfig:
         backend=values.get("-BACKEND-", "auto"),
         mps_bond_dim=mps_bond_dim,
         mps_physical_dim=mps_physical_dim,
+        optimizer=values.get("-OPTIMIZER-", "adam"),
     )
 
 
