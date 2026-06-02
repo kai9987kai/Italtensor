@@ -179,6 +179,31 @@ def test_experiment_advisor_recommends_localized_calibration_review():
     assert "x2[0.40, 0.80]" in calibration["reason"]
 
 
+def test_experiment_advisor_reacts_to_rising_learning_curve():
+    report = build_experiment_advisor(
+        sample_count=120,
+        input_dim=4,
+        labels=[0, 1] * 60,
+        metrics={"f1": 0.78, "accuracy": 0.80, "precision": 0.76, "recall": 0.81},
+        trial_history=[{"metrics": {"f1": 0.78}}] * 3,
+        external_holdout_report={"summary": {"verdict": "holdout_pass", "f1": 0.77}},
+        learning_curve_report={
+            "summary": {
+                "verdict": "more_data_helpful",
+                "final_f1": 0.76,
+                "best_f1": 0.76,
+                "f1_gain": 0.14,
+                "recommended_next_step": "Collect more labeled rows.",
+            }
+        },
+    )
+
+    curve = [item for item in report["recommendations"] if item["source"] == "learning_curve"][0]
+    assert curve["category"] == "data_volume"
+    assert curve["priority"] == "medium"
+    assert "Collect more labeled rows" in curve["action"]
+
+
 def test_experiment_advisor_is_deterministic_and_formats_summary():
     kwargs = {
         "sample_count": 24,

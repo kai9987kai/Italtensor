@@ -38,6 +38,7 @@ def build_promotion_gate(
     population_drift_report: dict[str, Any] | None = None,
     adversarial_validation_report: dict[str, Any] | None = None,
     chronological_holdout_report: dict[str, Any] | None = None,
+    learning_curve_report: dict[str, Any] | None = None,
     selective_risk_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a transparent model-promotion checklist from local experiment evidence."""
@@ -376,6 +377,7 @@ def build_promotion_gate(
         population_drift_report=population_drift_report,
         adversarial_validation_report=adversarial_validation_report,
         chronological_holdout_report=chronological_holdout_report,
+        learning_curve_report=learning_curve_report,
         selective_risk_report=selective_risk_report,
     )
     _add_canary_checks(add, canary_suite_report)
@@ -666,6 +668,7 @@ def _add_repair_and_robustness_checks(
     population_drift_report: dict[str, Any] | None,
     adversarial_validation_report: dict[str, Any] | None,
     chronological_holdout_report: dict[str, Any] | None,
+    learning_curve_report: dict[str, Any] | None,
     selective_risk_report: dict[str, Any] | None,
 ) -> None:
     if calibration_repair_report:
@@ -704,6 +707,42 @@ def _add_repair_and_robustness_checks(
                 evidence=f"stress_f1_ratio={ratio:.3f}.",
                 action="Document the worst perturbation and add monitoring or feature validation.",
                 penalty=8.0,
+            )
+    if learning_curve_report:
+        summary = learning_curve_report.get("summary", {})
+        verdict = str(summary.get("verdict", "stable_enough"))
+        final_f1 = _optional_float(summary.get("final_f1"), fallback=_optional_float(summary.get("best_f1"), fallback=0.0))
+        gain = _optional_float(summary.get("f1_gain"), fallback=0.0)
+        action = str(summary.get("recommended_next_step") or "Review learning-curve diagnostics before promotion.")
+        if verdict == "underfit_or_noisy":
+            add(
+                severity="blocker",
+                category="learning_curve",
+                title="Learning curve shows weak fixed-holdout signal",
+                status="fail",
+                evidence=f"verdict={verdict}, final_f1={float(final_f1):.3f}.",
+                action=action,
+                penalty=16.0,
+            )
+        elif verdict == "more_data_helpful":
+            add(
+                severity="caution",
+                category="learning_curve",
+                title="Learning curve is still data limited",
+                status="review",
+                evidence=f"verdict={verdict}, f1_gain={float(gain):.3f}.",
+                action=action,
+                penalty=7.0,
+            )
+        elif verdict == "capacity_or_regularization_review":
+            add(
+                severity="caution",
+                category="learning_curve",
+                title="Learning curve needs capacity review",
+                status="review",
+                evidence=f"verdict={verdict}, final_f1={float(final_f1):.3f}.",
+                action=action,
+                penalty=6.0,
             )
     if error_atlas_report:
         summary = error_atlas_report.get("summary", {})
@@ -881,6 +920,8 @@ def _must_include(checks: list[dict[str, Any]], metrics: dict[str, float | int],
         items.append("calibration note")
     if any(check["category"] in {"drift", "temporal", "robustness", "prevalence", "external_validation"} for check in checks):
         items.append("deployment-risk note")
+    if any(check["category"] == "learning_curve" for check in checks):
+        items.append("learning-curve note")
     if any(check["category"] == "schema" for check in checks):
         items.append("feature-schema note")
     if any(check["category"] == "ranking" for check in checks):

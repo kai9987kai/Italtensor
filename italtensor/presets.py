@@ -723,6 +723,22 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="learning_curve_lab",
+        name="Learning curve lab",
+        description="Boundary-heavy rows for checking whether validation F1 improves as more training data is used.",
+        default_samples=180,
+        min_samples=24,
+        input_dim=4,
+        recommended_feature_map="quadratic",
+        feature_names=("margin_signal", "support_signal", "boundary_band", "label_noise_probe"),
+        training_defaults={"epochs": 80, "batch_size": 16, "trials": 12, "feature_map": "quadratic"},
+        prediction_examples=(
+            {"name": "Clear negative", "features": [-1.1, -0.5, -0.8, 0.0], "expected_label": 0},
+            {"name": "Boundary learning row", "features": [0.05, 0.0, 1.0, 0.0], "expected_label": None},
+            {"name": "Clear positive", "features": [1.1, 0.5, -0.8, 0.0], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
         key="schema_guard_lab",
         name="Schema guard lab",
         description="A feature-contract dataset with wide scales, low-cardinality codes, dead sensors, sparse spikes, and tail probes.",
@@ -985,6 +1001,8 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _dataset_triage_lab(total, rng)
     elif preset.key == "validation_plan_lab":
         features, labels = _validation_plan_lab(total, rng)
+    elif preset.key == "learning_curve_lab":
+        features, labels = _learning_curve_lab(total, rng)
     elif preset.key == "schema_guard_lab":
         features, labels = _schema_guard_lab(total, rng)
     elif preset.key == "canary_regression_lab":
@@ -2226,6 +2244,27 @@ def _validation_plan_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarr
         [stable_margin, support_signal, regime_shift, prevalence_marker, background_noise]
     ).astype(np.float32)
     return features, labels
+
+
+def _learning_curve_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    labels = _balanced_labels(total)
+    signed = np.where(labels == 1, 1.0, -1.0)
+    margin_signal = signed * 0.85 + rng.normal(0.0, 0.42, size=total)
+    support_signal = signed * 0.45 + rng.normal(0.0, 0.55, size=total)
+    boundary_band = rng.normal(-0.8, 0.25, size=total)
+    label_noise_probe = rng.normal(0.0, 0.45, size=total)
+    boundary_count = max(8, total // 4)
+    boundary_indices = rng.choice(total, size=boundary_count, replace=False)
+    margin_signal[boundary_indices] = rng.normal(0.0, 0.28, size=boundary_count)
+    support_signal[boundary_indices] = rng.normal(0.0, 0.35, size=boundary_count)
+    boundary_band[boundary_indices] = rng.normal(1.0, 0.20, size=boundary_count)
+    flip_count = max(2, total // 20)
+    flip_indices = rng.choice(boundary_indices, size=min(flip_count, boundary_indices.shape[0]), replace=False)
+    labels = labels.copy()
+    labels[flip_indices] = 1 - labels[flip_indices]
+    label_noise_probe[flip_indices] = rng.normal(1.4, 0.20, size=flip_indices.shape[0])
+    features = np.column_stack([margin_signal, support_signal, boundary_band, label_noise_probe]).astype(np.float32)
+    return _shuffle(features, labels.astype(np.int32), rng)
 
 
 def _schema_guard_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:

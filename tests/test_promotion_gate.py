@@ -35,6 +35,39 @@ def test_promotion_gate_promotes_strong_evidence():
     assert report["summary"]["blocker_count"] == 0
 
 
+def test_promotion_gate_cautions_on_data_limited_learning_curve():
+    report = build_promotion_gate(
+        sample_count=120,
+        input_dim=3,
+        labels=[0, 1] * 60,
+        config=ModelConfig(feature_map="linear"),
+        metrics={
+            "f1": 0.88,
+            "accuracy": 0.90,
+            "balanced_accuracy": 0.89,
+            "brier_score": 0.12,
+            "ece": 0.03,
+            "threshold_gain_f1": 0.02,
+        },
+        trial_history=[{"metrics": {"f1": 0.86}}, {"metrics": {"f1": 0.88}}, {"metrics": {"f1": 0.84}}],
+        dataset_triage_report={"summary": {"risk_level": "low", "readiness_score": 92.0, "blocking_issue_count": 0}},
+        trial_inspector_report={"valid_trial_count": 4, "summary": {"leader_margin_f1": 0.06}},
+        learning_curve_report={
+            "summary": {
+                "verdict": "more_data_helpful",
+                "final_f1": 0.80,
+                "best_f1": 0.80,
+                "f1_gain": 0.13,
+                "recommended_next_step": "Collect more labeled rows.",
+            }
+        },
+    )
+
+    assert report["summary"]["verdict"] == "needs_review"
+    assert any(item["title"] == "Learning curve is still data limited" for item in report["checks"])
+    assert "learning-curve note" in report["release_note"]["must_include"]
+
+
 def test_promotion_gate_blocks_high_risk_dataset_and_poor_scores():
     report = build_promotion_gate(
         sample_count=36,

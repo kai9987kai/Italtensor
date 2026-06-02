@@ -225,6 +225,7 @@ def test_experimental_builtin_presets_are_available():
         "Neighborhood hardness lab",
         "Dataset triage lab",
         "Validation plan lab",
+        "Learning curve lab",
         "Schema guard lab",
         "Canary regression lab",
         "Monotonic policy lab",
@@ -284,6 +285,25 @@ def test_validation_plan_lab_preset_preserves_ordered_split_risk():
     ]
     assert report["summary"]["recommended_strategy"] == "chronological_holdout"
     assert report["summary"]["row_order_risk"] is True
+
+
+def test_learning_curve_lab_preset_has_boundary_rows():
+    metadata = preset_metadata("Learning curve lab")
+    dataset = generate_builtin_preset("Learning curve lab", sample_count=120, seed=12)
+
+    assert metadata["input_dim"] == 4
+    assert metadata["recommended_feature_map"] == "quadratic"
+    assert metadata["feature_names"] == [
+        "margin_signal",
+        "support_signal",
+        "boundary_band",
+        "label_noise_probe",
+    ]
+    assert any(example["name"] == "Boundary learning row" for example in metadata["prediction_examples"])
+    assert dataset.sample_count == 120
+    assert set(dataset.labels.tolist()) == {0, 1}
+    assert int(np.sum(dataset.features[:, 2] > 0.7)) >= 20
+    assert int(np.sum(dataset.features[:, 3] > 1.0)) >= 2
 
 
 def test_deployment_drift_preset_has_shifted_prediction_example():

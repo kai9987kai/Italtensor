@@ -528,6 +528,38 @@ def test_report_export_json_and_markdown(tmp_path):
                 }
             ],
         },
+        learning_curve_report={
+            "sample_count": 4,
+            "input_dim": 2,
+            "summary": {
+                "verdict": "more_data_helpful",
+                "first_f1": 0.55,
+                "final_f1": 0.75,
+                "best_f1": 0.75,
+                "best_fraction": 1.0,
+                "f1_gain": 0.20,
+                "best_gap_vs_final": 0.0,
+                "recommended_next_step": "Collect more labeled rows.",
+            },
+            "points": [
+                {
+                    "train_fraction": 0.25,
+                    "train_samples": 2,
+                    "f1": 0.55,
+                    "accuracy": 0.6,
+                    "balanced_accuracy": 0.6,
+                    "validation_loss": 0.7,
+                },
+                {
+                    "train_fraction": 1.0,
+                    "train_samples": 4,
+                    "f1": 0.75,
+                    "accuracy": 0.8,
+                    "balanced_accuracy": 0.8,
+                    "validation_loss": 0.4,
+                },
+            ],
+        },
         selective_risk_report={
             "base": {"error_rate": 0.5},
             "summary": {
@@ -1099,6 +1131,7 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["population_drift_diagnostics"]["summary"]["top_feature"] == 1
     assert saved_json["adversarial_validation_diagnostics"]["summary"]["verdict"] == "strong_multivariate_shift"
     assert saved_json["chronological_holdout_diagnostics"]["summary"]["verdict"] == "severe_temporal_degradation_current_relearns"
+    assert saved_json["learning_curve"]["summary"]["verdict"] == "more_data_helpful"
     assert saved_json["selective_prediction_diagnostics"]["summary"]["recommended_cutoff"] == 0.2
     assert saved_json["model_response_diagnostics"]["summary"]["top_feature"] == 0
     assert saved_json["pairwise_interaction_diagnostics"]["summary"]["top_pair"] == [0, 1]
@@ -1174,6 +1207,8 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "Domain AUC" in saved_markdown
     assert "## Chronological Holdout Diagnostics" in saved_markdown
     assert "Current-baseline F1 gain" in saved_markdown
+    assert "## Learning Curve" in saved_markdown
+    assert "Collect more labeled rows" in saved_markdown
     assert "## Selective Prediction / Risk-Coverage" in saved_markdown
     assert "Recommended cutoff" in saved_markdown
     assert "## Model Response / Partial Dependence" in saved_markdown

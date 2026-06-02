@@ -17,6 +17,7 @@ from italtensor.app import (
     _compare_models,
     _compatible_calibration_slice_report,
     _compatible_capacity_planner_report,
+    _compatible_learning_curve_report,
     _compatible_prior_shift_report,
     _compatible_rank_lift_report,
     _compatible_reliability_atlas_report,
@@ -39,6 +40,7 @@ from italtensor.data import DataValidationError, validate_dataset
 from italtensor.modeling import ModelConfig
 from italtensor.capacity_planner import capacity_planner_dataset_fingerprint
 from italtensor.calibration_slices import calibration_slice_dataset_fingerprint
+from italtensor.learning_curves import learning_curve_dataset_fingerprint
 from italtensor.preprocessing import FeatureStandardizer
 from italtensor.prior_shift import prior_shift_dataset_fingerprint
 from italtensor.rank_lift import rank_lift_dataset_fingerprint
@@ -116,6 +118,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         latest_population_drift_report={"summary": {"top_feature": 1}},
         latest_adversarial_validation_report={"summary": {"verdict": "strong_multivariate_shift"}},
         latest_chronological_holdout_report={"summary": {"verdict": "severe_temporal_degradation"}},
+        latest_learning_curve_report={"summary": {"verdict": "more_data_helpful"}},
         latest_cartography_report={"region_counts": {"easy_to_learn": 1}},
         latest_ood_sentinel_report={"summary": {"top_row_index": 3}},
         latest_bootstrap_stability_report={"summary": {"top_row_index": 4}},
@@ -173,6 +176,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
     assert state.latest_population_drift_report is None
     assert state.latest_adversarial_validation_report is None
     assert state.latest_chronological_holdout_report is None
+    assert state.latest_learning_curve_report is None
     assert state.latest_cartography_report is None
     assert state.latest_ood_sentinel_report is None
     assert state.latest_bootstrap_stability_report is None
@@ -408,6 +412,21 @@ def test_compatible_shadow_replay_report_rejects_mismatched_or_reordered_dataset
 
     assert _compatible_shadow_replay_report(matching, state) == matching
     assert _compatible_shadow_replay_report(reordered, state) is None
+
+
+def test_compatible_learning_curve_report_rejects_mismatched_or_reordered_dataset():
+    state = AppState(features=[[0.1], [0.9], [0.2], [0.8]], labels=[0, 1, 0, 1], input_dim=1)
+    matching = {
+        "dataset_fingerprint": learning_curve_dataset_fingerprint(state.features, state.labels),
+        "summary": {"verdict": "stable_enough"},
+    }
+    reordered = {
+        "dataset_fingerprint": learning_curve_dataset_fingerprint([[0.2], [0.1], [0.8], [0.9]], [0, 0, 1, 1]),
+        "summary": {"verdict": "more_data_helpful"},
+    }
+
+    assert _compatible_learning_curve_report(matching, state) == matching
+    assert _compatible_learning_curve_report(reordered, state) is None
 
 
 def test_compatible_threshold_stability_report_rejects_mismatched_dataset():
@@ -965,6 +984,34 @@ def test_handle_worker_done_stores_validation_plan_without_mutating_model():
     assert state.busy is False
     assert "Validation plan" in window["-LOG-"].value
     assert "Use stratified cross-validation" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_learning_curve_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(model=object(), latest_metrics={"f1": 0.9}, busy=True)
+    model = state.model
+    report = {
+        "summary": {
+            "verdict": "more_data_helpful",
+            "best_f1": 0.82,
+            "final_f1": 0.82,
+            "f1_gain": 0.14,
+            "recommended_next_step": "Collect more labeled rows.",
+        },
+        "points": [
+            {"train_fraction": 0.25, "train_samples": 8, "f1": 0.68, "accuracy": 0.70},
+            {"train_fraction": 1.0, "train_samples": 32, "f1": 0.82, "accuracy": 0.84},
+        ],
+    }
+
+    _handle_worker_done(window, state, ("learning_curve", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_learning_curve_report == report
+    assert state.busy is False
+    assert "Learning curve" in window["-LOG-"].value
+    assert "Curve fraction=1.00" in window["-LOG-"].value
 
 
 def test_handle_worker_done_stores_schema_guard_without_mutating_model():

@@ -32,6 +32,7 @@ def build_experiment_advisor(
     population_drift_report: dict[str, Any] | None = None,
     adversarial_validation_report: dict[str, Any] | None = None,
     chronological_holdout_report: dict[str, Any] | None = None,
+    learning_curve_report: dict[str, Any] | None = None,
     max_recommendations: int = 8,
 ) -> dict[str, Any]:
     """Rank practical next experiments from current dataset, model, and diagnostic evidence."""
@@ -132,6 +133,7 @@ def build_experiment_advisor(
         population_drift_report=population_drift_report,
         adversarial_validation_report=adversarial_validation_report,
         chronological_holdout_report=chronological_holdout_report,
+        learning_curve_report=learning_curve_report,
         prototype_audit_report=prototype_audit_report,
         ood_sentinel_report=ood_sentinel_report,
     )
@@ -279,6 +281,7 @@ def _add_report_recommendations(
     population_drift_report: dict[str, Any] | None,
     adversarial_validation_report: dict[str, Any] | None,
     chronological_holdout_report: dict[str, Any] | None,
+    learning_curve_report: dict[str, Any] | None,
     prototype_audit_report: dict[str, Any] | None,
     ood_sentinel_report: dict[str, Any] | None,
 ) -> None:
@@ -348,6 +351,45 @@ def _add_report_recommendations(
                 action=str(summary.get("recommendation") or "Compare holdout errors, calibration, and shift against internal validation."),
                 source="external_holdout",
                 expected_signal="Holdout evidence should either confirm deployment readiness or identify the dataset shift to resolve.",
+            )
+    if learning_curve_report:
+        summary = learning_curve_report.get("summary", {})
+        verdict = str(summary.get("verdict", "stable_enough"))
+        final_f1 = float(summary.get("final_f1", summary.get("best_f1", 0.0)) or 0.0)
+        gain = float(summary.get("f1_gain", 0.0) or 0.0)
+        action = str(summary.get("recommended_next_step") or "Review learning-curve diagnostics before the next run.")
+        if verdict == "underfit_or_noisy":
+            add(
+                score=84.0,
+                priority="high",
+                category="data_quality",
+                title="Resolve weak learning-curve signal",
+                reason=f"Fixed-holdout learning curve ends at F1={final_f1:.3f}, below the practical checkpoint.",
+                action=action,
+                source="learning_curve",
+                expected_signal="Later runs should show a higher final fixed-holdout F1 before promotion.",
+            )
+        elif verdict == "more_data_helpful":
+            add(
+                score=68.0,
+                priority="medium",
+                category="data_volume",
+                title="Collect labels where the learning curve is still rising",
+                reason=f"Fixed-holdout F1 improved by {gain:.3f} as training size increased.",
+                action=action,
+                source="learning_curve",
+                expected_signal="After adding reviewed labels, the final point should rise or the curve should flatten.",
+            )
+        elif verdict == "capacity_or_regularization_review":
+            add(
+                score=60.0,
+                priority="medium",
+                category="model_selection",
+                title="Review capacity or regularization against the learning curve",
+                reason="The best learning-curve point did not come from the largest training fraction.",
+                action=action,
+                source="learning_curve",
+                expected_signal="Reruns should reduce the gap between the best point and the full-training point.",
             )
     if calibration_slice_report:
         summary = calibration_slice_report.get("summary", {})

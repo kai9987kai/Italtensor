@@ -103,7 +103,11 @@ from .scoring import load_reviewed_prediction_csv, score_prediction_csv
 from .selective_risk import format_selective_risk_summary, run_selective_risk_diagnostics
 from .subgroup_disparity import format_subgroup_disparity_summary, run_subgroup_disparity_diagnostics
 from .audit import audit_dataset, format_audit_summary
-from .learning_curves import format_learning_curve_summary, run_learning_curve_diagnostics
+from .learning_curves import (
+    format_learning_curve_summary,
+    learning_curve_dataset_fingerprint,
+    run_learning_curve_diagnostics,
+)
 from .leakage_sentinel import (
     format_leakage_sentinel_summary,
     leakage_sentinel_dataset_fingerprint,
@@ -1539,6 +1543,20 @@ def _compatible_leakage_sentinel_report(report: Any, state: AppState) -> dict[st
     return report
 
 
+def _compatible_learning_curve_report(report: Any, state: AppState) -> dict[str, Any] | None:
+    if not isinstance(report, dict):
+        return None
+    stored_fingerprint = report.get("dataset_fingerprint")
+    if stored_fingerprint and state.features and state.labels:
+        try:
+            current_fingerprint = learning_curve_dataset_fingerprint(state.features, state.labels)
+        except ValueError:
+            return None
+        if current_fingerprint != stored_fingerprint:
+            return None
+    return report
+
+
 def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     model, metadata = load_model_bundle(_required_path(values["-MODEL_PATH-"], "model path"))
     input_dim = metadata.get("input_dim")
@@ -1697,7 +1715,13 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_chronological_holdout_report = (
         chronological_holdout_report if isinstance(chronological_holdout_report, dict) else None
     )
-    state.latest_learning_curve_report = learning_curve_report if isinstance(learning_curve_report, dict) else None
+    state.latest_learning_curve_report = _compatible_learning_curve_report(learning_curve_report, state)
+    if (
+        isinstance(learning_curve_report, dict)
+        and state.latest_learning_curve_report is None
+        and learning_curve_report.get("dataset_fingerprint")
+    ):
+        _log(window, "Skipped stored learning curve because it was created for a different loaded dataset.")
     state.latest_cartography_report = cartography_report if isinstance(cartography_report, dict) else None
     state.latest_ood_sentinel_report = ood_sentinel_report if isinstance(ood_sentinel_report, dict) else None
     state.latest_bootstrap_stability_report = (
@@ -4073,6 +4097,7 @@ def _start_experiment_advisor(window, state: AppState) -> None:
             population_drift_report=state.latest_population_drift_report,
             adversarial_validation_report=state.latest_adversarial_validation_report,
             chronological_holdout_report=state.latest_chronological_holdout_report,
+            learning_curve_report=state.latest_learning_curve_report,
         )
         return "experiment_advisor", report
 
@@ -4123,6 +4148,7 @@ def _start_promotion_gate(window, state: AppState) -> None:
             population_drift_report=state.latest_population_drift_report,
             adversarial_validation_report=state.latest_adversarial_validation_report,
             chronological_holdout_report=state.latest_chronological_holdout_report,
+            learning_curve_report=state.latest_learning_curve_report,
             selective_risk_report=state.latest_selective_risk_report,
         )
         return "promotion_gate", report
