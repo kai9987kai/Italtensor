@@ -1976,6 +1976,9 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         _log(window, _format_uncertainty(training_result.uncertainty))
         _log(window, _format_cv_summary(training_result.metrics))
         _log(window, _format_importances(training_result.feature_importances))
+        if training_result.history:
+            from .curves import render_loss_history
+            _log(window, "\n" + render_loss_history(training_result.history))
     elif kind == "automl":
         best_params, best_result = result
         state.model = best_result.model
@@ -2028,6 +2031,9 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         _log(window, _format_calibration(best_result.metrics))
         _log(window, _format_uncertainty(best_result.uncertainty))
         _log(window, _format_importances(best_result.feature_importances))
+        if best_result.history:
+            from .curves import render_loss_history
+            _log(window, "\n" + render_loss_history(best_result.history))
 
         try:
             window["-LEARNING_RATE-"].update(f"{best_params['learning_rate']:.6f}")
@@ -2104,6 +2110,9 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         _log(window, _format_calibration(best.metrics))
         _log(window, _format_uncertainty(best.uncertainty))
         _log(window, _format_importances(best.feature_importances))
+        if best.history:
+            from .curves import render_loss_history
+            _log(window, "\n" + render_loss_history(best.history))
     elif kind == "batch_predictions":
         path, count = result
         _log(window, f"Exported {count} batch prediction(s) to {path}.")
