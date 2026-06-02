@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from italtensor.curves import compute_roc_curve, compute_pr_curve, render_ascii_curve, render_evaluation_curves
+from italtensor.curves import compute_roc_curve, compute_pr_curve, render_ascii_curve, render_evaluation_curves, render_loss_history
 
 def test_compute_curves():
     # Simple binary test set
@@ -48,3 +48,30 @@ def test_render_evaluation_curves():
     output = render_evaluation_curves(y_true, y_prob)
     assert "Receiver Operating Characteristic" in output
     assert "Precision-Recall" in output
+
+
+def test_render_loss_history_with_val_and_train_loss():
+    history = {
+        "loss": [0.9, 0.7, 0.5, 0.4, 0.35],
+        "val_loss": [0.95, 0.75, 0.55, 0.48, 0.42],
+    }
+    output = render_loss_history(history)
+    assert "Training" in output or "train" in output.lower() or "loss" in output.lower()
+    # Should be a multi-line ASCII chart
+    assert "\n" in output
+    # Sanity: contains some numeric content (epoch labels)
+    assert any(c.isdigit() for c in output)
+
+
+def test_render_loss_history_empty_history_returns_string():
+    """render_loss_history must not raise for an empty dict or missing keys."""
+    output = render_loss_history({})
+    assert isinstance(output, str)
+
+
+def test_render_loss_history_single_key():
+    """Renders without crashing when only 'loss' key is present."""
+    history = {"loss": [0.8, 0.6, 0.5]}
+    output = render_loss_history(history)
+    assert isinstance(output, str)
+    assert len(output) > 0

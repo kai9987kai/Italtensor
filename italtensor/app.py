@@ -2918,6 +2918,11 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         _update_slots_listbox(window, state)
         _log(window, f"Multi-backend sweep complete ({len(result)} runs). Best: {_format_config(best.config)}")
         _log(window, f"Best metrics: {_format_metrics(best.metrics)}")
+        _log(window, _format_calibration(best.metrics))
+        _log(window, _format_uncertainty(best.uncertainty))
+        if best.history:
+            from .curves import render_loss_history
+            _log(window, "\n" + render_loss_history(best.history))
     elif kind == "distill":
         training_result = result
         state.model = training_result.model
@@ -2982,6 +2987,9 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         _log(window, f"Metrics: {_format_metrics(training_result.metrics)}")
         _log(window, _format_calibration(training_result.metrics))
         _log(window, _format_uncertainty(training_result.uncertainty))
+        if training_result.history:
+            from .curves import render_loss_history
+            _log(window, "\n" + render_loss_history(training_result.history))
 
 
 def _start_worker(window, state: AppState, status: str, task: Callable[[], tuple[str, Any]]) -> None:
