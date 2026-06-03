@@ -25,6 +25,7 @@ class ModelConfig:
     mps_bond_dim: int = 8
     mps_physical_dim: int = 4
     optimizer: str = "adam"
+    lr_warmup_epochs: int = 0
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -45,6 +46,7 @@ class ModelConfig:
             "mps_bond_dim": self.mps_bond_dim,
             "mps_physical_dim": self.mps_physical_dim,
             "optimizer": self.optimizer,
+            "lr_warmup_epochs": self.lr_warmup_epochs,
         }
 
     @classmethod
@@ -67,6 +69,7 @@ class ModelConfig:
             mps_bond_dim=int(value.get("mps_bond_dim", 8)),
             mps_physical_dim=int(value.get("mps_physical_dim", 4)),
             optimizer=str(value.get("optimizer", "adam")),
+            lr_warmup_epochs=int(value.get("lr_warmup_epochs", 0)),
         )
 
 
@@ -271,22 +274,27 @@ def train_numpy_model(
     rng = np.random.default_rng(config.random_seed)
     feature_map = _build_feature_map(x_train.shape[1], config, rng)
     x_train_mapped = feature_map.transform(x_train)
-    weights = rng.normal(0.0, 0.05, size=x_train_mapped.shape[1]).astype(np.float32)
+    # Xavier/Glorot initialisation: std = 1/sqrt(fan_in) for logistic output
+    fan_in = max(x_train_mapped.shape[1], 1)
+    weights = rng.normal(0.0, 1.0 / np.sqrt(fan_in), size=fan_in).astype(np.float32)
     bias = 0.0
     sample_weights = _sample_weights(y_train, class_weight)
     base_lr = min(max(config.learning_rate, 1e-4), 0.1)
     lr_schedule = getattr(config, "lr_schedule", "constant")
     gradient_clip = getattr(config, "gradient_clip", 0.0)
     optimizer = getattr(config, "optimizer", "adam").lower().strip()
+    batch_size = max(1, int(config.batch_size))
+    lr_warmup_epochs = max(0, int(getattr(config, "lr_warmup_epochs", 0)))
     l2 = 1e-4
     l1 = getattr(config, "l1_penalty", 0.0)
 
-    # Adam state
+    # Adam moment accumulators (updated per mini-batch)
     _beta1, _beta2, _eps = 0.9, 0.999, 1e-8
     m_w = np.zeros_like(weights)
     v_w = np.zeros_like(weights)
     m_b = 0.0
     v_b = 0.0
+    adam_t = 0  # global step counter (per mini-batch, not per epoch)
 
     history: dict[str, list[float]] = {"loss": []}
     if validation_data is not None:
@@ -300,57 +308,82 @@ def train_numpy_model(
     epochs = max(1, int(config.max_epochs))
 
     for epoch in range(epochs):
-        # Adjust learning rate based on schedule
-        if lr_schedule == "cosine":
-            lr_min = 1e-6
-            learning_rate = lr_min + 0.5 * (base_lr - lr_min) * (1.0 + np.cos(np.pi * epoch / epochs))
-        elif lr_schedule == "step_decay":
-            decay_steps = epoch // max(1, int(config.patience))
-            learning_rate = base_lr * (0.5 ** decay_steps)
+        # Per-epoch LR schedule with optional linear warmup
+        if lr_warmup_epochs > 0 and epoch < lr_warmup_epochs:
+            warmup_factor = (epoch + 1) / lr_warmup_epochs
+            schedule_lr = base_lr  # warmup overrides schedule
         else:
-            learning_rate = base_lr
+            warmup_factor = 1.0
+            if lr_schedule == "cosine":
+                lr_min = 1e-6
+                schedule_lr = lr_min + 0.5 * (base_lr - lr_min) * (
+                    1.0 + np.cos(np.pi * max(epoch - lr_warmup_epochs, 0) / max(epochs - lr_warmup_epochs, 1))
+                )
+            elif lr_schedule == "step_decay":
+                decay_steps = epoch // max(1, int(config.patience))
+                schedule_lr = base_lr * (0.5 ** decay_steps)
+            else:
+                schedule_lr = base_lr
+        learning_rate = schedule_lr * (warmup_factor if lr_warmup_epochs > 0 and epoch < lr_warmup_epochs else 1.0)
 
-        logits = x_train_mapped @ weights + bias
-        probabilities = _sigmoid(logits)
-        errors = (probabilities - y_train) * sample_weights
-        normalizer = max(float(sample_weights.sum()), 1.0)
-        gradient_w = (x_train_mapped.T @ errors) / normalizer + l2 * weights
-        gradient_b = float(errors.sum() / normalizer)
+        # Shuffle indices for this epoch
+        indices = np.arange(x_train_mapped.shape[0])
+        rng.shuffle(indices)
+        epoch_loss = 0.0
+        n_batches = 0
 
-        # Gradient clipping (applied before optimizer step)
-        if gradient_clip > 0.0:
-            grad_norm = float(np.sqrt(np.sum(gradient_w**2) + gradient_b**2))
-            if grad_norm > gradient_clip:
-                scale = gradient_clip / (grad_norm + 1e-8)
-                gradient_w = gradient_w * scale
-                gradient_b = gradient_b * scale
+        for start in range(0, x_train_mapped.shape[0], batch_size):
+            adam_t += 1
+            batch_idx = indices[start : start + batch_size]
+            xb = x_train_mapped[batch_idx]      # (B, D)
+            yb = y_train[batch_idx]             # (B,)
+            wb = sample_weights[batch_idx]      # (B,)
 
-        # L1 soft-thresholding (proximal step — applied before parameter update)
-        if l1 > 0:
-            thresh = learning_rate * l1
-            weights = np.sign(weights) * np.maximum(0.0, np.abs(weights) - thresh)
+            logits = xb @ weights + bias
+            probabilities = _sigmoid(logits)
+            errors = (probabilities - yb) * wb
+            normalizer = max(float(wb.sum()), 1.0)
+            gradient_w = (xb.T @ errors) / normalizer + l2 * weights
+            gradient_b = float(errors.sum() / normalizer)
 
-        if optimizer == "adam":
-            t = epoch + 1  # 1-indexed for bias correction
-            m_w = _beta1 * m_w + (1.0 - _beta1) * gradient_w
-            v_w = _beta2 * v_w + (1.0 - _beta2) * (gradient_w ** 2)
-            m_b = _beta1 * m_b + (1.0 - _beta1) * gradient_b
-            v_b = _beta2 * v_b + (1.0 - _beta2) * (gradient_b ** 2)
-            m_w_hat = m_w / (1.0 - _beta1 ** t)
-            v_w_hat = v_w / (1.0 - _beta2 ** t)
-            m_b_hat = m_b / (1.0 - _beta1 ** t)
-            v_b_hat = v_b / (1.0 - _beta2 ** t)
-            weights = weights - learning_rate * m_w_hat / (np.sqrt(v_w_hat) + _eps)
-            bias = bias - learning_rate * m_b_hat / (np.sqrt(v_b_hat) + _eps)
-        else:
-            # Plain SGD fallback
-            weights = weights - learning_rate * gradient_w
-            bias = bias - learning_rate * gradient_b
+            # Gradient clipping (applied before optimizer step)
+            if gradient_clip > 0.0:
+                grad_norm = float(np.sqrt(np.sum(gradient_w**2) + gradient_b**2))
+                if grad_norm > gradient_clip:
+                    scale = gradient_clip / (grad_norm + 1e-8)
+                    gradient_w = gradient_w * scale
+                    gradient_b = gradient_b * scale
 
-        train_loss = _binary_loss(y_train, _sigmoid(x_train_mapped @ weights + bias), sample_weights, l2, weights)
-        if l1 > 0:
-            train_loss += l1 * float(np.sum(np.abs(weights)))
-        history["loss"].append(train_loss)
+            # L1 soft-thresholding (proximal step — applied before parameter update)
+            if l1 > 0:
+                thresh = learning_rate * l1
+                weights = np.sign(weights) * np.maximum(0.0, np.abs(weights) - thresh)
+
+            if optimizer == "adam":
+                m_w = _beta1 * m_w + (1.0 - _beta1) * gradient_w
+                v_w = _beta2 * v_w + (1.0 - _beta2) * (gradient_w ** 2)
+                m_b = _beta1 * m_b + (1.0 - _beta1) * gradient_b
+                v_b = _beta2 * v_b + (1.0 - _beta2) * (gradient_b ** 2)
+                m_w_hat = m_w / (1.0 - _beta1 ** adam_t)
+                v_w_hat = v_w / (1.0 - _beta2 ** adam_t)
+                m_b_hat = m_b / (1.0 - _beta1 ** adam_t)
+                v_b_hat = v_b / (1.0 - _beta2 ** adam_t)
+                weights = weights - learning_rate * m_w_hat / (np.sqrt(v_w_hat) + _eps)
+                bias = bias - learning_rate * m_b_hat / (np.sqrt(v_b_hat) + _eps)
+            else:
+                # Plain mini-batch SGD fallback
+                weights = weights - learning_rate * gradient_w
+                bias = bias - learning_rate * gradient_b
+
+            # Accumulate batch loss for epoch average
+            batch_probs = _sigmoid(xb @ weights + bias)
+            batch_loss = _binary_loss(yb, batch_probs, wb, l2, weights)
+            if l1 > 0:
+                batch_loss += l1 * float(np.sum(np.abs(weights)))
+            epoch_loss += batch_loss
+            n_batches += 1
+
+        history["loss"].append(epoch_loss / max(n_batches, 1))
 
         if validation_data is not None:
             x_val, y_val = validation_data
