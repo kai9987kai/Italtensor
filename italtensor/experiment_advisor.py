@@ -33,6 +33,7 @@ def build_experiment_advisor(
     adversarial_validation_report: dict[str, Any] | None = None,
     chronological_holdout_report: dict[str, Any] | None = None,
     learning_curve_report: dict[str, Any] | None = None,
+    data_acquisition_report: dict[str, Any] | None = None,
     max_recommendations: int = 8,
 ) -> dict[str, Any]:
     """Rank practical next experiments from current dataset, model, and diagnostic evidence."""
@@ -134,6 +135,7 @@ def build_experiment_advisor(
         adversarial_validation_report=adversarial_validation_report,
         chronological_holdout_report=chronological_holdout_report,
         learning_curve_report=learning_curve_report,
+        data_acquisition_report=data_acquisition_report,
         prototype_audit_report=prototype_audit_report,
         ood_sentinel_report=ood_sentinel_report,
     )
@@ -282,6 +284,7 @@ def _add_report_recommendations(
     adversarial_validation_report: dict[str, Any] | None,
     chronological_holdout_report: dict[str, Any] | None,
     learning_curve_report: dict[str, Any] | None,
+    data_acquisition_report: dict[str, Any] | None,
     prototype_audit_report: dict[str, Any] | None,
     ood_sentinel_report: dict[str, Any] | None,
 ) -> None:
@@ -325,7 +328,7 @@ def _add_report_recommendations(
             action="Use Evaluate holdout with a labeled CSV that was not used for training, tuning, or threshold selection.",
             source="missing_external_holdout",
             expected_signal="External holdout F1, calibration, and shift checks should agree with the internal validation story.",
-        )
+            )
     if external_holdout_report:
         summary = external_holdout_report.get("summary", {})
         verdict = str(summary.get("verdict", "holdout_performance_review"))
@@ -351,6 +354,33 @@ def _add_report_recommendations(
                 action=str(summary.get("recommendation") or "Compare holdout errors, calibration, and shift against internal validation."),
                 source="external_holdout",
                 expected_signal="Holdout evidence should either confirm deployment readiness or identify the dataset shift to resolve.",
+            )
+    if data_acquisition_report:
+        summary = data_acquisition_report.get("summary", {})
+        priority = str(summary.get("priority", "low"))
+        budget = int(summary.get("recommended_label_budget", 0) or 0)
+        next_step = str(summary.get("recommended_next_step") or "Follow the data acquisition plan.")
+        if priority == "high":
+            add(
+                score=89.0,
+                priority="high",
+                category="data_collection",
+                title="Follow the high-priority data acquisition plan",
+                reason=f"The planner recommends {budget} label(s) before the next serious model-selection pass.",
+                action=next_step,
+                source="data_acquisition_plan",
+                expected_signal="After collecting labels, planner priority should fall and validation evidence should become less fragile.",
+            )
+        elif priority == "medium":
+            add(
+                score=63.0,
+                priority="medium",
+                category="data_collection",
+                title="Target the planner's boundary or coverage gaps",
+                reason=f"The planner found targeted acquisition gaps with a suggested budget of {budget}.",
+                action=next_step,
+                source="data_acquisition_plan",
+                expected_signal="Boundary/tail candidate counts should fall or become documented after review.",
             )
     if learning_curve_report:
         summary = learning_curve_report.get("summary", {})

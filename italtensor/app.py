@@ -11,6 +11,11 @@ from .data import (
     parse_training_example,
     validate_dataset,
 )
+from .data_acquisition import (
+    data_acquisition_dataset_fingerprint,
+    format_data_acquisition_summary,
+    run_data_acquisition_planner,
+)
 from .canary_suite import format_canary_suite_summary, run_canary_suite
 from .calibration_slices import (
     calibration_slice_dataset_fingerprint,
@@ -202,6 +207,7 @@ class AppState:
     latest_neighborhood_hardness_report: dict[str, Any] | None = None
     latest_dataset_triage_report: dict[str, Any] | None = None
     latest_validation_plan_report: dict[str, Any] | None = None
+    latest_data_acquisition_report: dict[str, Any] | None = None
     latest_experiment_advisor_report: dict[str, Any] | None = None
     latest_trial_inspector_report: dict[str, Any] | None = None
     latest_promotion_gate_report: dict[str, Any] | None = None
@@ -324,6 +330,8 @@ def run_app() -> None:
                 _start_dataset_triage(window, state)
             elif event == "-VALIDATION_PLAN-":
                 _start_validation_plan(window, state)
+            elif event == "-DATA_ACQUISITION-":
+                _start_data_acquisition(window, state)
             elif event == "-SCHEMA_GUARD-":
                 _start_schema_guard(window, state)
             elif event == "-LEAKAGE_SENTINEL-":
@@ -652,6 +660,7 @@ def _layout(sg):
         [
             sg.Button("Dataset triage", key="-DATASET_TRIAGE-", expand_x=True),
             sg.Button("Validation plan", key="-VALIDATION_PLAN-", expand_x=True),
+            sg.Button("Data plan", key="-DATA_ACQUISITION-", expand_x=True),
             sg.Button("Schema guard", key="-SCHEMA_GUARD-", expand_x=True),
             sg.Button("Leakage sentinel", key="-LEAKAGE_SENTINEL-", expand_x=True),
             sg.Button("Canary suite", key="-CANARY_SUITE-", expand_x=True),
@@ -1410,6 +1419,7 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         neighborhood_hardness_report=state.latest_neighborhood_hardness_report,
         dataset_triage_report=state.latest_dataset_triage_report,
         validation_plan_report=state.latest_validation_plan_report,
+        data_acquisition_report=state.latest_data_acquisition_report,
         experiment_advisor_report=state.latest_experiment_advisor_report,
         trial_inspector_report=state.latest_trial_inspector_report,
         promotion_gate_report=state.latest_promotion_gate_report,
@@ -1560,6 +1570,20 @@ def _compatible_learning_curve_report(report: Any, state: AppState) -> dict[str,
     return report
 
 
+def _compatible_data_acquisition_report(report: Any, state: AppState) -> dict[str, Any] | None:
+    if not isinstance(report, dict):
+        return None
+    stored_fingerprint = report.get("dataset_fingerprint")
+    if stored_fingerprint and state.features and state.labels:
+        try:
+            current_fingerprint = data_acquisition_dataset_fingerprint(state.features, state.labels)
+        except ValueError:
+            return None
+        if current_fingerprint != stored_fingerprint:
+            return None
+    return report
+
+
 def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     model, metadata = load_model_bundle(_required_path(values["-MODEL_PATH-"], "model path"))
     input_dim = metadata.get("input_dim")
@@ -1629,6 +1653,7 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     neighborhood_hardness_report = metadata.get("neighborhood_hardness")
     dataset_triage_report = metadata.get("dataset_triage")
     validation_plan_report = metadata.get("validation_plan")
+    data_acquisition_report = metadata.get("data_acquisition_plan")
     experiment_advisor_report = metadata.get("experiment_advisor")
     trial_inspector_report = metadata.get("trial_inspector")
     promotion_gate_report = metadata.get("promotion_gate")
@@ -1755,6 +1780,13 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     )
     state.latest_dataset_triage_report = dataset_triage_report if isinstance(dataset_triage_report, dict) else None
     state.latest_validation_plan_report = validation_plan_report if isinstance(validation_plan_report, dict) else None
+    state.latest_data_acquisition_report = _compatible_data_acquisition_report(data_acquisition_report, state)
+    if (
+        isinstance(data_acquisition_report, dict)
+        and state.latest_data_acquisition_report is None
+        and data_acquisition_report.get("dataset_fingerprint")
+    ):
+        _log(window, "Skipped stored data acquisition plan because it was created for a different loaded dataset.")
     if state.latest_dataset_triage_report is not None:
         state.latest_feature_separability_report = state.latest_feature_separability_report or _dict_or_none(
             state.latest_dataset_triage_report.get("feature_separability")
@@ -1836,6 +1868,7 @@ def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
         neighborhood_hardness_report=state.latest_neighborhood_hardness_report,
         dataset_triage_report=state.latest_dataset_triage_report,
         validation_plan_report=state.latest_validation_plan_report,
+        data_acquisition_report=state.latest_data_acquisition_report,
         experiment_advisor_report=state.latest_experiment_advisor_report,
         trial_inspector_report=state.latest_trial_inspector_report,
         promotion_gate_report=state.latest_promotion_gate_report,
@@ -2589,6 +2622,24 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                 f"[{item.get('priority', '-')}/{item.get('category', '-')}] "
                 f"{item.get('title', '-')}: {item.get('action', '-')}",
             )
+    elif kind == "data_acquisition":
+        state.latest_data_acquisition_report = result
+        state.latest_experiment_advisor_report = None
+        state.latest_promotion_gate_report = None
+        _log(window, format_data_acquisition_summary(result))
+        for item in result.get("recommendations", [])[:5]:
+            _log(
+                window,
+                f"  {int(item.get('rank', 0))}. "
+                f"[{item.get('priority', '-')}/{item.get('category', '-')}] "
+                f"{item.get('title', '-')}: {item.get('action', '-')}",
+            )
+        for item in result.get("row_candidates", [])[:5]:
+            _log(
+                window,
+                f"  row {int(item.get('row_index', 0))}: "
+                f"{item.get('candidate_type', '-')} score={float(item.get('score') or 0.0):.3f}",
+            )
     elif kind == "experiment_advisor":
         state.latest_experiment_advisor_report = result
         _log(window, format_experiment_advisor_summary(result))
@@ -3132,6 +3183,7 @@ def _invalidate_model_artifacts(state: AppState) -> None:
     state.latest_neighborhood_hardness_report = None
     state.latest_dataset_triage_report = None
     state.latest_validation_plan_report = None
+    state.latest_data_acquisition_report = None
     state.latest_experiment_advisor_report = None
     state.latest_trial_inspector_report = None
     state.latest_promotion_gate_report = None
@@ -4007,6 +4059,17 @@ def _start_validation_plan(window, state: AppState) -> None:
     _start_worker(window, state, "Building validation plan...", task)
 
 
+def _start_data_acquisition(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    dataset = validate_dataset(state.features, state.labels, min_samples=2, require_two_classes=False)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_data_acquisition_planner(dataset.features, dataset.labels)
+        return "data_acquisition", report
+
+    _start_worker(window, state, "Planning next labels to acquire...", task)
+
+
 def _start_schema_guard(window, state: AppState) -> None:
     _ensure_not_busy(state)
     dataset = validate_dataset(state.features, state.labels, min_samples=2, require_two_classes=False)
@@ -4118,6 +4181,7 @@ def _start_experiment_advisor(window, state: AppState) -> None:
             adversarial_validation_report=state.latest_adversarial_validation_report,
             chronological_holdout_report=state.latest_chronological_holdout_report,
             learning_curve_report=state.latest_learning_curve_report,
+            data_acquisition_report=state.latest_data_acquisition_report,
         )
         return "experiment_advisor", report
 
@@ -4169,6 +4233,7 @@ def _start_promotion_gate(window, state: AppState) -> None:
             adversarial_validation_report=state.latest_adversarial_validation_report,
             chronological_holdout_report=state.latest_chronological_holdout_report,
             learning_curve_report=state.latest_learning_curve_report,
+            data_acquisition_report=state.latest_data_acquisition_report,
             selective_risk_report=state.latest_selective_risk_report,
         )
         return "promotion_gate", report

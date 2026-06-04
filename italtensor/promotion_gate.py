@@ -39,6 +39,7 @@ def build_promotion_gate(
     adversarial_validation_report: dict[str, Any] | None = None,
     chronological_holdout_report: dict[str, Any] | None = None,
     learning_curve_report: dict[str, Any] | None = None,
+    data_acquisition_report: dict[str, Any] | None = None,
     selective_risk_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a transparent model-promotion checklist from local experiment evidence."""
@@ -378,6 +379,7 @@ def build_promotion_gate(
         adversarial_validation_report=adversarial_validation_report,
         chronological_holdout_report=chronological_holdout_report,
         learning_curve_report=learning_curve_report,
+        data_acquisition_report=data_acquisition_report,
         selective_risk_report=selective_risk_report,
     )
     _add_canary_checks(add, canary_suite_report)
@@ -669,6 +671,7 @@ def _add_repair_and_robustness_checks(
     adversarial_validation_report: dict[str, Any] | None,
     chronological_holdout_report: dict[str, Any] | None,
     learning_curve_report: dict[str, Any] | None,
+    data_acquisition_report: dict[str, Any] | None,
     selective_risk_report: dict[str, Any] | None,
 ) -> None:
     if calibration_repair_report:
@@ -743,6 +746,31 @@ def _add_repair_and_robustness_checks(
                 evidence=f"verdict={verdict}, final_f1={float(final_f1):.3f}.",
                 action=action,
                 penalty=6.0,
+            )
+    if data_acquisition_report:
+        summary = data_acquisition_report.get("summary", {})
+        priority = str(summary.get("priority", "low"))
+        budget = int(summary.get("recommended_label_budget", 0) or 0)
+        action = str(summary.get("recommended_next_step") or "Follow the data acquisition plan before promotion.")
+        if priority == "high":
+            add(
+                severity="caution",
+                category="data_collection",
+                title="Data acquisition plan has high-priority gaps",
+                status="review",
+                evidence=f"verdict={summary.get('verdict', '-')}, recommended_budget={budget}.",
+                action=action,
+                penalty=8.0,
+            )
+        elif priority == "medium":
+            add(
+                severity="caution",
+                category="data_collection",
+                title="Data acquisition plan has targeted gaps",
+                status="review",
+                evidence=f"verdict={summary.get('verdict', '-')}, recommended_budget={budget}.",
+                action=action,
+                penalty=5.0,
             )
     if error_atlas_report:
         summary = error_atlas_report.get("summary", {})
@@ -922,6 +950,8 @@ def _must_include(checks: list[dict[str, Any]], metrics: dict[str, float | int],
         items.append("deployment-risk note")
     if any(check["category"] == "learning_curve" for check in checks):
         items.append("learning-curve note")
+    if any(check["category"] == "data_collection" for check in checks):
+        items.append("data-acquisition note")
     if any(check["category"] == "schema" for check in checks):
         items.append("feature-schema note")
     if any(check["category"] == "ranking" for check in checks):

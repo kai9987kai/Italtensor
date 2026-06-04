@@ -63,6 +63,7 @@ def build_experiment_report(
     neighborhood_hardness_report: dict[str, Any] | None = None,
     dataset_triage_report: dict[str, Any] | None = None,
     validation_plan_report: dict[str, Any] | None = None,
+    data_acquisition_report: dict[str, Any] | None = None,
     experiment_advisor_report: dict[str, Any] | None = None,
     trial_inspector_report: dict[str, Any] | None = None,
     promotion_gate_report: dict[str, Any] | None = None,
@@ -133,6 +134,7 @@ def build_experiment_report(
         "neighborhood_hardness": neighborhood_hardness_report or None,
         "dataset_triage": dataset_triage_report or None,
         "validation_plan": validation_plan_report or None,
+        "data_acquisition_plan": data_acquisition_report or None,
         "experiment_advisor": experiment_advisor_report or None,
         "trial_inspector": trial_inspector_report or None,
         "promotion_gate": promotion_gate_report or None,
@@ -197,6 +199,7 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     neighborhood_hardness = report.get("neighborhood_hardness") or {}
     dataset_triage = report.get("dataset_triage") or {}
     validation_plan = report.get("validation_plan") or {}
+    data_acquisition = report.get("data_acquisition_plan") or {}
     experiment_advisor = report.get("experiment_advisor") or {}
     trial_inspector = report.get("trial_inspector") or {}
     promotion_gate = report.get("promotion_gate") or {}
@@ -259,6 +262,37 @@ def format_markdown_report(report: dict[str, Any]) -> str:
                 f"- Action {item.get('rank', '-')}: "
                 f"[{item.get('priority', '-')}/{item.get('category', '-')}] "
                 f"{item.get('action', '-')}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Data Acquisition Planner"])
+    if data_acquisition:
+        summary = data_acquisition.get("summary", {})
+        lines.extend(
+            [
+                f"- Verdict: {summary.get('verdict', '-')}",
+                f"- Priority: {summary.get('priority', '-')}",
+                f"- Readiness score: {_format_value(summary.get('readiness_score', '-'))}/100",
+                f"- Recommended label budget: {summary.get('recommended_label_budget', '-')}",
+                f"- Boundary candidates: {summary.get('boundary_candidate_count', '-')}",
+                f"- Tail candidates: {summary.get('tail_candidate_count', '-')}",
+                f"- Feature review count: {summary.get('feature_review_count', '-')}",
+                f"- Recommended next step: {summary.get('recommended_next_step') or 'none'}",
+            ]
+        )
+        for item in data_acquisition.get("recommendations", [])[:6]:
+            lines.append(
+                f"- Action {item.get('rank', '-')}: "
+                f"[{item.get('priority', '-')}/{item.get('category', '-')}] "
+                f"{item.get('action', '-')}"
+            )
+        for item in data_acquisition.get("row_candidates", [])[:6]:
+            lines.append(
+                f"- Row {item.get('row_index', '-')}: "
+                f"{item.get('candidate_type', '-')}, "
+                f"score={_format_value(item.get('score', '-'))}, "
+                f"label={item.get('label', '-')}"
             )
     else:
         lines.append("- None")
