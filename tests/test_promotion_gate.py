@@ -68,6 +68,38 @@ def test_promotion_gate_cautions_on_data_limited_learning_curve():
     assert "learning-curve note" in report["release_note"]["must_include"]
 
 
+def test_promotion_gate_cautions_on_high_priority_data_acquisition_plan():
+    report = build_promotion_gate(
+        sample_count=120,
+        input_dim=3,
+        labels=[0, 1] * 60,
+        config=ModelConfig(feature_map="linear"),
+        metrics={
+            "f1": 0.88,
+            "accuracy": 0.90,
+            "balanced_accuracy": 0.89,
+            "brier_score": 0.12,
+            "ece": 0.03,
+            "threshold_gain_f1": 0.02,
+        },
+        trial_history=[{"metrics": {"f1": 0.86}}, {"metrics": {"f1": 0.88}}, {"metrics": {"f1": 0.84}}],
+        dataset_triage_report={"summary": {"risk_level": "low", "readiness_score": 92.0, "blocking_issue_count": 0}},
+        trial_inspector_report={"valid_trial_count": 4, "summary": {"leader_margin_f1": 0.06}},
+        data_acquisition_report={
+            "summary": {
+                "priority": "high",
+                "verdict": "collect_before_model_selection",
+                "recommended_label_budget": 12,
+                "recommended_next_step": "Collect more class 1 labels.",
+            }
+        },
+    )
+
+    assert report["summary"]["verdict"] == "needs_review"
+    assert any(item["title"] == "Data acquisition plan has high-priority gaps" for item in report["checks"])
+    assert "data-acquisition note" in report["release_note"]["must_include"]
+
+
 def test_promotion_gate_blocks_high_risk_dataset_and_poor_scores():
     report = build_promotion_gate(
         sample_count=36,

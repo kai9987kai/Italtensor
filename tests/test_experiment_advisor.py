@@ -204,6 +204,29 @@ def test_experiment_advisor_reacts_to_rising_learning_curve():
     assert "Collect more labeled rows" in curve["action"]
 
 
+def test_experiment_advisor_prioritizes_high_priority_data_acquisition_plan():
+    report = build_experiment_advisor(
+        sample_count=80,
+        input_dim=4,
+        labels=[0, 1] * 40,
+        metrics={"f1": 0.78, "accuracy": 0.80, "precision": 0.76, "recall": 0.81},
+        trial_history=[{"metrics": {"f1": 0.78}}] * 3,
+        external_holdout_report={"summary": {"verdict": "holdout_pass", "f1": 0.77}},
+        data_acquisition_report={
+            "summary": {
+                "priority": "high",
+                "recommended_label_budget": 18,
+                "recommended_next_step": "Collect more class 1 labels.",
+            }
+        },
+    )
+
+    top = report["recommendations"][0]
+    assert top["source"] == "data_acquisition_plan"
+    assert top["priority"] == "high"
+    assert "Collect more class 1 labels" in top["action"]
+
+
 def test_experiment_advisor_is_deterministic_and_formats_summary():
     kwargs = {
         "sample_count": 24,
