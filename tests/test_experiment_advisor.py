@@ -227,6 +227,30 @@ def test_experiment_advisor_prioritizes_high_priority_data_acquisition_plan():
     assert "Collect more class 1 labels" in top["action"]
 
 
+def test_experiment_advisor_prioritizes_high_priority_data_value_scout():
+    report = build_experiment_advisor(
+        sample_count=80,
+        input_dim=4,
+        labels=[0, 1] * 40,
+        metrics={"f1": 0.78, "accuracy": 0.80, "precision": 0.76, "recall": 0.81},
+        trial_history=[{"metrics": {"f1": 0.78}}] * 3,
+        external_holdout_report={"summary": {"verdict": "holdout_pass", "f1": 0.77}},
+        data_value_report={
+            "summary": {
+                "priority": "high",
+                "review_row_count": 5,
+                "redundant_row_count": 2,
+                "recommended_next_step": "Inspect review rows first.",
+            }
+        },
+    )
+
+    top = report["recommendations"][0]
+    assert top["source"] == "data_value_scout"
+    assert top["category"] == "data_curation"
+    assert "Inspect review rows" in top["action"]
+
+
 def test_experiment_advisor_is_deterministic_and_formats_summary():
     kwargs = {
         "sample_count": 24,

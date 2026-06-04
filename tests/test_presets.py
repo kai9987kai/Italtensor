@@ -6,6 +6,7 @@ import pytest
 from italtensor.app import AppState, _replace_dataset
 from italtensor.data import DataValidationError, validate_dataset
 from italtensor.data_acquisition import run_data_acquisition_planner
+from italtensor.data_value import run_data_value_scout
 from italtensor.experiments import split_train_validation
 from italtensor.leakage_sentinel import run_leakage_sentinel
 from italtensor.modeling import ModelConfig
@@ -226,6 +227,7 @@ def test_experimental_builtin_presets_are_available():
         "Neighborhood hardness lab",
         "Dataset triage lab",
         "Data acquisition lab",
+        "Data value scout lab",
         "Validation plan lab",
         "Learning curve lab",
         "Schema guard lab",
@@ -307,6 +309,26 @@ def test_data_acquisition_lab_preset_has_collection_gaps():
     assert any(item["category"] == "class_balance" for item in report["recommendations"])
     assert int(np.sum(dataset.features[:, 2] > 0.7)) >= 18
     assert float(np.max(dataset.features[:, 3])) > 3.5
+
+
+def test_data_value_scout_lab_preset_has_row_curation_cases():
+    metadata = preset_metadata("Data value scout lab")
+    dataset = generate_builtin_preset("Data value scout lab", sample_count=120, seed=14)
+    report = run_data_value_scout(dataset.features, dataset.labels, k=5)
+
+    assert metadata["input_dim"] == 5
+    assert metadata["feature_names"] == [
+        "primary_margin",
+        "support_signal",
+        "duplicate_marker",
+        "rare_coverage",
+        "conflict_marker",
+    ]
+    assert any(example["name"] == "Conflict review row" for example in metadata["prediction_examples"])
+    assert report["summary"]["priority"] == "high"
+    assert report["summary"]["review_row_count"] >= 2
+    assert report["summary"]["redundant_row_count"] >= 2
+    assert report["summary"]["coverage_row_count"] >= 1
 
 
 def test_learning_curve_lab_preset_has_boundary_rows():

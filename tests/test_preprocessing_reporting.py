@@ -1015,6 +1015,40 @@ def test_report_export_json_and_markdown(tmp_path):
             ],
             "row_candidates": [{"row_index": 2, "candidate_type": "boundary", "score": 0.88, "label": 1}],
         },
+        data_value_report={
+            "sample_count": 4,
+            "input_dim": 2,
+            "k": 3,
+            "summary": {
+                "verdict": "curate_before_model_selection",
+                "priority": "high",
+                "readiness_score": 68.0,
+                "review_row_count": 2,
+                "redundant_row_count": 1,
+                "coverage_row_count": 1,
+                "high_value_row_count": 1,
+                "max_review_score": 0.9,
+                "recommended_next_step": "Inspect review rows first.",
+            },
+            "recommendations": [
+                {
+                    "rank": 1,
+                    "priority": "high",
+                    "category": "row_review",
+                    "action": "Inspect review rows first.",
+                }
+            ],
+            "rows": [
+                {
+                    "row_index": 2,
+                    "value_score": 0.2,
+                    "review_score": 0.9,
+                    "redundancy_score": 0.1,
+                    "coverage_score": 0.2,
+                    "risk_flags": ["review_or_relabel"],
+                }
+            ],
+        },
         experiment_advisor_report={
             "summary": {
                 "recommendation_count": 1,
@@ -1175,6 +1209,7 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["dataset_triage"]["summary"]["readiness_score"] == 71.0
     assert saved_json["validation_plan"]["summary"]["recommended_strategy"] == "stratified_kfold"
     assert saved_json["data_acquisition_plan"]["summary"]["priority"] == "high"
+    assert saved_json["data_value_scout"]["summary"]["review_row_count"] == 2
     assert saved_json["experiment_advisor"]["summary"]["recommended_next_step"] == "Promote threshold tuning"
     assert saved_json["trial_inspector"]["summary"]["best_trial_index"] == 1
     assert saved_json["promotion_gate"]["summary"]["verdict"] == "needs_review"
@@ -1260,6 +1295,8 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "Use stratified cross-validation" in saved_markdown
     assert "## Data Acquisition Planner" in saved_markdown
     assert "Collect more class 1 labels." in saved_markdown
+    assert "## Data Value Scout" in saved_markdown
+    assert "Inspect review rows first." in saved_markdown
     assert "## Experiment Advisor" in saved_markdown
     assert "Promote threshold tuning" in saved_markdown
     assert "## Trial Inspector" in saved_markdown

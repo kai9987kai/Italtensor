@@ -18,6 +18,7 @@ from italtensor.app import (
     _compatible_calibration_slice_report,
     _compatible_capacity_planner_report,
     _compatible_data_acquisition_report,
+    _compatible_data_value_report,
     _compatible_learning_curve_report,
     _compatible_prior_shift_report,
     _compatible_rank_lift_report,
@@ -42,6 +43,7 @@ from italtensor.modeling import ModelConfig
 from italtensor.capacity_planner import capacity_planner_dataset_fingerprint
 from italtensor.calibration_slices import calibration_slice_dataset_fingerprint
 from italtensor.data_acquisition import data_acquisition_dataset_fingerprint
+from italtensor.data_value import data_value_dataset_fingerprint
 from italtensor.learning_curves import learning_curve_dataset_fingerprint
 from italtensor.preprocessing import FeatureStandardizer
 from italtensor.prior_shift import prior_shift_dataset_fingerprint
@@ -134,6 +136,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         latest_dataset_triage_report={"summary": {"readiness_score": 61.0}},
         latest_validation_plan_report={"summary": {"recommended_strategy": "stratified_kfold"}},
         latest_data_acquisition_report={"summary": {"priority": "high"}},
+        latest_data_value_report={"summary": {"priority": "high"}},
         latest_experiment_advisor_report={"summary": {"recommended_next_step": "Run triage"}},
         latest_trial_inspector_report={"summary": {"best_trial_index": 1}},
         latest_promotion_gate_report={"summary": {"verdict": "needs_review"}},
@@ -193,6 +196,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
     assert state.latest_dataset_triage_report is None
     assert state.latest_validation_plan_report is None
     assert state.latest_data_acquisition_report is None
+    assert state.latest_data_value_report is None
     assert state.latest_experiment_advisor_report is None
     assert state.latest_trial_inspector_report is None
     assert state.latest_promotion_gate_report is None
@@ -272,6 +276,7 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
         latest_leakage_sentinel_report={"summary": {"risk_level": "high"}},
         latest_trial_inspector_report={"summary": {"best_trial_index": 2}},
         latest_promotion_gate_report={"summary": {"verdict": "needs_review"}},
+        latest_data_value_report={"summary": {"priority": "medium"}},
     )
     path = tmp_path / "dataset-report.json"
 
@@ -301,6 +306,7 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
     assert payload["experiment_advisor"]["summary"]["recommended_next_step"] == "Run auto experiments"
     assert payload["trial_inspector"]["summary"]["best_trial_index"] == 2
     assert payload["promotion_gate"]["summary"]["verdict"] == "needs_review"
+    assert payload["data_value_scout"]["summary"]["priority"] == "medium"
     assert "Exported report" in window["-LOG-"].value
 
 
@@ -332,6 +338,7 @@ def test_training_preserves_dataset_only_diagnostics():
         latest_canary_suite_report={"summary": {"verdict": "canary_pass"}},
         latest_policy_guard_report={"summary": {"verdict": "policy_pass"}},
         latest_leakage_sentinel_report={"summary": {"risk_level": "high"}},
+        latest_data_value_report={"summary": {"priority": "medium"}},
         latest_experiment_advisor_report={"summary": {"recommended_next_step": "Old advice"}},
         latest_trial_inspector_report={"summary": {"best_trial_index": 1}},
         latest_promotion_gate_report={"summary": {"verdict": "old"}},
@@ -367,6 +374,7 @@ def test_training_preserves_dataset_only_diagnostics():
     assert state.latest_canary_suite_report is None
     assert state.latest_policy_guard_report is None
     assert state.latest_leakage_sentinel_report == {"summary": {"risk_level": "high"}}
+    assert state.latest_data_value_report == {"summary": {"priority": "medium"}}
     assert state.latest_experiment_advisor_report is None
     assert state.latest_trial_inspector_report is None
     assert state.latest_promotion_gate_report is None
@@ -446,6 +454,21 @@ def test_compatible_data_acquisition_report_rejects_mismatched_or_reordered_data
 
     assert _compatible_data_acquisition_report(matching, state) == matching
     assert _compatible_data_acquisition_report(reordered, state) is None
+
+
+def test_compatible_data_value_report_rejects_mismatched_or_reordered_dataset():
+    state = AppState(features=[[0.1], [0.9], [0.2], [0.8]], labels=[0, 1, 0, 1], input_dim=1)
+    matching = {
+        "dataset_fingerprint": data_value_dataset_fingerprint(state.features, state.labels),
+        "summary": {"priority": "low"},
+    }
+    reordered = {
+        "dataset_fingerprint": data_value_dataset_fingerprint([[0.2], [0.1], [0.8], [0.9]], [0, 0, 1, 1]),
+        "summary": {"priority": "high"},
+    }
+
+    assert _compatible_data_value_report(matching, state) == matching
+    assert _compatible_data_value_report(reordered, state) is None
 
 
 def test_compatible_threshold_stability_report_rejects_mismatched_dataset():
@@ -1044,6 +1067,48 @@ def test_handle_worker_done_stores_data_acquisition_without_mutating_model():
     assert state.busy is False
     assert "Data acquisition plan" in window["-LOG-"].value
     assert "Collect more class 1 labels" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_data_value_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(
+        model=object(),
+        latest_metrics={"f1": 0.9},
+        latest_experiment_advisor_report={"summary": {"recommended_next_step": "old"}},
+        latest_promotion_gate_report={"summary": {"verdict": "old"}},
+        busy=True,
+    )
+    model = state.model
+    report = {
+        "summary": {
+            "verdict": "curate_before_model_selection",
+            "priority": "high",
+            "review_row_count": 4,
+            "redundant_row_count": 2,
+            "recommended_next_step": "Inspect review rows first.",
+        },
+        "recommendations": [
+            {
+                "rank": 1,
+                "priority": "high",
+                "category": "row_review",
+                "title": "Review possible harmful training rows",
+                "action": "Inspect review rows first.",
+            }
+        ],
+        "rows": [{"row_index": 3, "value_score": 0.2, "review_score": 0.9, "risk_flags": ["review_or_relabel"]}],
+    }
+
+    _handle_worker_done(window, state, ("data_value", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_data_value_report == report
+    assert state.latest_experiment_advisor_report is None
+    assert state.latest_promotion_gate_report is None
+    assert state.busy is False
+    assert "Data value scout" in window["-LOG-"].value
+    assert "Review possible harmful training rows" in window["-LOG-"].value
 
 
 def test_handle_worker_done_stores_learning_curve_without_mutating_model():
