@@ -707,6 +707,23 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="data_acquisition_lab",
+        name="Data acquisition lab",
+        description="Imbalanced classes, boundary rows, and tail cases for next-label acquisition planning.",
+        default_samples=180,
+        min_samples=24,
+        input_dim=5,
+        recommended_feature_map="linear",
+        feature_names=("margin_signal", "support_signal", "boundary_band", "tail_probe", "collection_source"),
+        training_defaults={"epochs": 70, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Common negative", "features": [-1.0, -0.4, -0.8, 0.0, 0.0], "expected_label": 0},
+            {"name": "Boundary acquisition row", "features": [0.02, 0.0, 1.0, 0.0, 1.0], "expected_label": None},
+            {"name": "Tail coverage row", "features": [0.6, 0.1, 0.2, 4.6, 1.0], "expected_label": None},
+            {"name": "Minority positive", "features": [1.1, 0.5, -0.8, 0.0, 0.0], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
         key="validation_plan_lab",
         name="Validation plan lab",
         description="Ordered reference/current rows that make split-choice and chronological holdout risk visible.",
@@ -999,6 +1016,8 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _neighborhood_hardness_lab(total, rng)
     elif preset.key == "dataset_triage_lab":
         features, labels = _dataset_triage_lab(total, rng)
+    elif preset.key == "data_acquisition_lab":
+        features, labels = _data_acquisition_lab(total, rng)
     elif preset.key == "validation_plan_lab":
         features, labels = _validation_plan_lab(total, rng)
     elif preset.key == "learning_curve_lab":
@@ -2215,6 +2234,36 @@ def _dataset_triage_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarra
         features[3] = features[2]
         labels[2] = 1
         labels[3] = 0
+    return _shuffle(features, labels, rng)
+
+
+def _data_acquisition_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    positive_count = max(4, int(round(total * 0.24)))
+    negative_count = total - positive_count
+    negative_core = rng.normal(
+        loc=(-1.05, -0.45, -0.8, 0.0, 0.0),
+        scale=(0.28, 0.35, 0.22, 0.25, 0.15),
+        size=(negative_count, 5),
+    )
+    positive_core = rng.normal(
+        loc=(1.05, 0.45, -0.8, 0.0, 0.0),
+        scale=(0.30, 0.35, 0.22, 0.25, 0.15),
+        size=(positive_count, 5),
+    )
+    features = np.vstack([negative_core, positive_core]).astype(np.float32)
+    labels = np.asarray([0] * negative_count + [1] * positive_count, dtype=np.int32)
+
+    boundary_count = max(8, total // 5)
+    boundary_indices = rng.choice(total, size=min(boundary_count, total), replace=False)
+    features[boundary_indices, 0] = rng.normal(0.0, 0.16, size=boundary_indices.shape[0])
+    features[boundary_indices, 1] = rng.normal(0.0, 0.22, size=boundary_indices.shape[0])
+    features[boundary_indices, 2] = rng.normal(1.0, 0.18, size=boundary_indices.shape[0])
+    features[boundary_indices, 4] = rng.normal(1.0, 0.12, size=boundary_indices.shape[0])
+
+    tail_count = max(4, total // 18)
+    tail_indices = rng.choice(total, size=min(tail_count, total), replace=False)
+    features[tail_indices, 3] = rng.normal(4.4, 0.40, size=tail_indices.shape[0])
+    features[tail_indices, 4] = rng.normal(1.3, 0.10, size=tail_indices.shape[0])
     return _shuffle(features, labels, rng)
 
 

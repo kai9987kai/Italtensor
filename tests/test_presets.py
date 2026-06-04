@@ -5,6 +5,7 @@ import pytest
 
 from italtensor.app import AppState, _replace_dataset
 from italtensor.data import DataValidationError, validate_dataset
+from italtensor.data_acquisition import run_data_acquisition_planner
 from italtensor.experiments import split_train_validation
 from italtensor.leakage_sentinel import run_leakage_sentinel
 from italtensor.modeling import ModelConfig
@@ -224,6 +225,7 @@ def test_experimental_builtin_presets_are_available():
         "Separability lens lab",
         "Neighborhood hardness lab",
         "Dataset triage lab",
+        "Data acquisition lab",
         "Validation plan lab",
         "Learning curve lab",
         "Schema guard lab",
@@ -285,6 +287,26 @@ def test_validation_plan_lab_preset_preserves_ordered_split_risk():
     ]
     assert report["summary"]["recommended_strategy"] == "chronological_holdout"
     assert report["summary"]["row_order_risk"] is True
+
+
+def test_data_acquisition_lab_preset_has_collection_gaps():
+    metadata = preset_metadata("Data acquisition lab")
+    dataset = generate_builtin_preset("Data acquisition lab", sample_count=120, seed=13)
+    report = run_data_acquisition_planner(dataset.features, dataset.labels, min_class_count=40)
+
+    assert metadata["input_dim"] == 5
+    assert metadata["feature_names"] == [
+        "margin_signal",
+        "support_signal",
+        "boundary_band",
+        "tail_probe",
+        "collection_source",
+    ]
+    assert any(example["name"] == "Boundary acquisition row" for example in metadata["prediction_examples"])
+    assert report["summary"]["priority"] == "high"
+    assert any(item["category"] == "class_balance" for item in report["recommendations"])
+    assert int(np.sum(dataset.features[:, 2] > 0.7)) >= 18
+    assert float(np.max(dataset.features[:, 3])) > 3.5
 
 
 def test_learning_curve_lab_preset_has_boundary_rows():

@@ -160,6 +160,7 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
         neighborhood_hardness_report={"summary": {"top_hard_row": 6}},
         dataset_triage_report={"summary": {"readiness_score": 68.0, "risk_level": "medium"}},
         validation_plan_report={"summary": {"recommended_strategy": "stratified_holdout", "readiness_score": 92.0}},
+        data_acquisition_report={"summary": {"priority": "high", "recommended_label_budget": 12}},
         experiment_advisor_report={"summary": {"recommended_next_step": "Run auto experiments"}},
         trial_inspector_report={"summary": {"best_trial_index": 1, "best_f1": 0.8}},
         promotion_gate_report={"summary": {"verdict": "needs_review", "promotion_score": 74.0}},
@@ -216,6 +217,7 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
     assert metadata["neighborhood_hardness"]["summary"]["top_hard_row"] == 6
     assert metadata["dataset_triage"]["summary"]["readiness_score"] == 68.0
     assert metadata["validation_plan"]["summary"]["recommended_strategy"] == "stratified_holdout"
+    assert metadata["data_acquisition_plan"]["summary"]["priority"] == "high"
     assert metadata["experiment_advisor"]["summary"]["recommended_next_step"] == "Run auto experiments"
     assert metadata["trial_inspector"]["summary"]["best_trial_index"] == 1
     assert metadata["promotion_gate"]["summary"]["verdict"] == "needs_review"
