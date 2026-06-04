@@ -40,6 +40,7 @@ def build_promotion_gate(
     chronological_holdout_report: dict[str, Any] | None = None,
     learning_curve_report: dict[str, Any] | None = None,
     data_acquisition_report: dict[str, Any] | None = None,
+    data_value_report: dict[str, Any] | None = None,
     selective_risk_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a transparent model-promotion checklist from local experiment evidence."""
@@ -380,6 +381,7 @@ def build_promotion_gate(
         chronological_holdout_report=chronological_holdout_report,
         learning_curve_report=learning_curve_report,
         data_acquisition_report=data_acquisition_report,
+        data_value_report=data_value_report,
         selective_risk_report=selective_risk_report,
     )
     _add_canary_checks(add, canary_suite_report)
@@ -672,6 +674,7 @@ def _add_repair_and_robustness_checks(
     chronological_holdout_report: dict[str, Any] | None,
     learning_curve_report: dict[str, Any] | None,
     data_acquisition_report: dict[str, Any] | None,
+    data_value_report: dict[str, Any] | None,
     selective_risk_report: dict[str, Any] | None,
 ) -> None:
     if calibration_repair_report:
@@ -769,6 +772,32 @@ def _add_repair_and_robustness_checks(
                 title="Data acquisition plan has targeted gaps",
                 status="review",
                 evidence=f"verdict={summary.get('verdict', '-')}, recommended_budget={budget}.",
+                action=action,
+                penalty=5.0,
+            )
+    if data_value_report:
+        summary = data_value_report.get("summary", {})
+        priority = str(summary.get("priority", "low"))
+        review_count = int(summary.get("review_row_count", 0) or 0)
+        redundant_count = int(summary.get("redundant_row_count", 0) or 0)
+        action = str(summary.get("recommended_next_step") or "Review row-value findings before promotion.")
+        if priority == "high" or review_count >= 3:
+            add(
+                severity="caution",
+                category="data_curation",
+                title="Data value scout has high-priority row curation",
+                status="review",
+                evidence=f"verdict={summary.get('verdict', '-')}, review_rows={review_count}.",
+                action=action,
+                penalty=8.0,
+            )
+        elif priority == "medium" or redundant_count:
+            add(
+                severity="caution",
+                category="data_curation",
+                title="Data value scout needs row-value review",
+                status="review",
+                evidence=f"review_rows={review_count}, redundant_rows={redundant_count}.",
                 action=action,
                 penalty=5.0,
             )
@@ -952,6 +981,8 @@ def _must_include(checks: list[dict[str, Any]], metrics: dict[str, float | int],
         items.append("learning-curve note")
     if any(check["category"] == "data_collection" for check in checks):
         items.append("data-acquisition note")
+    if any(check["category"] == "data_curation" for check in checks):
+        items.append("data-curation note")
     if any(check["category"] == "schema" for check in checks):
         items.append("feature-schema note")
     if any(check["category"] == "ranking" for check in checks):

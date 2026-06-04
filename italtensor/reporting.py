@@ -64,6 +64,7 @@ def build_experiment_report(
     dataset_triage_report: dict[str, Any] | None = None,
     validation_plan_report: dict[str, Any] | None = None,
     data_acquisition_report: dict[str, Any] | None = None,
+    data_value_report: dict[str, Any] | None = None,
     experiment_advisor_report: dict[str, Any] | None = None,
     trial_inspector_report: dict[str, Any] | None = None,
     promotion_gate_report: dict[str, Any] | None = None,
@@ -135,6 +136,7 @@ def build_experiment_report(
         "dataset_triage": dataset_triage_report or None,
         "validation_plan": validation_plan_report or None,
         "data_acquisition_plan": data_acquisition_report or None,
+        "data_value_scout": data_value_report or None,
         "experiment_advisor": experiment_advisor_report or None,
         "trial_inspector": trial_inspector_report or None,
         "promotion_gate": promotion_gate_report or None,
@@ -200,6 +202,7 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     dataset_triage = report.get("dataset_triage") or {}
     validation_plan = report.get("validation_plan") or {}
     data_acquisition = report.get("data_acquisition_plan") or {}
+    data_value = report.get("data_value_scout") or {}
     experiment_advisor = report.get("experiment_advisor") or {}
     trial_inspector = report.get("trial_inspector") or {}
     promotion_gate = report.get("promotion_gate") or {}
@@ -293,6 +296,40 @@ def format_markdown_report(report: dict[str, Any]) -> str:
                 f"{item.get('candidate_type', '-')}, "
                 f"score={_format_value(item.get('score', '-'))}, "
                 f"label={item.get('label', '-')}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Data Value Scout"])
+    if data_value:
+        summary = data_value.get("summary", {})
+        lines.extend(
+            [
+                f"- Verdict: {summary.get('verdict', '-')}",
+                f"- Priority: {summary.get('priority', '-')}",
+                f"- Readiness score: {_format_value(summary.get('readiness_score', '-'))}/100",
+                f"- Review rows: {summary.get('review_row_count', '-')}",
+                f"- Redundant rows: {summary.get('redundant_row_count', '-')}",
+                f"- Rare coverage rows: {summary.get('coverage_row_count', '-')}",
+                f"- High-value anchors: {summary.get('high_value_row_count', '-')}",
+                f"- Max review score: {_format_value(summary.get('max_review_score', '-'))}",
+                f"- Recommended next step: {summary.get('recommended_next_step') or 'none'}",
+            ]
+        )
+        for item in data_value.get("recommendations", [])[:6]:
+            lines.append(
+                f"- Action {item.get('rank', '-')}: "
+                f"[{item.get('priority', '-')}/{item.get('category', '-')}] "
+                f"{item.get('action', '-')}"
+            )
+        for item in data_value.get("rows", [])[:6]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            lines.append(
+                f"- Row {item.get('row_index', '-')}: "
+                f"value={_format_value(item.get('value_score', '-'))}, "
+                f"review={_format_value(item.get('review_score', '-'))}, "
+                f"redundancy={_format_value(item.get('redundancy_score', '-'))}, "
+                f"coverage={_format_value(item.get('coverage_score', '-'))}, flags={flags}"
             )
     else:
         lines.append("- None")

@@ -724,6 +724,23 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="data_value_scout_lab",
+        name="Data value scout lab",
+        description="Anchor rows, duplicate weight, label conflicts, and rare coverage cases for row-value curation.",
+        default_samples=200,
+        min_samples=24,
+        input_dim=5,
+        recommended_feature_map="linear",
+        feature_names=("primary_margin", "support_signal", "duplicate_marker", "rare_coverage", "conflict_marker"),
+        training_defaults={"epochs": 70, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Reliable negative anchor", "features": [-1.2, -0.6, 1.0, 0.0, 0.0], "expected_label": 0},
+            {"name": "Conflict review row", "features": [0.0, 0.0, 0.0, 0.0, 2.0], "expected_label": None},
+            {"name": "Rare valid coverage", "features": [1.2, 0.6, 0.0, 4.8, 0.0], "expected_label": 1},
+            {"name": "Reliable positive anchor", "features": [1.2, 0.6, 1.0, 0.0, 0.0], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
         key="validation_plan_lab",
         name="Validation plan lab",
         description="Ordered reference/current rows that make split-choice and chronological holdout risk visible.",
@@ -1018,6 +1035,8 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _dataset_triage_lab(total, rng)
     elif preset.key == "data_acquisition_lab":
         features, labels = _data_acquisition_lab(total, rng)
+    elif preset.key == "data_value_scout_lab":
+        features, labels = _data_value_scout_lab(total, rng)
     elif preset.key == "validation_plan_lab":
         features, labels = _validation_plan_lab(total, rng)
     elif preset.key == "learning_curve_lab":
@@ -2264,6 +2283,52 @@ def _data_acquisition_lab(total: int, rng: np.random.Generator) -> tuple[np.ndar
     tail_indices = rng.choice(total, size=min(tail_count, total), replace=False)
     features[tail_indices, 3] = rng.normal(4.4, 0.40, size=tail_indices.shape[0])
     features[tail_indices, 4] = rng.normal(1.3, 0.10, size=tail_indices.shape[0])
+    return _shuffle(features, labels, rng)
+
+
+def _data_value_scout_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    labels = _balanced_labels(total)
+    signed = np.where(labels == 1, 1.0, -1.0)
+    primary_margin = signed * 1.05 + rng.normal(0.0, 0.32, size=total)
+    support_signal = signed * 0.55 + rng.normal(0.0, 0.35, size=total)
+    duplicate_marker = rng.normal(0.0, 0.18, size=total)
+    rare_coverage = rng.normal(0.0, 0.25, size=total)
+    conflict_marker = rng.normal(0.0, 0.18, size=total)
+    features = np.column_stack(
+        [primary_margin, support_signal, duplicate_marker, rare_coverage, conflict_marker]
+    ).astype(np.float32)
+    labels = labels.astype(np.int32).copy()
+
+    if total >= 24:
+        features[0] = np.asarray([-1.2, -0.6, 1.0, 0.0, 0.0], dtype=np.float32)
+        features[1] = features[0]
+        features[2] = features[0]
+        labels[0:3] = 0
+
+        features[3] = np.asarray([1.2, 0.6, 1.0, 0.0, 0.0], dtype=np.float32)
+        features[4] = features[3]
+        features[5] = features[3]
+        labels[3:6] = 1
+
+        features[6] = np.asarray([0.0, 0.0, 0.0, 0.0, 2.0], dtype=np.float32)
+        features[7] = features[6]
+        labels[6] = 0
+        labels[7] = 1
+
+        features[8] = np.asarray([0.12, 0.02, 0.0, 0.0, 2.2], dtype=np.float32)
+        features[9] = features[8]
+        labels[8] = 1
+        labels[9] = 0
+
+        rare_count = min(max(4, total // 16), total - 10)
+        if rare_count > 0:
+            rare_indices = np.arange(10, 10 + rare_count)
+            labels[rare_indices] = 1
+            features[rare_indices, 0] = rng.normal(1.15, 0.12, size=rare_count)
+            features[rare_indices, 1] = rng.normal(0.60, 0.12, size=rare_count)
+            features[rare_indices, 2] = rng.normal(0.0, 0.05, size=rare_count)
+            features[rare_indices, 3] = rng.normal(4.8, 0.22, size=rare_count)
+            features[rare_indices, 4] = rng.normal(0.0, 0.08, size=rare_count)
     return _shuffle(features, labels, rng)
 
 

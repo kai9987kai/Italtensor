@@ -34,6 +34,7 @@ def build_experiment_advisor(
     chronological_holdout_report: dict[str, Any] | None = None,
     learning_curve_report: dict[str, Any] | None = None,
     data_acquisition_report: dict[str, Any] | None = None,
+    data_value_report: dict[str, Any] | None = None,
     max_recommendations: int = 8,
 ) -> dict[str, Any]:
     """Rank practical next experiments from current dataset, model, and diagnostic evidence."""
@@ -136,6 +137,7 @@ def build_experiment_advisor(
         chronological_holdout_report=chronological_holdout_report,
         learning_curve_report=learning_curve_report,
         data_acquisition_report=data_acquisition_report,
+        data_value_report=data_value_report,
         prototype_audit_report=prototype_audit_report,
         ood_sentinel_report=ood_sentinel_report,
     )
@@ -285,6 +287,7 @@ def _add_report_recommendations(
     chronological_holdout_report: dict[str, Any] | None,
     learning_curve_report: dict[str, Any] | None,
     data_acquisition_report: dict[str, Any] | None,
+    data_value_report: dict[str, Any] | None,
     prototype_audit_report: dict[str, Any] | None,
     ood_sentinel_report: dict[str, Any] | None,
 ) -> None:
@@ -381,6 +384,34 @@ def _add_report_recommendations(
                 action=next_step,
                 source="data_acquisition_plan",
                 expected_signal="Boundary/tail candidate counts should fall or become documented after review.",
+            )
+    if data_value_report:
+        summary = data_value_report.get("summary", {})
+        priority = str(summary.get("priority", "low"))
+        review_count = int(summary.get("review_row_count", 0) or 0)
+        redundant_count = int(summary.get("redundant_row_count", 0) or 0)
+        next_step = str(summary.get("recommended_next_step") or "Review the data value scout rows.")
+        if priority == "high" or review_count >= 3:
+            add(
+                score=88.0,
+                priority="high",
+                category="data_curation",
+                title="Curate high-impact rows before more model search",
+                reason=f"Data value scout found {review_count} review row(s) that may harm neighborhood evidence.",
+                action=next_step,
+                source="data_value_scout",
+                expected_signal="After curation, review-row count should fall and validation evidence should become less brittle.",
+            )
+        elif priority == "medium" or redundant_count:
+            add(
+                score=61.0,
+                priority="medium",
+                category="data_curation",
+                title="Review row-value and redundancy findings",
+                reason=f"Data value scout found {review_count} review row(s) and {redundant_count} redundant anchor row(s).",
+                action=next_step,
+                source="data_value_scout",
+                expected_signal="Dataset curation should reduce redundant weight or document rare rows as canaries.",
             )
     if learning_curve_report:
         summary = learning_curve_report.get("summary", {})
