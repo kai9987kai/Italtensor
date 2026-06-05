@@ -118,6 +118,11 @@ from .learning_curves import (
     learning_curve_dataset_fingerprint,
     run_learning_curve_diagnostics,
 )
+from .label_sensitivity import (
+    format_label_sensitivity_summary,
+    label_sensitivity_dataset_fingerprint,
+    run_label_sensitivity,
+)
 from .leakage_sentinel import (
     format_leakage_sentinel_summary,
     leakage_sentinel_dataset_fingerprint,
@@ -179,6 +184,7 @@ class AppState:
     latest_conformal_set_report: dict[str, Any] | None = None
     latest_selective_risk_report: dict[str, Any] | None = None
     latest_sample_review_report: dict[str, Any] | None = None
+    latest_label_sensitivity_report: dict[str, Any] | None = None
     latest_error_atlas_report: dict[str, Any] | None = None
     latest_reliability_atlas_report: dict[str, Any] | None = None
     latest_calibration_slice_report: dict[str, Any] | None = None
@@ -326,6 +332,8 @@ def run_app() -> None:
                 _start_prior_shift(window, state)
             elif event == "-SAMPLE_REVIEW-":
                 _start_sample_review(window, state)
+            elif event == "-LABEL_SENSITIVITY-":
+                _start_label_sensitivity(window, state)
             elif event == "-ERROR_ATLAS-":
                 _start_error_atlas(window, state)
             elif event == "-PERMUTATION_NULL-":
@@ -709,6 +717,7 @@ def _layout(sg):
         ],
         [
             sg.Button("Sample review", key="-SAMPLE_REVIEW-", expand_x=True),
+            sg.Button("Label sensitivity", key="-LABEL_SENSITIVITY-", expand_x=True),
             sg.Button("Error atlas", key="-ERROR_ATLAS-", expand_x=True),
             sg.Button("Permutation null", key="-PERMUTATION_NULL-", expand_x=True),
             sg.Button("Dataset cartography", key="-CARTOGRAPHY-", expand_x=True),
@@ -1213,6 +1222,25 @@ def _start_sample_review(window, state: AppState) -> None:
     _start_worker(window, state, "Running sample review...", task)
 
 
+def _start_label_sensitivity(window, state: AppState) -> None:
+    _ensure_not_busy(state)
+    if state.model is None:
+        raise ValueError("Train or load a model before running label sensitivity.")
+    dataset = validate_dataset(state.features, state.labels, min_samples=2, require_two_classes=False)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_label_sensitivity(
+            state.model,
+            dataset.features,
+            dataset.labels,
+            preprocessor=state.preprocessor,
+            threshold=state.latest_threshold,
+        )
+        return "label_sensitivity", report
+
+    _start_worker(window, state, "Estimating label sensitivity against fixed predictions...", task)
+
+
 def _start_error_atlas(window, state: AppState) -> None:
     _ensure_not_busy(state)
     if state.model is None:
@@ -1396,6 +1424,7 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         calibration_repair_report=state.latest_calibration_repair_report,
         selective_risk_report=state.latest_selective_risk_report,
         sample_review_report=state.latest_sample_review_report,
+        label_sensitivity_report=state.latest_label_sensitivity_report,
         error_atlas_report=state.latest_error_atlas_report,
         reliability_atlas_report=state.latest_reliability_atlas_report,
         calibration_slice_report=state.latest_calibration_slice_report,
@@ -1608,6 +1637,20 @@ def _compatible_data_value_report(report: Any, state: AppState) -> dict[str, Any
     return report
 
 
+def _compatible_label_sensitivity_report(report: Any, state: AppState) -> dict[str, Any] | None:
+    if not isinstance(report, dict):
+        return None
+    stored_fingerprint = report.get("dataset_fingerprint")
+    if stored_fingerprint and state.features and state.labels:
+        try:
+            current_fingerprint = label_sensitivity_dataset_fingerprint(state.features, state.labels)
+        except ValueError:
+            return None
+        if current_fingerprint != stored_fingerprint:
+            return None
+    return report
+
+
 def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     model, metadata = load_model_bundle(_required_path(values["-MODEL_PATH-"], "model path"))
     input_dim = metadata.get("input_dim")
@@ -1645,6 +1688,7 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     calibration_repair_report = metadata.get("posthoc_calibration_repair_diagnostics")
     selective_risk_report = metadata.get("selective_prediction_diagnostics")
     sample_review_report = metadata.get("sample_review")
+    label_sensitivity_report = metadata.get("label_sensitivity")
     error_atlas_report = metadata.get("error_atlas")
     reliability_atlas_report = metadata.get("reliability_atlas")
     calibration_slice_report = metadata.get("calibration_slice_diagnostics")
@@ -1692,6 +1736,13 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     )
     state.latest_selective_risk_report = selective_risk_report if isinstance(selective_risk_report, dict) else None
     state.latest_sample_review_report = sample_review_report if isinstance(sample_review_report, dict) else None
+    state.latest_label_sensitivity_report = _compatible_label_sensitivity_report(label_sensitivity_report, state)
+    if (
+        isinstance(label_sensitivity_report, dict)
+        and state.latest_label_sensitivity_report is None
+        and label_sensitivity_report.get("dataset_fingerprint")
+    ):
+        _log(window, "Skipped stored label sensitivity because it was created for a different loaded dataset.")
     state.latest_error_atlas_report = error_atlas_report if isinstance(error_atlas_report, dict) else None
     state.latest_reliability_atlas_report = _compatible_reliability_atlas_report(reliability_atlas_report, state)
     if (
@@ -1868,6 +1919,7 @@ def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
         calibration_repair_report=state.latest_calibration_repair_report,
         selective_risk_report=state.latest_selective_risk_report,
         sample_review_report=state.latest_sample_review_report,
+        label_sensitivity_report=state.latest_label_sensitivity_report,
         error_atlas_report=state.latest_error_atlas_report,
         reliability_atlas_report=state.latest_reliability_atlas_report,
         calibration_slice_report=state.latest_calibration_slice_report,
@@ -2769,6 +2821,27 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                     f"label={int(item['label'])}, pred={int(item['predicted_label'])}, "
                     f"p={float(item['probability']):.4f}, loss={float(item['loss']):.4f}",
                 )
+    elif kind == "label_sensitivity":
+        state.latest_label_sensitivity_report = result
+        state.latest_experiment_advisor_report = None
+        state.latest_promotion_gate_report = None
+        _log(window, format_label_sensitivity_summary(result))
+        for item in result.get("suspect_label_rows", [])[:5]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            _log(
+                window,
+                f"  suspect row={int(item['row_index'])}: "
+                f"label={int(item['label'])}->{int(item['flipped_label'])}, "
+                f"p={float(item['probability']):.4f}, "
+                f"F1_delta={float(item['f1_delta_if_flipped']):.4f}, flags={flags}",
+            )
+        for item in result.get("anchor_rows", [])[:3]:
+            _log(
+                window,
+                f"  anchor row={int(item['row_index'])}: "
+                f"F1_delta={float(item['f1_delta_if_flipped']):.4f}, "
+                f"action={item.get('recommended_action', '-')}",
+            )
     elif kind == "error_atlas":
         state.latest_error_atlas_report = result
         _log(window, format_error_atlas_summary(result))
@@ -3309,6 +3382,7 @@ def _set_busy(window, busy: bool) -> None:
         "-CALIBRATION_REPAIR-",
         "-SELECTIVE_RISK-",
         "-SAMPLE_REVIEW-",
+        "-LABEL_SENSITIVITY-",
         "-ERROR_ATLAS-",
         "-PERMUTATION_NULL-",
         "-CARTOGRAPHY-",
