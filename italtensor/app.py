@@ -2062,6 +2062,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_calibration_repair_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
+        state.latest_label_sensitivity_report = None
         state.latest_error_atlas_report = None
         state.latest_reliability_atlas_report = None
         state.latest_calibration_slice_report = None
@@ -2117,6 +2118,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_calibration_repair_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
+        state.latest_label_sensitivity_report = None
         state.latest_error_atlas_report = None
         state.latest_reliability_atlas_report = None
         state.latest_calibration_slice_report = None
@@ -2196,6 +2198,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_calibration_repair_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
+        state.latest_label_sensitivity_report = None
         state.latest_error_atlas_report = None
         state.latest_reliability_atlas_report = None
         state.latest_calibration_slice_report = None
@@ -3055,6 +3058,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_calibration_repair_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
+        state.latest_label_sensitivity_report = None
         state.latest_error_atlas_report = None
         state.latest_reliability_atlas_report = None
         state.latest_calibration_slice_report = None
@@ -3120,6 +3124,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_calibration_repair_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
+        state.latest_label_sensitivity_report = None
         state.latest_error_atlas_report = None
         state.latest_reliability_atlas_report = None
         state.latest_calibration_slice_report = None
@@ -3278,6 +3283,7 @@ def _invalidate_model_artifacts(state: AppState) -> None:
     state.latest_calibration_repair_report = None
     state.latest_selective_risk_report = None
     state.latest_sample_review_report = None
+    state.latest_label_sensitivity_report = None
     state.latest_error_atlas_report = None
     state.latest_reliability_atlas_report = None
     state.latest_calibration_slice_report = None
@@ -3727,6 +3733,7 @@ def _activate_model_slot(window, state: AppState, values: dict[str, Any]) -> Non
     state.latest_calibration_repair_report = None
     state.latest_selective_risk_report = None
     state.latest_sample_review_report = None
+    state.latest_label_sensitivity_report = None
     state.latest_error_atlas_report = None
     state.latest_reliability_atlas_report = None
     state.latest_calibration_slice_report = None
@@ -3850,6 +3857,7 @@ def _load_registry(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_calibration_repair_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
+        state.latest_label_sensitivity_report = None
         state.latest_error_atlas_report = None
         state.latest_reliability_atlas_report = None
         state.latest_calibration_slice_report = None
@@ -3908,6 +3916,7 @@ def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_calibration_repair_report = None
     state.latest_selective_risk_report = None
     state.latest_sample_review_report = None
+    state.latest_label_sensitivity_report = None
     state.latest_error_atlas_report = None
     state.latest_reliability_atlas_report = None
     state.latest_calibration_slice_report = None
@@ -4004,6 +4013,7 @@ def _build_stacked_ensemble(window, state: AppState, values: dict[str, Any]) -> 
     state.latest_calibration_repair_report = None
     state.latest_selective_risk_report = None
     state.latest_sample_review_report = None
+    state.latest_label_sensitivity_report = None
     state.latest_error_atlas_report = None
     state.latest_reliability_atlas_report = None
     state.latest_calibration_slice_report = None
@@ -4621,6 +4631,7 @@ def _merge_slots(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_calibration_repair_report = None
         state.latest_selective_risk_report = None
         state.latest_sample_review_report = None
+        state.latest_label_sensitivity_report = None
         state.latest_error_atlas_report = None
         state.latest_reliability_atlas_report = None
         state.latest_calibration_slice_report = None
