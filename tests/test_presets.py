@@ -9,6 +9,7 @@ from italtensor.data_acquisition import run_data_acquisition_planner
 from italtensor.data_value import run_data_value_scout
 from italtensor.experiments import split_train_validation
 from italtensor.label_sensitivity import run_label_sensitivity
+from italtensor.label_noise_stress import run_label_noise_stress
 from italtensor.leakage_sentinel import run_leakage_sentinel
 from italtensor.modeling import ModelConfig, NumpyBinaryClassifier
 from italtensor.preprocessing import FeatureStandardizer
@@ -221,6 +222,7 @@ def test_experimental_builtin_presets_are_available():
         "Conformal coverage lab",
         "Label audit traps",
         "Label sensitivity lab",
+        "Label noise stress lab",
         "Error atlas lab",
         "OOD sentinel lab",
         "Bootstrap stability lab",
@@ -855,6 +857,27 @@ def test_label_sensitivity_lab_preset_has_planted_review_rows():
     assert report["summary"]["priority"] in {"medium", "high"}
     assert report["summary"]["suspect_label_count"] >= 2
     assert report["summary"]["max_improving_f1_delta"] > 0.0
+
+
+def test_label_noise_stress_lab_preset_has_boundary_stress_rows():
+    metadata = preset_metadata("Label noise stress lab")
+    dataset = generate_builtin_preset("Label noise stress lab", sample_count=80, seed=7)
+    report = run_label_noise_stress(
+        dataset.features,
+        dataset.labels,
+        noise_rates=(0.0, 0.10, 0.25),
+        repeats=2,
+        max_epochs=12,
+        seed=3,
+    )
+
+    assert metadata["input_dim"] == 4
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == ["clean_margin", "support_signal", "boundary_band", "review_marker"]
+    assert any(example["name"] == "Noise-stress boundary" for example in metadata["prediction_examples"])
+    assert int(np.sum(dataset.features[:, 2] > 0.7)) >= 12
+    assert report["summary"]["worst_mean_f1_drop"] > 0.0
+    assert report["rates"][0]["noise_rate"] == 0.0
 
 
 def test_error_atlas_lab_preset_has_asymmetric_error_pockets():
