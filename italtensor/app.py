@@ -123,6 +123,11 @@ from .label_sensitivity import (
     label_sensitivity_dataset_fingerprint,
     run_label_sensitivity,
 )
+from .label_noise_stress import (
+    format_label_noise_stress_summary,
+    label_noise_stress_dataset_fingerprint,
+    run_label_noise_stress_diagnostics,
+)
 from .leakage_sentinel import (
     format_leakage_sentinel_summary,
     leakage_sentinel_dataset_fingerprint,
@@ -185,6 +190,7 @@ class AppState:
     latest_selective_risk_report: dict[str, Any] | None = None
     latest_sample_review_report: dict[str, Any] | None = None
     latest_label_sensitivity_report: dict[str, Any] | None = None
+    latest_label_noise_stress_report: dict[str, Any] | None = None
     latest_error_atlas_report: dict[str, Any] | None = None
     latest_reliability_atlas_report: dict[str, Any] | None = None
     latest_calibration_slice_report: dict[str, Any] | None = None
@@ -334,6 +340,8 @@ def run_app() -> None:
                 _start_sample_review(window, state)
             elif event == "-LABEL_SENSITIVITY-":
                 _start_label_sensitivity(window, state)
+            elif event == "-LABEL_NOISE_STRESS-":
+                _start_label_noise_stress(window, state, values)
             elif event == "-ERROR_ATLAS-":
                 _start_error_atlas(window, state)
             elif event == "-PERMUTATION_NULL-":
@@ -718,6 +726,7 @@ def _layout(sg):
         [
             sg.Button("Sample review", key="-SAMPLE_REVIEW-", expand_x=True),
             sg.Button("Label sensitivity", key="-LABEL_SENSITIVITY-", expand_x=True),
+            sg.Button("Label noise stress", key="-LABEL_NOISE_STRESS-", expand_x=True),
             sg.Button("Error atlas", key="-ERROR_ATLAS-", expand_x=True),
             sg.Button("Permutation null", key="-PERMUTATION_NULL-", expand_x=True),
             sg.Button("Dataset cartography", key="-CARTOGRAPHY-", expand_x=True),
@@ -1241,6 +1250,24 @@ def _start_label_sensitivity(window, state: AppState) -> None:
     _start_worker(window, state, "Estimating label sensitivity against fixed predictions...", task)
 
 
+def _start_label_noise_stress(window, state: AppState, values: dict[str, Any]) -> None:
+    _ensure_not_busy(state)
+    dataset = validate_dataset(state.features, state.labels, min_samples=12, require_two_classes=True)
+    feature_map = values.get("-FEATURE_MAP-", "linear")
+    max_epochs = min(max(5, _positive_int(values.get("-EPOCHS-", "40"), "epochs")), 45)
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_label_noise_stress_diagnostics(
+            dataset.features,
+            dataset.labels,
+            feature_map=feature_map,
+            max_epochs=max_epochs,
+        )
+        return "label_noise_stress", report
+
+    _start_worker(window, state, "Running label-noise stress diagnostics...", task)
+
+
 def _start_error_atlas(window, state: AppState) -> None:
     _ensure_not_busy(state)
     if state.model is None:
@@ -1425,6 +1452,7 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         selective_risk_report=state.latest_selective_risk_report,
         sample_review_report=state.latest_sample_review_report,
         label_sensitivity_report=state.latest_label_sensitivity_report,
+        label_noise_stress_report=state.latest_label_noise_stress_report,
         error_atlas_report=state.latest_error_atlas_report,
         reliability_atlas_report=state.latest_reliability_atlas_report,
         calibration_slice_report=state.latest_calibration_slice_report,
@@ -1651,6 +1679,20 @@ def _compatible_label_sensitivity_report(report: Any, state: AppState) -> dict[s
     return report
 
 
+def _compatible_label_noise_stress_report(report: Any, state: AppState) -> dict[str, Any] | None:
+    if not isinstance(report, dict):
+        return None
+    stored_fingerprint = report.get("dataset_fingerprint")
+    if stored_fingerprint and state.features and state.labels:
+        try:
+            current_fingerprint = label_noise_stress_dataset_fingerprint(state.features, state.labels)
+        except ValueError:
+            return None
+        if current_fingerprint != stored_fingerprint:
+            return None
+    return report
+
+
 def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     model, metadata = load_model_bundle(_required_path(values["-MODEL_PATH-"], "model path"))
     input_dim = metadata.get("input_dim")
@@ -1691,6 +1733,7 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     label_sensitivity_report = (
         metadata.get("posthoc_label_sensitivity_diagnostics") or metadata.get("label_sensitivity")
     )
+    label_noise_stress_report = metadata.get("label_noise_stress_diagnostics") or metadata.get("label_noise_stress")
     error_atlas_report = metadata.get("error_atlas")
     reliability_atlas_report = metadata.get("reliability_atlas")
     calibration_slice_report = metadata.get("calibration_slice_diagnostics")
@@ -1745,6 +1788,13 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
         and label_sensitivity_report.get("dataset_fingerprint")
     ):
         _log(window, "Skipped stored label sensitivity because it was created for a different loaded dataset.")
+    state.latest_label_noise_stress_report = _compatible_label_noise_stress_report(label_noise_stress_report, state)
+    if (
+        isinstance(label_noise_stress_report, dict)
+        and state.latest_label_noise_stress_report is None
+        and label_noise_stress_report.get("dataset_fingerprint")
+    ):
+        _log(window, "Skipped stored label-noise stress because it was created for a different loaded dataset.")
     state.latest_error_atlas_report = error_atlas_report if isinstance(error_atlas_report, dict) else None
     state.latest_reliability_atlas_report = _compatible_reliability_atlas_report(reliability_atlas_report, state)
     if (
@@ -1922,6 +1972,7 @@ def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
         selective_risk_report=state.latest_selective_risk_report,
         sample_review_report=state.latest_sample_review_report,
         label_sensitivity_report=state.latest_label_sensitivity_report,
+        label_noise_stress_report=state.latest_label_noise_stress_report,
         error_atlas_report=state.latest_error_atlas_report,
         reliability_atlas_report=state.latest_reliability_atlas_report,
         calibration_slice_report=state.latest_calibration_slice_report,
@@ -2847,6 +2898,21 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                 f"F1_delta={float(item['f1_delta_if_flipped']):.4f}, "
                 f"action={item.get('recommended_action', '-')}",
             )
+    elif kind == "label_noise_stress":
+        state.latest_label_noise_stress_report = result
+        state.latest_experiment_advisor_report = None
+        state.latest_promotion_gate_report = None
+        _log(window, format_label_noise_stress_summary(result))
+        for item in result.get("rates", [])[:6]:
+            degradation = item.get("degradation", {})
+            metrics = item.get("mean_metrics", {})
+            _log(
+                window,
+                f"  noise={float(item.get('noise_rate') or 0.0):.2f}: "
+                f"F1={float(metrics.get('f1') or 0.0):.4f}, "
+                f"F1_drop={float(degradation.get('f1_drop') or 0.0):.4f}, "
+                f"Brier_increase={float(degradation.get('brier_increase') or 0.0):.4f}",
+            )
     elif kind == "error_atlas":
         state.latest_error_atlas_report = result
         _log(window, format_error_atlas_summary(result))
@@ -3286,6 +3352,7 @@ def _invalidate_model_artifacts(state: AppState) -> None:
     state.latest_selective_risk_report = None
     state.latest_sample_review_report = None
     state.latest_label_sensitivity_report = None
+    state.latest_label_noise_stress_report = None
     state.latest_error_atlas_report = None
     state.latest_reliability_atlas_report = None
     state.latest_calibration_slice_report = None
@@ -3391,6 +3458,7 @@ def _set_busy(window, busy: bool) -> None:
         "-SELECTIVE_RISK-",
         "-SAMPLE_REVIEW-",
         "-LABEL_SENSITIVITY-",
+        "-LABEL_NOISE_STRESS-",
         "-ERROR_ATLAS-",
         "-PERMUTATION_NULL-",
         "-CARTOGRAPHY-",
@@ -4338,6 +4406,7 @@ def _start_experiment_advisor(window, state: AppState) -> None:
             data_acquisition_report=state.latest_data_acquisition_report,
             data_value_report=state.latest_data_value_report,
             label_sensitivity_report=state.latest_label_sensitivity_report,
+            label_noise_stress_report=state.latest_label_noise_stress_report,
         )
         return "experiment_advisor", report
 
@@ -4392,6 +4461,7 @@ def _start_promotion_gate(window, state: AppState) -> None:
             data_acquisition_report=state.latest_data_acquisition_report,
             data_value_report=state.latest_data_value_report,
             label_sensitivity_report=state.latest_label_sensitivity_report,
+            label_noise_stress_report=state.latest_label_noise_stress_report,
             selective_risk_report=state.latest_selective_risk_report,
         )
         return "promotion_gate", report

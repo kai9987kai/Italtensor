@@ -607,6 +607,22 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="label_noise_stress_lab",
+        name="Label noise stress lab",
+        description="Clean margins plus boundary rows for retraining-based synthetic label-noise robustness checks.",
+        default_samples=200,
+        min_samples=24,
+        input_dim=4,
+        recommended_feature_map="linear",
+        feature_names=("clean_margin", "support_signal", "boundary_band", "review_marker"),
+        training_defaults={"epochs": 60, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Clean negative margin", "features": [-1.35, -0.6, -0.8, 0.0], "expected_label": 0},
+            {"name": "Noise-stress boundary", "features": [0.05, 0.0, 1.1, 1.0], "expected_label": None},
+            {"name": "Clean positive margin", "features": [1.35, 0.6, -0.8, 0.0], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
         key="error_atlas_lab",
         name="Error atlas lab",
         description="Clear cores, boundary rows, and asymmetric error pockets for row-level confusion analysis.",
@@ -1038,6 +1054,8 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _label_audit_traps(total, rng)
     elif preset.key == "label_sensitivity_lab":
         features, labels = _label_sensitivity_lab(total, rng)
+    elif preset.key == "label_noise_stress_lab":
+        features, labels = _label_noise_stress_lab(total, rng)
     elif preset.key == "error_atlas_lab":
         features, labels = _error_atlas_lab(total, rng)
     elif preset.key == "ood_sentinel_lab":
@@ -2079,6 +2097,41 @@ def _label_sensitivity_lab(total: int, rng: np.random.Generator) -> tuple[np.nda
 
     features = np.column_stack([model_score, support_signal, review_marker, trusted_anchor]).astype(np.float32)
     return _shuffle(features, labels, rng)
+
+
+def _label_noise_stress_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    labels = _balanced_labels(total)
+    signed = np.where(labels == 1, 1.0, -1.0)
+    clean_margin = signed * 1.15 + rng.normal(0.0, 0.25, size=total)
+    support_signal = signed * 0.55 + rng.normal(0.0, 0.30, size=total)
+    boundary_band = rng.normal(-0.8, 0.18, size=total)
+    review_marker = rng.normal(0.0, 0.18, size=total)
+
+    boundary_count = min(max(8, total // 5), total - 4)
+    boundary_indices = rng.choice(total, size=boundary_count, replace=False)
+    boundary_band[boundary_indices] = rng.normal(1.1, 0.16, size=boundary_count)
+    clean_margin[boundary_indices] = signed[boundary_indices] * rng.normal(0.28, 0.08, size=boundary_count)
+    support_signal[boundary_indices] = signed[boundary_indices] * rng.normal(0.12, 0.08, size=boundary_count)
+    review_marker[boundary_indices] = rng.normal(1.0, 0.16, size=boundary_count)
+
+    if total >= 24:
+        anchors = np.asarray(
+            [
+                [-1.45, -0.65, -0.8, 0.0],
+                [-1.25, -0.55, -0.8, 0.0],
+                [1.25, 0.55, -0.8, 0.0],
+                [1.45, 0.65, -0.8, 0.0],
+            ],
+            dtype=np.float32,
+        )
+        clean_margin[:4] = anchors[:, 0]
+        support_signal[:4] = anchors[:, 1]
+        boundary_band[:4] = anchors[:, 2]
+        review_marker[:4] = anchors[:, 3]
+        labels[:4] = np.asarray([0, 0, 1, 1], dtype=np.int32)
+
+    features = np.column_stack([clean_margin, support_signal, boundary_band, review_marker]).astype(np.float32)
+    return _shuffle(features, labels.astype(np.int32), rng)
 
 
 def _error_atlas_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:

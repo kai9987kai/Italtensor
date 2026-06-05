@@ -132,6 +132,38 @@ def test_report_export_json_and_markdown(tmp_path):
             ],
             "anchor_rows": [{"row_index": 0, "label": 0, "probability": 0.10, "f1_delta_if_flipped": -0.08}],
         },
+        label_noise_stress_report={
+            "summary": {
+                "verdict": "label_noise_review",
+                "priority": "medium",
+                "baseline_f1": 0.75,
+                "baseline_accuracy": 0.80,
+                "worst_noise_rate": 0.20,
+                "worst_mean_f1_drop": 0.07,
+                "first_material_noise_rate": 0.10,
+                "recommended_next_step": "Review noisy labels before another sweep.",
+            },
+            "split": {
+                "train_sample_count": 3,
+                "validation_sample_count": 1,
+                "train_class_counts": {"0": 2, "1": 1},
+                "validation_class_counts": {"0": 0, "1": 1},
+            },
+            "rates": [
+                {
+                    "noise_rate": 0.0,
+                    "repeat_count": 1,
+                    "mean_metrics": {"f1": 0.75, "accuracy": 0.80},
+                    "degradation": {"f1_drop": 0.0, "brier_increase": 0.0},
+                },
+                {
+                    "noise_rate": 0.20,
+                    "repeat_count": 3,
+                    "mean_metrics": {"f1": 0.68, "accuracy": 0.72},
+                    "degradation": {"f1_drop": 0.07, "brier_increase": 0.03},
+                },
+            ],
+        },
         error_atlas_report={
             "sample_count": 4,
             "summary": {
@@ -1206,6 +1238,7 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["feature_ablation_diagnostics"]["summary"]["top_feature"] == "x1"
     assert saved_json["sample_review"]["summary"]["label_issue_count"] == 1
     assert saved_json["posthoc_label_sensitivity_diagnostics"]["summary"]["priority"] == "high"
+    assert saved_json["label_noise_stress_diagnostics"]["summary"]["worst_noise_rate"] == 0.20
     assert saved_json["error_atlas"]["summary"]["error_count"] == 2
     assert saved_json["reliability_atlas"]["summary"]["risk_level"] == "medium"
     assert saved_json["calibration_slice_diagnostics"]["summary"]["risk_level"] == "high"
@@ -1265,6 +1298,8 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "label_issue row 2" in saved_markdown
     assert "## Post-Hoc Label Sensitivity" in saved_markdown
     assert "suspect row 2" in saved_markdown
+    assert "## Label Noise Stress" in saved_markdown
+    assert "Review noisy labels" in saved_markdown
     assert "## Error Atlas" in saved_markdown
     assert "high-confidence error row 2" in saved_markdown
     assert "## Reliability Atlas" in saved_markdown

@@ -32,6 +32,7 @@ def build_experiment_report(
     selective_risk_report: dict[str, Any] | None = None,
     sample_review_report: dict[str, Any] | None = None,
     label_sensitivity_report: dict[str, Any] | None = None,
+    label_noise_stress_report: dict[str, Any] | None = None,
     error_atlas_report: dict[str, Any] | None = None,
     reliability_atlas_report: dict[str, Any] | None = None,
     calibration_slice_report: dict[str, Any] | None = None,
@@ -105,6 +106,7 @@ def build_experiment_report(
         "selective_prediction_diagnostics": selective_risk_report or None,
         "sample_review": sample_review_report or None,
         "posthoc_label_sensitivity_diagnostics": label_sensitivity_report or None,
+        "label_noise_stress_diagnostics": label_noise_stress_report or None,
         "error_atlas": error_atlas_report or None,
         "reliability_atlas": reliability_atlas_report or None,
         "calibration_slice_diagnostics": calibration_slice_report or None,
@@ -172,6 +174,7 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     selective_risk = report.get("selective_prediction_diagnostics") or {}
     sample_review = report.get("sample_review") or {}
     label_sensitivity = report.get("posthoc_label_sensitivity_diagnostics") or report.get("label_sensitivity") or {}
+    label_noise_stress = report.get("label_noise_stress_diagnostics") or {}
     error_atlas = report.get("error_atlas") or {}
     reliability_atlas = report.get("reliability_atlas") or {}
     calibration_slices = report.get("calibration_slice_diagnostics") or {}
@@ -845,6 +848,35 @@ def format_markdown_report(report: dict[str, Any]) -> str:
                 f"label={item.get('label', '-')}, "
                 f"p={_format_value(item.get('probability', '-'))}, "
                 f"delta_f1={_format_value(item.get('f1_delta_if_flipped', '-'))}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Label Noise Stress"])
+    if label_noise_stress:
+        summary = label_noise_stress.get("summary", {})
+        split = label_noise_stress.get("split", {})
+        lines.extend(
+            [
+                f"- Verdict: {summary.get('verdict', '-')}",
+                f"- Priority: {summary.get('priority', '-')}",
+                f"- Baseline F1: {_format_value(summary.get('baseline_f1', '-'))}",
+                f"- Worst noise rate: {_format_value(summary.get('worst_noise_rate', '-'))}",
+                f"- Worst mean F1 drop: {_format_value(summary.get('worst_mean_f1_drop', '-'))}",
+                f"- First material noise rate: {_format_value(summary.get('first_material_noise_rate', '-'))}",
+                f"- Train/validation rows: {split.get('train_sample_count', '-')}/{split.get('validation_sample_count', '-')}",
+                f"- Recommended next step: {summary.get('recommended_next_step') or 'none'}",
+            ]
+        )
+        for item in label_noise_stress.get("rates", [])[:8]:
+            metrics = item.get("mean_metrics", {})
+            degradation = item.get("degradation", {})
+            lines.append(
+                f"- noise {float(item.get('noise_rate') or 0.0):.2f}: "
+                f"F1={_format_value(metrics.get('f1', '-'))}, "
+                f"accuracy={_format_value(metrics.get('accuracy', '-'))}, "
+                f"F1_drop={_format_value(degradation.get('f1_drop', '-'))}, "
+                f"Brier_increase={_format_value(degradation.get('brier_increase', '-'))}"
             )
     else:
         lines.append("- None")

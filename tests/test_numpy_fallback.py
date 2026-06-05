@@ -130,6 +130,7 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
         selective_risk_report={"summary": {"recommended_cutoff": 0.2}},
         sample_review_report={"summary": {"label_issue_count": 1}},
         label_sensitivity_report={"summary": {"priority": "high", "suspect_label_count": 2}},
+        label_noise_stress_report={"summary": {"priority": "medium", "worst_mean_f1_drop": 0.07}},
         error_atlas_report={"summary": {"error_count": 2}},
         reliability_atlas_report={"summary": {"risk_level": "medium", "expected_calibration_error": 0.09}},
         calibration_slice_report={"summary": {"risk_level": "high", "max_absolute_confidence_gap": 0.42}},
@@ -189,6 +190,7 @@ def test_numpy_fallback_model_bundle_round_trip(tmp_path):
     assert metadata["selective_prediction_diagnostics"]["summary"]["recommended_cutoff"] == 0.2
     assert metadata["sample_review"]["summary"]["label_issue_count"] == 1
     assert metadata["posthoc_label_sensitivity_diagnostics"]["summary"]["suspect_label_count"] == 2
+    assert metadata["label_noise_stress_diagnostics"]["summary"]["worst_mean_f1_drop"] == 0.07
     assert metadata["error_atlas"]["summary"]["error_count"] == 2
     assert metadata["reliability_atlas"]["summary"]["risk_level"] == "medium"
     assert metadata["calibration_slice_diagnostics"]["summary"]["max_absolute_confidence_gap"] == 0.42

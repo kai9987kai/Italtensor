@@ -42,6 +42,7 @@ def build_promotion_gate(
     data_acquisition_report: dict[str, Any] | None = None,
     data_value_report: dict[str, Any] | None = None,
     label_sensitivity_report: dict[str, Any] | None = None,
+    label_noise_stress_report: dict[str, Any] | None = None,
     selective_risk_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a transparent model-promotion checklist from local experiment evidence."""
@@ -384,6 +385,7 @@ def build_promotion_gate(
         data_acquisition_report=data_acquisition_report,
         data_value_report=data_value_report,
         label_sensitivity_report=label_sensitivity_report,
+        label_noise_stress_report=label_noise_stress_report,
         selective_risk_report=selective_risk_report,
     )
     _add_canary_checks(add, canary_suite_report)
@@ -678,6 +680,7 @@ def _add_repair_and_robustness_checks(
     data_acquisition_report: dict[str, Any] | None,
     data_value_report: dict[str, Any] | None,
     label_sensitivity_report: dict[str, Any] | None,
+    label_noise_stress_report: dict[str, Any] | None,
     selective_risk_report: dict[str, Any] | None,
 ) -> None:
     if calibration_repair_report:
@@ -829,6 +832,32 @@ def _add_repair_and_robustness_checks(
                 evidence=f"suspect_labels={suspect_count}, max_improving_f1_delta={max_improvement:.3f}.",
                 action=action,
                 penalty=4.0,
+            )
+    if label_noise_stress_report:
+        summary = label_noise_stress_report.get("summary", {})
+        priority = str(summary.get("priority", "low"))
+        worst_drop = float(summary.get("worst_mean_f1_drop", 0.0) or 0.0)
+        first_rate = summary.get("first_material_noise_rate")
+        action = str(summary.get("recommended_next_step") or "Review label-noise stress evidence before promotion.")
+        if priority == "high" and worst_drop >= 0.15:
+            add(
+                severity="blocker",
+                category="label_quality",
+                title="Label-noise stress shows severe metric collapse",
+                status="fail",
+                evidence=f"worst_mean_f1_drop={worst_drop:.3f}, first_material_rate={first_rate}.",
+                action=action,
+                penalty=16.0,
+            )
+        elif priority in {"high", "medium"} or worst_drop >= 0.05:
+            add(
+                severity="caution",
+                category="label_quality",
+                title="Label-noise stress needs review",
+                status="review",
+                evidence=f"worst_mean_f1_drop={worst_drop:.3f}, first_material_rate={first_rate}.",
+                action=action,
+                penalty=7.0 if priority == "high" else 5.0,
             )
     if error_atlas_report:
         summary = error_atlas_report.get("summary", {})

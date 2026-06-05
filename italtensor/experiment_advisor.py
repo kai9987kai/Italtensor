@@ -36,6 +36,7 @@ def build_experiment_advisor(
     data_acquisition_report: dict[str, Any] | None = None,
     data_value_report: dict[str, Any] | None = None,
     label_sensitivity_report: dict[str, Any] | None = None,
+    label_noise_stress_report: dict[str, Any] | None = None,
     max_recommendations: int = 8,
 ) -> dict[str, Any]:
     """Rank practical next experiments from current dataset, model, and diagnostic evidence."""
@@ -140,6 +141,7 @@ def build_experiment_advisor(
         data_acquisition_report=data_acquisition_report,
         data_value_report=data_value_report,
         label_sensitivity_report=label_sensitivity_report,
+        label_noise_stress_report=label_noise_stress_report,
         prototype_audit_report=prototype_audit_report,
         ood_sentinel_report=ood_sentinel_report,
     )
@@ -291,6 +293,7 @@ def _add_report_recommendations(
     data_acquisition_report: dict[str, Any] | None,
     data_value_report: dict[str, Any] | None,
     label_sensitivity_report: dict[str, Any] | None,
+    label_noise_stress_report: dict[str, Any] | None,
     prototype_audit_report: dict[str, Any] | None,
     ood_sentinel_report: dict[str, Any] | None,
 ) -> None:
@@ -446,6 +449,34 @@ def _add_report_recommendations(
                 action=next_step,
                 source="label_sensitivity",
                 expected_signal="Reviewed labels should either be corrected or documented as trusted anchors.",
+            )
+    if label_noise_stress_report:
+        summary = label_noise_stress_report.get("summary", {})
+        priority = str(summary.get("priority", "low"))
+        worst_drop = float(summary.get("worst_mean_f1_drop", 0.0) or 0.0)
+        first_rate = summary.get("first_material_noise_rate")
+        next_step = str(summary.get("recommended_next_step") or "Review label-noise stress evidence.")
+        if priority == "high" or worst_drop >= 0.10:
+            add(
+                score=87.0,
+                priority="high",
+                category="label_review",
+                title="Investigate label-noise fragility before tuning",
+                reason=f"Label-noise stress found worst mean F1 drop {worst_drop:.3f}; first material rate={first_rate}.",
+                action=next_step,
+                source="label_noise_stress",
+                expected_signal="After label review or cleaner validation rows, low-rate synthetic noise should cause less metric collapse.",
+            )
+        elif priority == "medium":
+            add(
+                score=60.0,
+                priority="medium",
+                category="label_review",
+                title="Review label-noise stress curve",
+                reason=f"Label-noise stress shows material degradation by synthetic training-label corruption; worst F1 drop={worst_drop:.3f}.",
+                action=next_step,
+                source="label_noise_stress",
+                expected_signal="Follow-up label review should reduce fragility or document it as a dataset limitation.",
             )
     if learning_curve_report:
         summary = learning_curve_report.get("summary", {})
