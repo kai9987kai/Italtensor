@@ -1688,7 +1688,9 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     calibration_repair_report = metadata.get("posthoc_calibration_repair_diagnostics")
     selective_risk_report = metadata.get("selective_prediction_diagnostics")
     sample_review_report = metadata.get("sample_review")
-    label_sensitivity_report = metadata.get("label_sensitivity")
+    label_sensitivity_report = (
+        metadata.get("posthoc_label_sensitivity_diagnostics") or metadata.get("label_sensitivity")
+    )
     error_atlas_report = metadata.get("error_atlas")
     reliability_atlas_report = metadata.get("reliability_atlas")
     calibration_slice_report = metadata.get("calibration_slice_diagnostics")
@@ -4335,6 +4337,7 @@ def _start_experiment_advisor(window, state: AppState) -> None:
             learning_curve_report=state.latest_learning_curve_report,
             data_acquisition_report=state.latest_data_acquisition_report,
             data_value_report=state.latest_data_value_report,
+            label_sensitivity_report=state.latest_label_sensitivity_report,
         )
         return "experiment_advisor", report
 
@@ -4388,6 +4391,7 @@ def _start_promotion_gate(window, state: AppState) -> None:
             learning_curve_report=state.latest_learning_curve_report,
             data_acquisition_report=state.latest_data_acquisition_report,
             data_value_report=state.latest_data_value_report,
+            label_sensitivity_report=state.latest_label_sensitivity_report,
             selective_risk_report=state.latest_selective_risk_report,
         )
         return "promotion_gate", report

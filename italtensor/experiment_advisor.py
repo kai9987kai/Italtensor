@@ -35,6 +35,7 @@ def build_experiment_advisor(
     learning_curve_report: dict[str, Any] | None = None,
     data_acquisition_report: dict[str, Any] | None = None,
     data_value_report: dict[str, Any] | None = None,
+    label_sensitivity_report: dict[str, Any] | None = None,
     max_recommendations: int = 8,
 ) -> dict[str, Any]:
     """Rank practical next experiments from current dataset, model, and diagnostic evidence."""
@@ -138,6 +139,7 @@ def build_experiment_advisor(
         learning_curve_report=learning_curve_report,
         data_acquisition_report=data_acquisition_report,
         data_value_report=data_value_report,
+        label_sensitivity_report=label_sensitivity_report,
         prototype_audit_report=prototype_audit_report,
         ood_sentinel_report=ood_sentinel_report,
     )
@@ -288,6 +290,7 @@ def _add_report_recommendations(
     learning_curve_report: dict[str, Any] | None,
     data_acquisition_report: dict[str, Any] | None,
     data_value_report: dict[str, Any] | None,
+    label_sensitivity_report: dict[str, Any] | None,
     prototype_audit_report: dict[str, Any] | None,
     ood_sentinel_report: dict[str, Any] | None,
 ) -> None:
@@ -412,6 +415,37 @@ def _add_report_recommendations(
                 action=next_step,
                 source="data_value_scout",
                 expected_signal="Dataset curation should reduce redundant weight or document rare rows as canaries.",
+            )
+    if label_sensitivity_report:
+        summary = label_sensitivity_report.get("summary", {})
+        priority = str(summary.get("priority", "low"))
+        suspect_count = int(summary.get("suspect_label_count", 0) or 0)
+        max_improvement = float(summary.get("max_improving_f1_delta", 0.0) or 0.0)
+        next_step = str(summary.get("recommended_next_step") or "Review label-sensitivity rows before promotion.")
+        if priority == "high" or max_improvement >= 0.05:
+            add(
+                score=90.0,
+                priority="high",
+                category="label_review",
+                title="Review labels that materially change validation metrics",
+                reason=(
+                    f"Label sensitivity found {suspect_count} suspect label row(s); "
+                    f"max F1 improvement if flipped is {max_improvement:.3f}."
+                ),
+                action=next_step,
+                source="label_sensitivity",
+                expected_signal="After review, suspect-label count and max improving F1 delta should fall or become documented.",
+            )
+        elif priority == "medium" or suspect_count:
+            add(
+                score=62.0,
+                priority="medium",
+                category="label_review",
+                title="Triage metric-sensitive labels",
+                reason=f"Label sensitivity found {suspect_count} row(s) where labels affect fixed-prediction metrics.",
+                action=next_step,
+                source="label_sensitivity",
+                expected_signal="Reviewed labels should either be corrected or documented as trusted anchors.",
             )
     if learning_curve_report:
         summary = learning_curve_report.get("summary", {})

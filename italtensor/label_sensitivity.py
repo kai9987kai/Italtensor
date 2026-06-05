@@ -38,6 +38,25 @@ def run_label_sensitivity(
         raise ValueError("Model probabilities must be finite.")
 
     baseline = evaluate_predictions(y, probabilities, threshold=threshold)
+    baseline_metrics = {
+        key: float(value) if isinstance(value, (float, np.floating)) else int(value)
+        for key, value in baseline.items()
+        if key
+        in {
+            "f1",
+            "accuracy",
+            "balanced_accuracy",
+            "precision",
+            "recall",
+            "brier_score",
+            "log_loss",
+            "ece",
+            "true_positive",
+            "true_negative",
+            "false_positive",
+            "false_negative",
+        }
+    }
     predicted = (probabilities >= threshold).astype(np.int32)
     rows = [
         _row_sensitivity(
@@ -63,31 +82,20 @@ def run_label_sensitivity(
         "threshold": threshold,
         "material_f1_delta": material_f1_delta,
         "dataset_fingerprint": label_sensitivity_dataset_fingerprint(x, y),
-        "baseline_metrics": {
-            key: float(value) if isinstance(value, (float, np.floating)) else int(value)
-            for key, value in baseline.items()
-            if key
-            in {
-                "f1",
-                "accuracy",
-                "balanced_accuracy",
-                "precision",
-                "recall",
-                "brier_score",
-                "log_loss",
-                "ece",
-                "true_positive",
-                "true_negative",
-                "false_positive",
-                "false_negative",
-            }
-        },
+        "primary_metric": "f1",
+        "observed": baseline_metrics,
+        "baseline_metrics": baseline_metrics,
         "summary": summary,
         "recommendations": recommendations,
         "rows": rows[:max_items],
         "suspect_label_rows": [row for row in rows if row["label_flip_direction"] == "improves_metrics"][:max_items],
         "anchor_rows": [row for row in rows if row["label_flip_direction"] == "hurts_metrics"][:max_items],
     }
+
+
+def run_label_sensitivity_diagnostics(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """Compatibility alias for the post-hoc label-sensitivity diagnostic."""
+    return run_label_sensitivity(*args, **kwargs)
 
 
 def format_label_sensitivity_summary(report: dict[str, Any]) -> str:

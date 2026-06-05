@@ -31,6 +31,7 @@ def build_experiment_report(
     calibration_repair_report: dict[str, Any] | None = None,
     selective_risk_report: dict[str, Any] | None = None,
     sample_review_report: dict[str, Any] | None = None,
+    label_sensitivity_report: dict[str, Any] | None = None,
     error_atlas_report: dict[str, Any] | None = None,
     reliability_atlas_report: dict[str, Any] | None = None,
     calibration_slice_report: dict[str, Any] | None = None,
@@ -103,6 +104,7 @@ def build_experiment_report(
         "posthoc_calibration_repair_diagnostics": calibration_repair_report or None,
         "selective_prediction_diagnostics": selective_risk_report or None,
         "sample_review": sample_review_report or None,
+        "posthoc_label_sensitivity_diagnostics": label_sensitivity_report or None,
         "error_atlas": error_atlas_report or None,
         "reliability_atlas": reliability_atlas_report or None,
         "calibration_slice_diagnostics": calibration_slice_report or None,
@@ -169,6 +171,7 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     decision_curve = report.get("decision_curve_diagnostics") or {}
     selective_risk = report.get("selective_prediction_diagnostics") or {}
     sample_review = report.get("sample_review") or {}
+    label_sensitivity = report.get("posthoc_label_sensitivity_diagnostics") or report.get("label_sensitivity") or {}
     error_atlas = report.get("error_atlas") or {}
     reliability_atlas = report.get("reliability_atlas") or {}
     calibration_slices = report.get("calibration_slice_diagnostics") or {}
@@ -801,6 +804,48 @@ def format_markdown_report(report: dict[str, Any]) -> str:
                     f"p={_format_value(item.get('probability', '-'))}, "
                     f"loss={_format_value(item.get('loss', '-'))}"
                 )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Post-Hoc Label Sensitivity"])
+    if label_sensitivity:
+        summary = label_sensitivity.get("summary", {})
+        observed = label_sensitivity.get("observed") or label_sensitivity.get("baseline_metrics") or {}
+        lines.extend(
+            [
+                f"- Verdict: {summary.get('verdict', '-')}",
+                f"- Priority: {summary.get('priority', '-')}",
+                f"- Baseline F1: {_format_value(observed.get('f1', '-'))}",
+                f"- Suspect labels: {summary.get('suspect_label_count', '-')}",
+                f"- Anchor rows: {summary.get('anchor_row_count', '-')}",
+                f"- Max absolute F1 delta: {_format_value(summary.get('max_abs_f1_delta', '-'))}",
+                f"- Max improving F1 delta: {_format_value(summary.get('max_improving_f1_delta', '-'))}",
+                f"- Top suspect row: {summary.get('top_suspect_row') if summary.get('top_suspect_row') is not None else '-'}",
+                f"- Top anchor row: {summary.get('top_anchor_row') if summary.get('top_anchor_row') is not None else '-'}",
+                f"- Recommended next step: {summary.get('recommended_next_step') or 'none'}",
+            ]
+        )
+        for item in label_sensitivity.get("recommendations", [])[:5]:
+            lines.append(
+                f"- Action {item.get('rank', '-')}: "
+                f"[{item.get('priority', '-')}/{item.get('category', '-')}] "
+                f"{item.get('action', '-')}"
+            )
+        for item in label_sensitivity.get("suspect_label_rows", [])[:5]:
+            flags = ",".join(item.get("risk_flags", [])) or "none"
+            lines.append(
+                f"- suspect row {item.get('row_index', '-')}: "
+                f"label={item.get('label', '-')}, flip={item.get('flipped_label', '-')}, "
+                f"p={_format_value(item.get('probability', '-'))}, "
+                f"delta_f1={_format_value(item.get('f1_delta_if_flipped', '-'))}, flags={flags}"
+            )
+        for item in label_sensitivity.get("anchor_rows", [])[:3]:
+            lines.append(
+                f"- anchor row {item.get('row_index', '-')}: "
+                f"label={item.get('label', '-')}, "
+                f"p={_format_value(item.get('probability', '-'))}, "
+                f"delta_f1={_format_value(item.get('f1_delta_if_flipped', '-'))}"
+            )
     else:
         lines.append("- None")
 

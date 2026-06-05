@@ -41,6 +41,7 @@ def build_promotion_gate(
     learning_curve_report: dict[str, Any] | None = None,
     data_acquisition_report: dict[str, Any] | None = None,
     data_value_report: dict[str, Any] | None = None,
+    label_sensitivity_report: dict[str, Any] | None = None,
     selective_risk_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a transparent model-promotion checklist from local experiment evidence."""
@@ -382,6 +383,7 @@ def build_promotion_gate(
         learning_curve_report=learning_curve_report,
         data_acquisition_report=data_acquisition_report,
         data_value_report=data_value_report,
+        label_sensitivity_report=label_sensitivity_report,
         selective_risk_report=selective_risk_report,
     )
     _add_canary_checks(add, canary_suite_report)
@@ -675,6 +677,7 @@ def _add_repair_and_robustness_checks(
     learning_curve_report: dict[str, Any] | None,
     data_acquisition_report: dict[str, Any] | None,
     data_value_report: dict[str, Any] | None,
+    label_sensitivity_report: dict[str, Any] | None,
     selective_risk_report: dict[str, Any] | None,
 ) -> None:
     if calibration_repair_report:
@@ -800,6 +803,32 @@ def _add_repair_and_robustness_checks(
                 evidence=f"review_rows={review_count}, redundant_rows={redundant_count}.",
                 action=action,
                 penalty=5.0,
+            )
+    if label_sensitivity_report:
+        summary = label_sensitivity_report.get("summary", {})
+        priority = str(summary.get("priority", "low"))
+        suspect_count = int(summary.get("suspect_label_count", 0) or 0)
+        max_improvement = float(summary.get("max_improving_f1_delta", 0.0) or 0.0)
+        action = str(summary.get("recommended_next_step") or "Review label-sensitivity rows before promotion.")
+        if priority == "high" or max_improvement >= 0.05:
+            add(
+                severity="caution",
+                category="label_quality",
+                title="Label sensitivity has high-priority review rows",
+                status="review",
+                evidence=f"suspect_labels={suspect_count}, max_improving_f1_delta={max_improvement:.3f}.",
+                action=action,
+                penalty=7.0,
+            )
+        elif priority == "medium" or suspect_count:
+            add(
+                severity="caution",
+                category="label_quality",
+                title="Label sensitivity needs targeted review",
+                status="review",
+                evidence=f"suspect_labels={suspect_count}, max_improving_f1_delta={max_improvement:.3f}.",
+                action=action,
+                penalty=4.0,
             )
     if error_atlas_report:
         summary = error_atlas_report.get("summary", {})
@@ -983,6 +1012,8 @@ def _must_include(checks: list[dict[str, Any]], metrics: dict[str, float | int],
         items.append("data-acquisition note")
     if any(check["category"] == "data_curation" for check in checks):
         items.append("data-curation note")
+    if any(check["category"] == "label_quality" for check in checks):
+        items.append("label-quality note")
     if any(check["category"] == "schema" for check in checks):
         items.append("feature-schema note")
     if any(check["category"] == "ranking" for check in checks):

@@ -590,6 +590,23 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="label_sensitivity_lab",
+        name="Label sensitivity lab",
+        description="A margin dataset with planted high-confidence label flips and trusted anchors for fixed-prediction review.",
+        default_samples=180,
+        min_samples=24,
+        input_dim=4,
+        recommended_feature_map="linear",
+        feature_names=("model_score", "support_signal", "review_marker", "trusted_anchor"),
+        training_defaults={"epochs": 70, "batch_size": 16, "trials": 12, "feature_map": "linear"},
+        prediction_examples=(
+            {"name": "Stable negative anchor", "features": [-1.5, -0.7, 0.0, 1.0], "expected_label": 0},
+            {"name": "Sensitive label review", "features": [1.45, 0.65, 2.0, 0.0], "expected_label": None},
+            {"name": "Boundary review row", "features": [0.02, 0.0, 1.0, 0.0], "expected_label": None},
+            {"name": "Stable positive anchor", "features": [1.5, 0.7, 0.0, 1.0], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
         key="error_atlas_lab",
         name="Error atlas lab",
         description="Clear cores, boundary rows, and asymmetric error pockets for row-level confusion analysis.",
@@ -1019,6 +1036,8 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _conformal_coverage_lab(total, rng)
     elif preset.key == "label_audit_traps":
         features, labels = _label_audit_traps(total, rng)
+    elif preset.key == "label_sensitivity_lab":
+        features, labels = _label_sensitivity_lab(total, rng)
     elif preset.key == "error_atlas_lab":
         features, labels = _error_atlas_lab(total, rng)
     elif preset.key == "ood_sentinel_lab":
@@ -2019,6 +2038,47 @@ def _label_audit_traps(total: int, rng: np.random.Generator) -> tuple[np.ndarray
     labels[chosen_negatives] = 1
     labels[chosen_positives] = 0
     return features.astype(np.float32), labels.astype(np.int32)
+
+
+def _label_sensitivity_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    labels = _balanced_labels(total)
+    signed = np.where(labels == 1, 1.0, -1.0)
+    model_score = signed * 1.05 + rng.normal(0.0, 0.28, size=total)
+    support_signal = signed * 0.50 + rng.normal(0.0, 0.32, size=total)
+    review_marker = rng.normal(0.0, 0.12, size=total)
+    trusted_anchor = rng.normal(0.0, 0.12, size=total)
+    labels = labels.astype(np.int32).copy()
+
+    if total >= 24:
+        planted = np.asarray(
+            [
+                [1.55, 0.75, 2.0, 0.0],
+                [1.35, 0.55, 2.0, 0.0],
+                [-1.55, -0.75, 2.0, 0.0],
+                [-1.35, -0.55, 2.0, 0.0],
+                [1.65, 0.70, 0.0, 1.3],
+                [-1.65, -0.70, 0.0, 1.3],
+                [0.04, 0.02, 1.0, 0.0],
+                [-0.04, -0.02, 1.0, 0.0],
+            ],
+            dtype=np.float32,
+        )
+        planted_labels = np.asarray([0, 0, 1, 1, 1, 0, 1, 0], dtype=np.int32)
+        model_score[: planted.shape[0]] = planted[:, 0]
+        support_signal[: planted.shape[0]] = planted[:, 1]
+        review_marker[: planted.shape[0]] = planted[:, 2]
+        trusted_anchor[: planted.shape[0]] = planted[:, 3]
+        labels[: planted.shape[0]] = planted_labels
+
+        extra_review = min(max(4, total // 18), total - planted.shape[0])
+        if extra_review > 0:
+            indices = np.arange(planted.shape[0], planted.shape[0] + extra_review)
+            review_marker[indices] = rng.normal(1.2, 0.12, size=extra_review)
+            model_score[indices] = rng.normal(0.0, 0.16, size=extra_review)
+            support_signal[indices] = rng.normal(0.0, 0.18, size=extra_review)
+
+    features = np.column_stack([model_score, support_signal, review_marker, trusted_anchor]).astype(np.float32)
+    return _shuffle(features, labels, rng)
 
 
 def _error_atlas_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
