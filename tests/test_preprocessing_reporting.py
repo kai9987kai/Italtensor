@@ -99,6 +99,39 @@ def test_report_export_json_and_markdown(tmp_path):
             "hard_examples": [],
             "ambiguous_examples": [],
         },
+        label_sensitivity_report={
+            "observed": {"f1": 0.75, "accuracy": 0.75},
+            "summary": {
+                "verdict": "review_sensitive_labels",
+                "priority": "high",
+                "suspect_label_count": 2,
+                "anchor_row_count": 1,
+                "max_abs_f1_delta": 0.12,
+                "max_improving_f1_delta": 0.12,
+                "top_suspect_row": 2,
+                "top_anchor_row": 0,
+                "recommended_next_step": "Review sensitive labels.",
+            },
+            "recommendations": [
+                {
+                    "rank": 1,
+                    "priority": "high",
+                    "category": "label_quality",
+                    "action": "Review sensitive labels.",
+                }
+            ],
+            "suspect_label_rows": [
+                {
+                    "row_index": 2,
+                    "label": 0,
+                    "flipped_label": 1,
+                    "probability": 0.95,
+                    "f1_delta_if_flipped": 0.12,
+                    "risk_flags": ["flip_improves_f1"],
+                }
+            ],
+            "anchor_rows": [{"row_index": 0, "label": 0, "probability": 0.10, "f1_delta_if_flipped": -0.08}],
+        },
         error_atlas_report={
             "sample_count": 4,
             "summary": {
@@ -1172,6 +1205,7 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["uncertainty"]["conformal_calibration_count"] == 8
     assert saved_json["feature_ablation_diagnostics"]["summary"]["top_feature"] == "x1"
     assert saved_json["sample_review"]["summary"]["label_issue_count"] == 1
+    assert saved_json["posthoc_label_sensitivity_diagnostics"]["summary"]["priority"] == "high"
     assert saved_json["error_atlas"]["summary"]["error_count"] == 2
     assert saved_json["reliability_atlas"]["summary"]["risk_level"] == "medium"
     assert saved_json["calibration_slice_diagnostics"]["summary"]["risk_level"] == "high"
@@ -1229,6 +1263,8 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "Label-proxy flags" in saved_markdown
     assert "## Sample Review" in saved_markdown
     assert "label_issue row 2" in saved_markdown
+    assert "## Post-Hoc Label Sensitivity" in saved_markdown
+    assert "suspect row 2" in saved_markdown
     assert "## Error Atlas" in saved_markdown
     assert "high-confidence error row 2" in saved_markdown
     assert "## Reliability Atlas" in saved_markdown

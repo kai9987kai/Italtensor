@@ -19,6 +19,7 @@ from italtensor.app import (
     _compatible_capacity_planner_report,
     _compatible_data_acquisition_report,
     _compatible_data_value_report,
+    _compatible_label_sensitivity_report,
     _compatible_learning_curve_report,
     _compatible_prior_shift_report,
     _compatible_rank_lift_report,
@@ -44,6 +45,7 @@ from italtensor.capacity_planner import capacity_planner_dataset_fingerprint
 from italtensor.calibration_slices import calibration_slice_dataset_fingerprint
 from italtensor.data_acquisition import data_acquisition_dataset_fingerprint
 from italtensor.data_value import data_value_dataset_fingerprint
+from italtensor.label_sensitivity import label_sensitivity_dataset_fingerprint
 from italtensor.learning_curves import learning_curve_dataset_fingerprint
 from italtensor.preprocessing import FeatureStandardizer
 from italtensor.prior_shift import prior_shift_dataset_fingerprint
@@ -103,6 +105,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         latest_calibration_repair_report={"summary": {"recommended_method": "platt"}},
         latest_selective_risk_report={"summary": {"recommended_cutoff": 0.2}},
         latest_sample_review_report={"summary": {"label_issue_count": 1}},
+        latest_label_sensitivity_report={"summary": {"priority": "high"}},
         latest_error_atlas_report={"summary": {"error_count": 1}},
         latest_reliability_atlas_report={"summary": {"risk_level": "medium"}},
         latest_calibration_slice_report={"summary": {"risk_level": "high"}},
@@ -163,6 +166,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
     assert state.latest_calibration_repair_report is None
     assert state.latest_selective_risk_report is None
     assert state.latest_sample_review_report is None
+    assert state.latest_label_sensitivity_report is None
     assert state.latest_error_atlas_report is None
     assert state.latest_reliability_atlas_report is None
     assert state.latest_calibration_slice_report is None
@@ -277,6 +281,7 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
         latest_trial_inspector_report={"summary": {"best_trial_index": 2}},
         latest_promotion_gate_report={"summary": {"verdict": "needs_review"}},
         latest_data_value_report={"summary": {"priority": "medium"}},
+        latest_label_sensitivity_report={"summary": {"priority": "high"}},
     )
     path = tmp_path / "dataset-report.json"
 
@@ -307,6 +312,7 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
     assert payload["trial_inspector"]["summary"]["best_trial_index"] == 2
     assert payload["promotion_gate"]["summary"]["verdict"] == "needs_review"
     assert payload["data_value_scout"]["summary"]["priority"] == "medium"
+    assert payload["posthoc_label_sensitivity_diagnostics"]["summary"]["priority"] == "high"
     assert "Exported report" in window["-LOG-"].value
 
 
@@ -339,6 +345,7 @@ def test_training_preserves_dataset_only_diagnostics():
         latest_policy_guard_report={"summary": {"verdict": "policy_pass"}},
         latest_leakage_sentinel_report={"summary": {"risk_level": "high"}},
         latest_data_value_report={"summary": {"priority": "medium"}},
+        latest_label_sensitivity_report={"summary": {"priority": "high"}},
         latest_experiment_advisor_report={"summary": {"recommended_next_step": "Old advice"}},
         latest_trial_inspector_report={"summary": {"best_trial_index": 1}},
         latest_promotion_gate_report={"summary": {"verdict": "old"}},
@@ -375,6 +382,7 @@ def test_training_preserves_dataset_only_diagnostics():
     assert state.latest_policy_guard_report is None
     assert state.latest_leakage_sentinel_report == {"summary": {"risk_level": "high"}}
     assert state.latest_data_value_report == {"summary": {"priority": "medium"}}
+    assert state.latest_label_sensitivity_report is None
     assert state.latest_experiment_advisor_report is None
     assert state.latest_trial_inspector_report is None
     assert state.latest_promotion_gate_report is None
@@ -469,6 +477,21 @@ def test_compatible_data_value_report_rejects_mismatched_or_reordered_dataset():
 
     assert _compatible_data_value_report(matching, state) == matching
     assert _compatible_data_value_report(reordered, state) is None
+
+
+def test_compatible_label_sensitivity_report_rejects_mismatched_or_reordered_dataset():
+    state = AppState(features=[[0.1], [0.9], [0.2], [0.8]], labels=[0, 1, 0, 1], input_dim=1)
+    matching = {
+        "dataset_fingerprint": label_sensitivity_dataset_fingerprint(state.features, state.labels),
+        "summary": {"priority": "low"},
+    }
+    reordered = {
+        "dataset_fingerprint": label_sensitivity_dataset_fingerprint([[0.2], [0.1], [0.8], [0.9]], [0, 0, 1, 1]),
+        "summary": {"priority": "high"},
+    }
+
+    assert _compatible_label_sensitivity_report(matching, state) == matching
+    assert _compatible_label_sensitivity_report(reordered, state) is None
 
 
 def test_compatible_threshold_stability_report_rejects_mismatched_dataset():
@@ -1301,6 +1324,14 @@ def test_start_promotion_gate_uses_latest_policy_guard_report():
                 "recommended_next_step": "Retrain with monotonic constraints.",
             }
         },
+        latest_label_sensitivity_report={
+            "summary": {
+                "priority": "high",
+                "suspect_label_count": 2,
+                "max_improving_f1_delta": 0.08,
+                "recommended_next_step": "Review sensitive labels.",
+            }
+        },
     )
     captured = {}
 
@@ -1322,6 +1353,7 @@ def test_start_promotion_gate_uses_latest_policy_guard_report():
         check["category"] == "policy" and check["severity"] == "blocker"
         for check in report["checks"]
     )
+    assert any(check["category"] == "label_quality" for check in report["checks"])
 
 
 def test_handle_worker_done_stores_prototype_audit_without_mutating_model():
@@ -1642,6 +1674,7 @@ def test_start_experiment_advisor_forwards_holdout_and_calibration_slice_reports
     window = FakeWindow()
     calibration_slice_report = {"summary": {"risk_level": "high", "worst_slice": "x1[0, 1]"}}
     external_holdout_report = {"summary": {"verdict": "holdout_failure", "f1": 0.42}}
+    label_sensitivity_report = {"summary": {"priority": "high", "suspect_label_count": 2}}
     state = AppState(
         features=[[0.0], [1.0]],
         labels=[0, 1],
@@ -1649,6 +1682,7 @@ def test_start_experiment_advisor_forwards_holdout_and_calibration_slice_reports
         latest_metrics={"f1": 0.8},
         latest_calibration_slice_report=calibration_slice_report,
         latest_external_holdout_report=external_holdout_report,
+        latest_label_sensitivity_report=label_sensitivity_report,
     )
     captured = {}
 
@@ -1666,6 +1700,7 @@ def test_start_experiment_advisor_forwards_holdout_and_calibration_slice_reports
 
     assert captured["calibration_slice_report"] is calibration_slice_report
     assert captured["external_holdout_report"] is external_holdout_report
+    assert captured["label_sensitivity_report"] is label_sensitivity_report
     assert state.latest_experiment_advisor_report["summary"]["recommendation_count"] == 0
 
 
@@ -2171,6 +2206,50 @@ def test_handle_worker_done_stores_sample_review_without_mutating_model():
     assert state.latest_threshold == 0.4
     assert state.busy is False
     assert "Sample review" in window["-LOG-"].value
+
+
+def test_handle_worker_done_stores_label_sensitivity_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(
+        model=object(),
+        latest_metrics={"f1": 0.9},
+        latest_threshold=0.4,
+        latest_promotion_gate_report={"summary": {"verdict": "old"}},
+        busy=True,
+    )
+    model = state.model
+    report = {
+        "summary": {
+            "verdict": "review_sensitive_labels",
+            "priority": "high",
+            "suspect_label_count": 2,
+            "anchor_row_count": 1,
+            "max_abs_f1_delta": 0.12,
+            "recommended_next_step": "Review sensitive labels.",
+        },
+        "suspect_label_rows": [
+            {
+                "row_index": 4,
+                "label": 0,
+                "flipped_label": 1,
+                "probability": 0.93,
+                "f1_delta_if_flipped": 0.12,
+                "risk_flags": ["flip_improves_f1"],
+            }
+        ],
+        "anchor_rows": [{"row_index": 1, "label": 0, "probability": 0.05, "f1_delta_if_flipped": -0.08}],
+    }
+
+    _handle_worker_done(window, state, ("label_sensitivity", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_label_sensitivity_report == report
+    assert state.latest_promotion_gate_report is None
+    assert state.latest_threshold == 0.4
+    assert state.busy is False
+    assert "Label sensitivity" in window["-LOG-"].value
+    assert "suspect row=4" in window["-LOG-"].value
 
 
 def test_handle_worker_done_stores_error_atlas_without_mutating_model():

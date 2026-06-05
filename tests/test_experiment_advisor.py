@@ -251,6 +251,31 @@ def test_experiment_advisor_prioritizes_high_priority_data_value_scout():
     assert "Inspect review rows" in top["action"]
 
 
+def test_experiment_advisor_prioritizes_high_priority_label_sensitivity():
+    report = build_experiment_advisor(
+        sample_count=80,
+        input_dim=4,
+        labels=[0, 1] * 40,
+        metrics={"f1": 0.78, "accuracy": 0.80, "precision": 0.76, "recall": 0.81},
+        trial_history=[{"metrics": {"f1": 0.78}}] * 3,
+        external_holdout_report={"summary": {"verdict": "holdout_pass", "f1": 0.77}},
+        label_sensitivity_report={
+            "summary": {
+                "priority": "high",
+                "suspect_label_count": 3,
+                "max_improving_f1_delta": 0.09,
+                "recommended_next_step": "Review sensitive labels first.",
+            }
+        },
+    )
+
+    top = report["recommendations"][0]
+    assert top["source"] == "label_sensitivity"
+    assert top["category"] == "label_review"
+    assert top["priority"] == "high"
+    assert "Review sensitive labels" in top["action"]
+
+
 def test_experiment_advisor_is_deterministic_and_formats_summary():
     kwargs = {
         "sample_count": 24,

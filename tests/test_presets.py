@@ -8,8 +8,9 @@ from italtensor.data import DataValidationError, validate_dataset
 from italtensor.data_acquisition import run_data_acquisition_planner
 from italtensor.data_value import run_data_value_scout
 from italtensor.experiments import split_train_validation
+from italtensor.label_sensitivity import run_label_sensitivity
 from italtensor.leakage_sentinel import run_leakage_sentinel
-from italtensor.modeling import ModelConfig
+from italtensor.modeling import ModelConfig, NumpyBinaryClassifier
 from italtensor.preprocessing import FeatureStandardizer
 from italtensor.presets import BUILT_IN_PRESETS, generate_builtin_preset, load_preset_file, preset_metadata, save_preset_file
 from italtensor.validation_plan import run_validation_plan
@@ -219,6 +220,7 @@ def test_experimental_builtin_presets_are_available():
         "Selective abstention triage",
         "Conformal coverage lab",
         "Label audit traps",
+        "Label sensitivity lab",
         "Error atlas lab",
         "OOD sentinel lab",
         "Bootstrap stability lab",
@@ -834,6 +836,25 @@ def test_label_audit_traps_preset_has_suspicious_example():
 
     assert metadata["recommended_feature_map"] == "linear"
     assert any(example["name"] == "Suspicious positive-shaped negative" for example in metadata["prediction_examples"])
+
+
+def test_label_sensitivity_lab_preset_has_planted_review_rows():
+    metadata = preset_metadata("Label sensitivity lab")
+    dataset = generate_builtin_preset("Label sensitivity lab", sample_count=120, seed=10)
+    model = NumpyBinaryClassifier(
+        weights=np.asarray([3.0, 0.0, 0.0, 0.0], dtype=np.float32),
+        bias=0.0,
+    )
+    report = run_label_sensitivity(model, dataset.features, dataset.labels, material_f1_delta=0.01, max_items=12)
+
+    assert metadata["input_dim"] == 4
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["feature_names"] == ["model_score", "support_signal", "review_marker", "trusted_anchor"]
+    assert any(example["name"] == "Sensitive label review" for example in metadata["prediction_examples"])
+    assert int(np.sum(dataset.features[:, 2] > 1.0)) >= 4
+    assert report["summary"]["priority"] in {"medium", "high"}
+    assert report["summary"]["suspect_label_count"] >= 2
+    assert report["summary"]["max_improving_f1_delta"] > 0.0
 
 
 def test_error_atlas_lab_preset_has_asymmetric_error_pockets():
