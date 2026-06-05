@@ -164,6 +164,38 @@ def test_promotion_gate_cautions_on_high_priority_label_sensitivity():
     assert "label-quality note" in report["release_note"]["must_include"]
 
 
+def test_promotion_gate_blocks_severe_label_noise_stress_collapse():
+    report = build_promotion_gate(
+        sample_count=120,
+        input_dim=3,
+        labels=[0, 1] * 60,
+        config=ModelConfig(feature_map="linear"),
+        metrics={
+            "f1": 0.88,
+            "accuracy": 0.90,
+            "balanced_accuracy": 0.89,
+            "brier_score": 0.12,
+            "ece": 0.03,
+            "threshold_gain_f1": 0.02,
+        },
+        trial_history=[{"metrics": {"f1": 0.86}}, {"metrics": {"f1": 0.88}}, {"metrics": {"f1": 0.84}}],
+        dataset_triage_report={"summary": {"risk_level": "low", "readiness_score": 92.0, "blocking_issue_count": 0}},
+        trial_inspector_report={"valid_trial_count": 4, "summary": {"leader_margin_f1": 0.06}},
+        label_noise_stress_report={
+            "summary": {
+                "priority": "high",
+                "worst_mean_f1_drop": 0.18,
+                "first_material_noise_rate": 0.10,
+                "recommended_next_step": "Audit labels before promotion.",
+            }
+        },
+    )
+
+    assert report["summary"]["verdict"] == "blocked"
+    assert any(item["title"] == "Label-noise stress shows severe metric collapse" for item in report["checks"])
+    assert "label-quality note" in report["release_note"]["must_include"]
+
+
 def test_promotion_gate_blocks_high_risk_dataset_and_poor_scores():
     report = build_promotion_gate(
         sample_count=36,
