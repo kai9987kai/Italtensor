@@ -154,6 +154,11 @@ from .experiment_advisor import build_experiment_advisor, format_experiment_advi
 from .trial_inspector import inspect_trial_history, format_trial_inspector_summary
 from .promotion_gate import build_promotion_gate, format_promotion_gate_summary
 from .validation_plan import format_validation_plan_summary, run_validation_plan
+from .validation_stability import (
+    format_validation_stability_summary,
+    run_validation_stability_diagnostics,
+    validation_stability_dataset_fingerprint,
+)
 from .bootstrap_stability import (
     format_bootstrap_stability_summary,
     run_bootstrap_stability_diagnostics,
@@ -224,6 +229,7 @@ class AppState:
     latest_neighborhood_hardness_report: dict[str, Any] | None = None
     latest_dataset_triage_report: dict[str, Any] | None = None
     latest_validation_plan_report: dict[str, Any] | None = None
+    latest_validation_stability_report: dict[str, Any] | None = None
     latest_data_acquisition_report: dict[str, Any] | None = None
     latest_data_value_report: dict[str, Any] | None = None
     latest_experiment_advisor_report: dict[str, Any] | None = None
@@ -352,6 +358,8 @@ def run_app() -> None:
                 _start_dataset_triage(window, state)
             elif event == "-VALIDATION_PLAN-":
                 _start_validation_plan(window, state)
+            elif event == "-VALIDATION_STABILITY-":
+                _start_validation_stability(window, state, values)
             elif event == "-DATA_ACQUISITION-":
                 _start_data_acquisition(window, state)
             elif event == "-DATA_VALUE-":
@@ -554,6 +562,8 @@ def _layout(sg):
             sg.Checkbox("Enable CV", default=False, key="-USE_CV-"),
             sg.Text("Folds"),
             sg.Input("5", key="-KFOLD_SPLITS-", size=(4, 1)),
+            sg.Text("Repeats"),
+            sg.Input("3", key="-CV_REPEATS-", size=(4, 1)),
         ],
         [
             sg.Checkbox("Enable SMOTE", default=False, key="-USE_SMOTE-", tooltip="Oversample minority class on training split to handle imbalance"),
@@ -701,6 +711,7 @@ def _layout(sg):
             sg.Button("Chronological holdout", key="-CHRONOLOGICAL_HOLDOUT-", expand_x=True),
             sg.Button("Shadow replay", key="-SHADOW_REPLAY-", expand_x=True),
             sg.Button("Learning curve", key="-LEARNING_CURVE-", expand_x=True),
+            sg.Button("Validation stability", key="-VALIDATION_STABILITY-", expand_x=True),
         ],
         [
             sg.Button("Ablation diagnostics", key="-ABLATION_DIAGNOSTICS-", expand_x=True),
@@ -1473,6 +1484,7 @@ def _save_model(window, state: AppState, values: dict[str, Any]) -> None:
         adversarial_validation_report=state.latest_adversarial_validation_report,
         chronological_holdout_report=state.latest_chronological_holdout_report,
         learning_curve_report=state.latest_learning_curve_report,
+        validation_stability_report=state.latest_validation_stability_report,
         cartography_report=state.latest_cartography_report,
         ood_sentinel_report=state.latest_ood_sentinel_report,
         bootstrap_stability_report=state.latest_bootstrap_stability_report,
@@ -1637,6 +1649,20 @@ def _compatible_learning_curve_report(report: Any, state: AppState) -> dict[str,
     return report
 
 
+def _compatible_validation_stability_report(report: Any, state: AppState) -> dict[str, Any] | None:
+    if not isinstance(report, dict):
+        return None
+    stored_fingerprint = report.get("dataset_fingerprint")
+    if stored_fingerprint and state.features and state.labels:
+        try:
+            current_fingerprint = validation_stability_dataset_fingerprint(state.features, state.labels)
+        except ValueError:
+            return None
+        if current_fingerprint != stored_fingerprint:
+            return None
+    return report
+
+
 def _compatible_data_acquisition_report(report: Any, state: AppState) -> dict[str, Any] | None:
     if not isinstance(report, dict):
         return None
@@ -1754,6 +1780,7 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
     adversarial_validation_report = metadata.get("adversarial_validation_diagnostics")
     chronological_holdout_report = metadata.get("chronological_holdout_diagnostics")
     learning_curve_report = metadata.get("learning_curve")
+    validation_stability_report = metadata.get("validation_stability_diagnostics")
     cartography_report = metadata.get("dataset_cartography")
     ood_sentinel_report = metadata.get("ood_sentinel")
     bootstrap_stability_report = metadata.get("bootstrap_stability_diagnostics")
@@ -1878,6 +1905,16 @@ def _load_model(window, state: AppState, values: dict[str, Any]) -> None:
         and learning_curve_report.get("dataset_fingerprint")
     ):
         _log(window, "Skipped stored learning curve because it was created for a different loaded dataset.")
+    state.latest_validation_stability_report = _compatible_validation_stability_report(
+        validation_stability_report,
+        state,
+    )
+    if (
+        isinstance(validation_stability_report, dict)
+        and state.latest_validation_stability_report is None
+        and validation_stability_report.get("dataset_fingerprint")
+    ):
+        _log(window, "Skipped stored validation stability because it was created for a different loaded dataset.")
     state.latest_cartography_report = cartography_report if isinstance(cartography_report, dict) else None
     state.latest_ood_sentinel_report = ood_sentinel_report if isinstance(ood_sentinel_report, dict) else None
     state.latest_bootstrap_stability_report = (
@@ -1993,6 +2030,7 @@ def _export_report(window, state: AppState, values: dict[str, Any]) -> None:
         adversarial_validation_report=state.latest_adversarial_validation_report,
         chronological_holdout_report=state.latest_chronological_holdout_report,
         learning_curve_report=state.latest_learning_curve_report,
+        validation_stability_report=state.latest_validation_stability_report,
         cartography_report=state.latest_cartography_report,
         ood_sentinel_report=state.latest_ood_sentinel_report,
         bootstrap_stability_report=state.latest_bootstrap_stability_report,
@@ -2763,6 +2801,21 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
                 f"[{item.get('priority', '-')}/{item.get('category', '-')}] "
                 f"{item.get('title', '-')}: {item.get('action', '-')}",
             )
+    elif kind == "validation_stability":
+        state.latest_validation_stability_report = result
+        state.latest_experiment_advisor_report = None
+        state.latest_promotion_gate_report = None
+        _log(window, format_validation_stability_summary(result))
+        for item in result.get("recommendations", [])[:4]:
+            _log(
+                window,
+                f"  {int(item.get('rank', 0))}. "
+                f"[{item.get('priority', '-')}/{item.get('category', '-')}] "
+                f"{item.get('title', '-')}: {item.get('action', '-')}",
+            )
+        worst_rows = result.get("summary", {}).get("worst_fold_validation_rows", [])
+        if worst_rows:
+            _log(window, "  worst-fold rows: " + ", ".join(str(int(value)) for value in worst_rows[:12]))
     elif kind == "data_acquisition":
         state.latest_data_acquisition_report = result
         state.latest_experiment_advisor_report = None
@@ -3464,6 +3517,7 @@ def _set_busy(window, busy: bool) -> None:
         "-CARTOGRAPHY-",
         "-DATASET_TRIAGE-",
         "-VALIDATION_PLAN-",
+        "-VALIDATION_STABILITY-",
         "-DATA_ACQUISITION-",
         "-DATA_VALUE-",
         "-SCHEMA_GUARD-",
@@ -4270,6 +4324,34 @@ def _start_validation_plan(window, state: AppState) -> None:
     _start_worker(window, state, "Building validation plan...", task)
 
 
+def _start_validation_stability(window, state: AppState, values: dict[str, Any]) -> None:
+    _ensure_not_busy(state)
+    dataset = validate_dataset(state.features, state.labels, min_samples=12, require_two_classes=True)
+    n_splits = min(10, _positive_int(values.get("-KFOLD_SPLITS-", "5"), "CV folds"))
+    repeats = min(20, _positive_int(values.get("-CV_REPEATS-", "3"), "CV repeats"))
+    max_epochs = min(60, _positive_int(values.get("-EPOCHS-", "35"), "epochs"))
+    feature_map = str(values.get("-FEATURE_MAP-", "linear") or "linear")
+
+    def task() -> tuple[str, dict[str, Any]]:
+        report = run_validation_stability_diagnostics(
+            dataset.features,
+            dataset.labels,
+            n_splits=n_splits,
+            repeats=repeats,
+            max_epochs=max_epochs,
+            feature_map=feature_map,
+            threshold=0.5,
+        )
+        return "validation_stability", report
+
+    _start_worker(
+        window,
+        state,
+        f"Running validation stability audit ({repeats}x{n_splits} folds)...",
+        task,
+    )
+
+
 def _start_data_acquisition(window, state: AppState) -> None:
     _ensure_not_busy(state)
     dataset = validate_dataset(state.features, state.labels, min_samples=2, require_two_classes=False)
@@ -4403,6 +4485,7 @@ def _start_experiment_advisor(window, state: AppState) -> None:
             adversarial_validation_report=state.latest_adversarial_validation_report,
             chronological_holdout_report=state.latest_chronological_holdout_report,
             learning_curve_report=state.latest_learning_curve_report,
+            validation_stability_report=state.latest_validation_stability_report,
             data_acquisition_report=state.latest_data_acquisition_report,
             data_value_report=state.latest_data_value_report,
             label_sensitivity_report=state.latest_label_sensitivity_report,
