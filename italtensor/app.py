@@ -2174,6 +2174,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_adversarial_validation_report = None
         state.latest_chronological_holdout_report = None
         state.latest_learning_curve_report = None
+        state.latest_validation_stability_report = None
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
@@ -2230,6 +2231,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_adversarial_validation_report = None
         state.latest_chronological_holdout_report = None
         state.latest_learning_curve_report = None
+        state.latest_validation_stability_report = None
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
@@ -2310,6 +2312,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_adversarial_validation_report = None
         state.latest_chronological_holdout_report = None
         state.latest_learning_curve_report = None
+        state.latest_validation_stability_report = None
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
@@ -3200,6 +3203,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_adversarial_validation_report = None
         state.latest_chronological_holdout_report = None
         state.latest_learning_curve_report = None
+        state.latest_validation_stability_report = None
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
@@ -3266,6 +3270,7 @@ def _handle_worker_done(window, state: AppState, payload: tuple[str, Any]) -> No
         state.latest_adversarial_validation_report = None
         state.latest_chronological_holdout_report = None
         state.latest_learning_curve_report = None
+        state.latest_validation_stability_report = None
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
@@ -3426,6 +3431,7 @@ def _invalidate_model_artifacts(state: AppState) -> None:
     state.latest_adversarial_validation_report = None
     state.latest_chronological_holdout_report = None
     state.latest_learning_curve_report = None
+    state.latest_validation_stability_report = None
     state.latest_cartography_report = None
     state.latest_ood_sentinel_report = None
     state.latest_bootstrap_stability_report = None
@@ -3878,6 +3884,7 @@ def _activate_model_slot(window, state: AppState, values: dict[str, Any]) -> Non
     state.latest_adversarial_validation_report = None
     state.latest_chronological_holdout_report = None
     state.latest_learning_curve_report = None
+    state.latest_validation_stability_report = None
     state.latest_cartography_report = None
     state.latest_ood_sentinel_report = None
     state.latest_bootstrap_stability_report = None
@@ -4002,6 +4009,7 @@ def _load_registry(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_adversarial_validation_report = None
         state.latest_chronological_holdout_report = None
         state.latest_learning_curve_report = None
+        state.latest_validation_stability_report = None
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None
@@ -4061,6 +4069,7 @@ def _build_ensemble(window, state: AppState, values: dict[str, Any]) -> None:
     state.latest_adversarial_validation_report = None
     state.latest_chronological_holdout_report = None
     state.latest_learning_curve_report = None
+    state.latest_validation_stability_report = None
     state.latest_cartography_report = None
     state.latest_ood_sentinel_report = None
     state.latest_bootstrap_stability_report = None
@@ -4158,6 +4167,7 @@ def _build_stacked_ensemble(window, state: AppState, values: dict[str, Any]) -> 
     state.latest_adversarial_validation_report = None
     state.latest_chronological_holdout_report = None
     state.latest_learning_curve_report = None
+    state.latest_validation_stability_report = None
     state.latest_cartography_report = None
     state.latest_ood_sentinel_report = None
     state.latest_bootstrap_stability_report = None
@@ -4541,6 +4551,7 @@ def _start_promotion_gate(window, state: AppState) -> None:
             adversarial_validation_report=state.latest_adversarial_validation_report,
             chronological_holdout_report=state.latest_chronological_holdout_report,
             learning_curve_report=state.latest_learning_curve_report,
+            validation_stability_report=state.latest_validation_stability_report,
             data_acquisition_report=state.latest_data_acquisition_report,
             data_value_report=state.latest_data_value_report,
             label_sensitivity_report=state.latest_label_sensitivity_report,
@@ -4809,6 +4820,7 @@ def _merge_slots(window, state: AppState, values: dict[str, Any]) -> None:
         state.latest_adversarial_validation_report = None
         state.latest_chronological_holdout_report = None
         state.latest_learning_curve_report = None
+        state.latest_validation_stability_report = None
         state.latest_cartography_report = None
         state.latest_ood_sentinel_report = None
         state.latest_bootstrap_stability_report = None

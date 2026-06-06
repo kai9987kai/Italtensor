@@ -39,6 +39,7 @@ def build_promotion_gate(
     adversarial_validation_report: dict[str, Any] | None = None,
     chronological_holdout_report: dict[str, Any] | None = None,
     learning_curve_report: dict[str, Any] | None = None,
+    validation_stability_report: dict[str, Any] | None = None,
     data_acquisition_report: dict[str, Any] | None = None,
     data_value_report: dict[str, Any] | None = None,
     label_sensitivity_report: dict[str, Any] | None = None,
@@ -382,6 +383,7 @@ def build_promotion_gate(
         adversarial_validation_report=adversarial_validation_report,
         chronological_holdout_report=chronological_holdout_report,
         learning_curve_report=learning_curve_report,
+        validation_stability_report=validation_stability_report,
         data_acquisition_report=data_acquisition_report,
         data_value_report=data_value_report,
         label_sensitivity_report=label_sensitivity_report,
@@ -677,6 +679,7 @@ def _add_repair_and_robustness_checks(
     adversarial_validation_report: dict[str, Any] | None,
     chronological_holdout_report: dict[str, Any] | None,
     learning_curve_report: dict[str, Any] | None,
+    validation_stability_report: dict[str, Any] | None,
     data_acquisition_report: dict[str, Any] | None,
     data_value_report: dict[str, Any] | None,
     label_sensitivity_report: dict[str, Any] | None,
@@ -718,6 +721,35 @@ def _add_repair_and_robustness_checks(
                 status="review",
                 evidence=f"stress_f1_ratio={ratio:.3f}.",
                 action="Document the worst perturbation and add monitoring or feature validation.",
+                penalty=8.0,
+            )
+    if validation_stability_report:
+        summary = validation_stability_report.get("summary", {})
+        priority = str(summary.get("priority", "low"))
+        f1_std = float(summary.get("fold_f1_std", 0.0) or 0.0)
+        f1_q10 = float(summary.get("fold_f1_q10", 0.0) or 0.0)
+        action = str(
+            summary.get("recommended_next_step")
+            or "Review repeated validation evidence before promotion."
+        )
+        if priority == "high":
+            add(
+                severity="blocker",
+                category="validation_stability",
+                title="Validation evidence is split unstable",
+                status="fail",
+                evidence=f"fold_f1_std={f1_std:.3f}, empirical_q10={f1_q10:.3f}.",
+                action=action,
+                penalty=18.0,
+            )
+        elif priority == "medium":
+            add(
+                severity="caution",
+                category="validation_stability",
+                title="Validation evidence depends on the split",
+                status="review",
+                evidence=f"fold_f1_std={f1_std:.3f}, empirical_q10={f1_q10:.3f}.",
+                action=action,
                 penalty=8.0,
             )
     if learning_curve_report:
@@ -1037,6 +1069,8 @@ def _must_include(checks: list[dict[str, Any]], metrics: dict[str, float | int],
         items.append("deployment-risk note")
     if any(check["category"] == "learning_curve" for check in checks):
         items.append("learning-curve note")
+    if any(check["category"] == "validation_stability" for check in checks):
+        items.append("validation-stability note")
     if any(check["category"] == "data_collection" for check in checks):
         items.append("data-acquisition note")
     if any(check["category"] == "data_curation" for check in checks):

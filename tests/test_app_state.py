@@ -22,6 +22,7 @@ from italtensor.app import (
     _compatible_label_sensitivity_report,
     _compatible_label_noise_stress_report,
     _compatible_learning_curve_report,
+    _compatible_validation_stability_report,
     _compatible_prior_shift_report,
     _compatible_rank_lift_report,
     _compatible_reliability_atlas_report,
@@ -35,6 +36,7 @@ from italtensor.app import (
     _save_preset,
     _start_external_holdout,
     _start_experiment_advisor,
+    _start_validation_stability,
     _start_leakage_sentinel,
     _start_promotion_gate,
     _run_shap_analysis,
@@ -49,6 +51,7 @@ from italtensor.data_value import data_value_dataset_fingerprint
 from italtensor.label_sensitivity import label_sensitivity_dataset_fingerprint
 from italtensor.label_noise_stress import label_noise_stress_dataset_fingerprint
 from italtensor.learning_curves import learning_curve_dataset_fingerprint
+from italtensor.validation_stability import validation_stability_dataset_fingerprint
 from italtensor.preprocessing import FeatureStandardizer
 from italtensor.prior_shift import prior_shift_dataset_fingerprint
 from italtensor.rank_lift import rank_lift_dataset_fingerprint
@@ -109,6 +112,8 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         latest_sample_review_report={"summary": {"label_issue_count": 1}},
         latest_label_sensitivity_report={"summary": {"priority": "high"}},
         latest_label_noise_stress_report={"summary": {"priority": "medium"}},
+        latest_validation_stability_report={"summary": {"priority": "high"}},
+        latest_validation_stability_report={"summary": {"priority": "high"}},
         latest_error_atlas_report={"summary": {"error_count": 1}},
         latest_reliability_atlas_report={"summary": {"risk_level": "medium"}},
         latest_calibration_slice_report={"summary": {"risk_level": "high"}},
@@ -141,6 +146,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         latest_neighborhood_hardness_report={"summary": {"top_hard_row": 6}},
         latest_dataset_triage_report={"summary": {"readiness_score": 61.0}},
         latest_validation_plan_report={"summary": {"recommended_strategy": "stratified_kfold"}},
+        latest_validation_stability_report={"summary": {"priority": "high"}},
         latest_data_acquisition_report={"summary": {"priority": "high"}},
         latest_data_value_report={"summary": {"priority": "high"}},
         latest_experiment_advisor_report={"summary": {"recommended_next_step": "Run triage"}},
@@ -203,6 +209,7 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
     assert state.latest_neighborhood_hardness_report is None
     assert state.latest_dataset_triage_report is None
     assert state.latest_validation_plan_report is None
+    assert state.latest_validation_stability_report is None
     assert state.latest_data_acquisition_report is None
     assert state.latest_data_value_report is None
     assert state.latest_experiment_advisor_report is None
@@ -319,6 +326,7 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
     assert payload["data_value_scout"]["summary"]["priority"] == "medium"
     assert payload["posthoc_label_sensitivity_diagnostics"]["summary"]["priority"] == "high"
     assert payload["label_noise_stress_diagnostics"]["summary"]["priority"] == "medium"
+    assert payload["validation_stability_diagnostics"]["summary"]["priority"] == "high"
     assert "Exported report" in window["-LOG-"].value
 
 
@@ -391,6 +399,7 @@ def test_training_preserves_dataset_only_diagnostics():
     assert state.latest_data_value_report == {"summary": {"priority": "medium"}}
     assert state.latest_label_sensitivity_report is None
     assert state.latest_label_noise_stress_report == {"summary": {"priority": "medium"}}
+    assert state.latest_validation_stability_report is None
     assert state.latest_experiment_advisor_report is None
     assert state.latest_trial_inspector_report is None
     assert state.latest_promotion_gate_report is None
@@ -455,6 +464,24 @@ def test_compatible_learning_curve_report_rejects_mismatched_or_reordered_datase
 
     assert _compatible_learning_curve_report(matching, state) == matching
     assert _compatible_learning_curve_report(reordered, state) is None
+
+
+def test_compatible_validation_stability_report_rejects_mismatched_or_reordered_dataset():
+    state = AppState(features=[[0.1], [0.9], [0.2], [0.8]], labels=[0, 1, 0, 1], input_dim=1)
+    matching = {
+        "dataset_fingerprint": validation_stability_dataset_fingerprint(state.features, state.labels),
+        "summary": {"priority": "low"},
+    }
+    reordered = {
+        "dataset_fingerprint": validation_stability_dataset_fingerprint(
+            [[0.2], [0.1], [0.8], [0.9]],
+            [0, 0, 1, 1],
+        ),
+        "summary": {"priority": "high"},
+    }
+
+    assert _compatible_validation_stability_report(matching, state) == matching
+    assert _compatible_validation_stability_report(reordered, state) is None
 
 
 def test_compatible_data_acquisition_report_rejects_mismatched_or_reordered_dataset():
@@ -1074,6 +1101,90 @@ def test_handle_worker_done_stores_validation_plan_without_mutating_model():
     assert "Use stratified cross-validation" in window["-LOG-"].value
 
 
+def test_handle_worker_done_stores_validation_stability_without_mutating_model():
+    window = FakeWindow()
+    state = AppState(
+        model=object(),
+        latest_metrics={"f1": 0.9},
+        latest_experiment_advisor_report={"summary": {"recommended_next_step": "old"}},
+        latest_promotion_gate_report={"summary": {"verdict": "old"}},
+        busy=True,
+    )
+    model = state.model
+    report = {
+        "total_fold_count": 6,
+        "summary": {
+            "verdict": "validation_stability_review",
+            "priority": "medium",
+            "mean_fold_f1": 0.76,
+            "fold_f1_std": 0.08,
+            "fold_f1_q10": 0.64,
+            "worst_fold_f1": 0.58,
+            "worst_fold_validation_rows": [2, 5, 9],
+            "recommended_next_step": "Confirm on an external holdout.",
+        },
+        "recommendations": [
+            {
+                "rank": 1,
+                "priority": "medium",
+                "category": "validation",
+                "title": "Document split sensitivity",
+                "action": "Confirm on an external holdout.",
+            }
+        ],
+    }
+
+    _handle_worker_done(window, state, ("validation_stability", report))
+
+    assert state.model is model
+    assert state.latest_metrics == {"f1": 0.9}
+    assert state.latest_validation_stability_report == report
+    assert state.latest_experiment_advisor_report is None
+    assert state.latest_promotion_gate_report is None
+    assert state.busy is False
+    assert "Validation stability" in window["-LOG-"].value
+    assert "worst-fold rows: 2, 5, 9" in window["-LOG-"].value
+
+
+def test_start_validation_stability_uses_gui_fold_repeat_and_map_values():
+    window = FakeWindow()
+    state = AppState(
+        features=[[-1.0], [1.0], [-0.9], [0.9], [-0.8], [0.8], [-0.7], [0.7], [-0.6], [0.6], [-0.5], [0.5]],
+        labels=[0, 1] * 6,
+        input_dim=1,
+    )
+    captured = {}
+    report = {"summary": {"verdict": "validation_stable"}, "recommendations": []}
+
+    def fake_run(features, labels, **kwargs):
+        captured["features"] = features
+        captured["labels"] = labels
+        captured.update(kwargs)
+        return report
+
+    def fake_start_worker(worker_window, worker_state, status, task):
+        captured["status"] = status
+        captured["payload"] = task()
+
+    values = {
+        "-KFOLD_SPLITS-": "3",
+        "-CV_REPEATS-": "2",
+        "-EPOCHS-": "14",
+        "-FEATURE_MAP-": "quadratic",
+    }
+    with patch("italtensor.app.run_validation_stability_diagnostics", side_effect=fake_run):
+        with patch("italtensor.app._start_worker", side_effect=fake_start_worker):
+            _start_validation_stability(window, state, values)
+
+    assert captured["n_splits"] == 3
+    assert captured["repeats"] == 2
+    assert captured["max_epochs"] == 14
+    assert captured["feature_map"] == "quadratic"
+    assert captured["threshold"] == 0.5
+    assert captured["payload"] == ("validation_stability", report)
+    assert "2x3 folds" in captured["status"]
+
+
 def test_handle_worker_done_stores_data_acquisition_without_mutating_model():
     window = FakeWindow()
     state = AppState(
@@ -1362,6 +1473,14 @@ def test_start_promotion_gate_uses_latest_policy_guard_report():
                 "recommended_next_step": "Review label-noise stress curve.",
             }
         },
+        latest_validation_stability_report={
+            "summary": {
+                "priority": "high",
+                "fold_f1_std": 0.13,
+                "fold_f1_q10": 0.52,
+                "recommended_next_step": "Review split instability.",
+            }
+        },
     )
     captured = {}
 
@@ -1385,6 +1504,7 @@ def test_start_promotion_gate_uses_latest_policy_guard_report():
     )
     assert any(check["category"] == "label_quality" for check in report["checks"])
     assert any("Label-noise stress" in check["title"] for check in report["checks"])
+    assert any(check["category"] == "validation_stability" for check in report["checks"])
 
 
 def test_handle_worker_done_stores_prototype_audit_without_mutating_model():
@@ -1707,6 +1827,7 @@ def test_start_experiment_advisor_forwards_holdout_and_calibration_slice_reports
     external_holdout_report = {"summary": {"verdict": "holdout_failure", "f1": 0.42}}
     label_sensitivity_report = {"summary": {"priority": "high", "suspect_label_count": 2}}
     label_noise_stress_report = {"summary": {"priority": "medium", "worst_mean_f1_drop": 0.08}}
+    validation_stability_report = {"summary": {"priority": "high", "fold_f1_std": 0.12}}
     state = AppState(
         features=[[0.0], [1.0]],
         labels=[0, 1],
@@ -1716,6 +1837,7 @@ def test_start_experiment_advisor_forwards_holdout_and_calibration_slice_reports
         latest_external_holdout_report=external_holdout_report,
         latest_label_sensitivity_report=label_sensitivity_report,
         latest_label_noise_stress_report=label_noise_stress_report,
+        latest_validation_stability_report=validation_stability_report,
     )
     captured = {}
 
@@ -1735,6 +1857,7 @@ def test_start_experiment_advisor_forwards_holdout_and_calibration_slice_reports
     assert captured["external_holdout_report"] is external_holdout_report
     assert captured["label_sensitivity_report"] is label_sensitivity_report
     assert captured["label_noise_stress_report"] is label_noise_stress_report
+    assert captured["validation_stability_report"] is validation_stability_report
     assert state.latest_experiment_advisor_report["summary"]["recommendation_count"] == 0
 
 

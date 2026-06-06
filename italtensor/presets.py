@@ -774,6 +774,29 @@ BUILT_IN_PRESETS: tuple[PresetInfo, ...] = (
         ),
     ),
     PresetInfo(
+        key="split_lottery_lab",
+        name="Split lottery lab",
+        description="A mostly stable margin plus a rare interaction regime that exposes fold-to-fold validation variance.",
+        default_samples=160,
+        min_samples=40,
+        input_dim=4,
+        recommended_feature_map="linear",
+        feature_names=("global_margin", "support_signal", "rare_regime", "boundary_band"),
+        training_defaults={
+            "epochs": 55,
+            "batch_size": 16,
+            "trials": 12,
+            "feature_map": "linear",
+            "use_cv": True,
+        },
+        prediction_examples=(
+            {"name": "Common negative", "features": [-1.1, -0.4, 0.0, -0.8], "expected_label": 0},
+            {"name": "Boundary split review", "features": [0.05, 0.0, 0.0, 1.0], "expected_label": None},
+            {"name": "Rare-regime conflict", "features": [-1.0, 0.3, 1.0, 0.2], "expected_label": 1},
+            {"name": "Common positive", "features": [1.1, 0.4, 0.0, -0.8], "expected_label": 1},
+        ),
+    ),
+    PresetInfo(
         key="validation_plan_lab",
         name="Validation plan lab",
         description="Ordered reference/current rows that make split-choice and chronological holdout risk visible.",
@@ -1074,6 +1097,8 @@ def generate_builtin_preset(name: str, *, sample_count: int | None = None, seed:
         features, labels = _data_acquisition_lab(total, rng)
     elif preset.key == "data_value_scout_lab":
         features, labels = _data_value_scout_lab(total, rng)
+    elif preset.key == "split_lottery_lab":
+        features, labels = _split_lottery_lab(total, rng)
     elif preset.key == "validation_plan_lab":
         features, labels = _validation_plan_lab(total, rng)
     elif preset.key == "learning_curve_lab":
@@ -2471,6 +2496,40 @@ def _validation_plan_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarr
         [stable_margin, support_signal, regime_shift, prevalence_marker, background_noise]
     ).astype(np.float32)
     return features, labels
+
+
+def _split_lottery_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    labels = _balanced_labels(total).astype(np.int32)
+    signed = np.where(labels == 1, 1.0, -1.0)
+    global_margin = signed * 1.0 + rng.normal(0.0, 0.34, size=total)
+    support_signal = signed * 0.35 + rng.normal(0.0, 0.55, size=total)
+    rare_regime = rng.normal(0.0, 0.05, size=total)
+    boundary_band = rng.normal(-0.8, 0.20, size=total)
+
+    boundary_count = max(12, total // 5)
+    boundary_indices = rng.choice(total, size=min(boundary_count, total), replace=False)
+    global_margin[boundary_indices] = signed[boundary_indices] * rng.normal(0.22, 0.12, size=boundary_indices.shape[0])
+    support_signal[boundary_indices] = signed[boundary_indices] * rng.normal(0.10, 0.18, size=boundary_indices.shape[0])
+    boundary_band[boundary_indices] = rng.normal(1.0, 0.16, size=boundary_indices.shape[0])
+
+    rare_count = min(max(12, int(round(total * 0.15))), total - 8)
+    negative_indices = np.where(labels == 0)[0]
+    positive_indices = np.where(labels == 1)[0]
+    rare_negative_count = rare_count // 2
+    rare_positive_count = rare_count - rare_negative_count
+    rare_indices = np.concatenate(
+        [
+            rng.choice(negative_indices, size=min(rare_negative_count, negative_indices.shape[0]), replace=False),
+            rng.choice(positive_indices, size=min(rare_positive_count, positive_indices.shape[0]), replace=False),
+        ]
+    )
+    rare_regime[rare_indices] = rng.normal(1.0, 0.06, size=rare_indices.shape[0])
+    global_margin[rare_indices] = -signed[rare_indices] * rng.normal(0.95, 0.22, size=rare_indices.shape[0])
+    support_signal[rare_indices] = signed[rare_indices] * rng.normal(0.20, 0.22, size=rare_indices.shape[0])
+    boundary_band[rare_indices] = rng.normal(0.25, 0.20, size=rare_indices.shape[0])
+
+    features = np.column_stack([global_margin, support_signal, rare_regime, boundary_band]).astype(np.float32)
+    return _shuffle(features, labels, rng)
 
 
 def _learning_curve_lab(total: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:

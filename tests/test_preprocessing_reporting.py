@@ -625,6 +625,43 @@ def test_report_export_json_and_markdown(tmp_path):
                 },
             ],
         },
+        validation_stability_report={
+            "n_splits": 3,
+            "repeats": 2,
+            "total_fold_count": 6,
+            "threshold": 0.5,
+            "summary": {
+                "verdict": "validation_stability_review",
+                "priority": "medium",
+                "stability_score": 68.0,
+                "fold_f1_std": 0.08,
+                "fold_f1_q10": 0.62,
+                "worst_fold_f1": 0.58,
+                "weak_fold_count": 1,
+                "worst_fold_validation_rows": [1, 3],
+                "recommended_next_step": "Confirm the lower range on an external holdout.",
+            },
+            "aggregate": {
+                "f1": {"mean": 0.76, "std": 0.08, "q10": 0.62, "q90": 0.84},
+            },
+            "tuned_aggregate": {
+                "f1": {"mean": 0.79, "std": 0.06, "q10": 0.68, "q90": 0.86},
+            },
+            "calibration_threshold_distribution": {"std": 0.07},
+            "folds": [
+                {
+                    "repeat": 1,
+                    "fold": 1,
+                    "train_sample_count": 2,
+                    "calibration_sample_count": 1,
+                    "validation_sample_count": 1,
+                    "metrics": {"f1": 0.58, "balanced_accuracy": 0.60},
+                    "tuned_threshold": 0.42,
+                    "tuned_metrics": {"f1": 0.66},
+                }
+            ],
+            "interpretation_note": "Fold quantiles are empirical split-sensitivity summaries, not formal confidence intervals.",
+        },
         selective_risk_report={
             "base": {"error_rate": 0.5},
             "summary": {
@@ -1257,6 +1294,7 @@ def test_report_export_json_and_markdown(tmp_path):
     assert saved_json["adversarial_validation_diagnostics"]["summary"]["verdict"] == "strong_multivariate_shift"
     assert saved_json["chronological_holdout_diagnostics"]["summary"]["verdict"] == "severe_temporal_degradation_current_relearns"
     assert saved_json["learning_curve"]["summary"]["verdict"] == "more_data_helpful"
+    assert saved_json["validation_stability_diagnostics"]["summary"]["fold_f1_std"] == 0.08
     assert saved_json["selective_prediction_diagnostics"]["summary"]["recommended_cutoff"] == 0.2
     assert saved_json["model_response_diagnostics"]["summary"]["top_feature"] == 0
     assert saved_json["pairwise_interaction_diagnostics"]["summary"]["top_pair"] == [0, 1]
@@ -1340,6 +1378,9 @@ def test_report_export_json_and_markdown(tmp_path):
     assert "Current-baseline F1 gain" in saved_markdown
     assert "## Learning Curve" in saved_markdown
     assert "Collect more labeled rows" in saved_markdown
+    assert "## Validation Stability" in saved_markdown
+    assert "Confirm the lower range" in saved_markdown
+    assert "not formal confidence intervals" in saved_markdown
     assert "## Selective Prediction / Risk-Coverage" in saved_markdown
     assert "Recommended cutoff" in saved_markdown
     assert "## Model Response / Partial Dependence" in saved_markdown

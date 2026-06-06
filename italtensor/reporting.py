@@ -53,6 +53,7 @@ def build_experiment_report(
     adversarial_validation_report: dict[str, Any] | None = None,
     chronological_holdout_report: dict[str, Any] | None = None,
     learning_curve_report: dict[str, Any] | None = None,
+    validation_stability_report: dict[str, Any] | None = None,
     cartography_report: dict[str, Any] | None = None,
     ood_sentinel_report: dict[str, Any] | None = None,
     bootstrap_stability_report: dict[str, Any] | None = None,
@@ -127,6 +128,7 @@ def build_experiment_report(
         "adversarial_validation_diagnostics": adversarial_validation_report or None,
         "chronological_holdout_diagnostics": chronological_holdout_report or None,
         "learning_curve": learning_curve_report or None,
+        "validation_stability_diagnostics": validation_stability_report or None,
         "dataset_cartography": cartography_report or None,
         "ood_sentinel": ood_sentinel_report or None,
         "bootstrap_stability_diagnostics": bootstrap_stability_report or None,
@@ -195,6 +197,7 @@ def format_markdown_report(report: dict[str, Any]) -> str:
     adversarial_validation = report.get("adversarial_validation_diagnostics") or {}
     chronological_holdout = report.get("chronological_holdout_diagnostics") or {}
     learning_curve = report.get("learning_curve") or {}
+    validation_stability = report.get("validation_stability_diagnostics") or {}
     cartography = report.get("dataset_cartography") or {}
     ood_sentinel = report.get("ood_sentinel") or {}
     bootstrap_stability = report.get("bootstrap_stability_diagnostics") or {}
@@ -1409,6 +1412,47 @@ def format_markdown_report(report: dict[str, Any]) -> str:
                 f"accuracy={_format_value(item.get('accuracy', '-'))}, "
                 f"balanced_accuracy={_format_value(item.get('balanced_accuracy', '-'))}, "
                 f"loss={_format_value(item.get('validation_loss', '-'))}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(["", "## Validation Stability"])
+    if validation_stability:
+        summary = validation_stability.get("summary", {})
+        fixed_f1 = (validation_stability.get("aggregate") or {}).get("f1", {})
+        tuned_f1 = (validation_stability.get("tuned_aggregate") or {}).get("f1", {})
+        threshold_distribution = validation_stability.get("calibration_threshold_distribution") or {}
+        lines.extend(
+            [
+                f"- Verdict: {summary.get('verdict', '-')}",
+                f"- Priority: {summary.get('priority', '-')}",
+                f"- Stability score: {_format_value(summary.get('stability_score', '-'))}",
+                f"- Repeats x folds: {validation_stability.get('repeats', '-')} x {validation_stability.get('n_splits', '-')}",
+                f"- Fixed threshold: {_format_value(validation_stability.get('threshold', '-'))}",
+                f"- Mean fold F1: {_format_value(fixed_f1.get('mean', '-'))}",
+                f"- Fold F1 std: {_format_value(fixed_f1.get('std', '-'))}",
+                f"- Fold F1 empirical q10-q90: {_format_value(fixed_f1.get('q10', '-'))} to {_format_value(fixed_f1.get('q90', '-'))}",
+                f"- Worst fold F1: {_format_value(summary.get('worst_fold_f1', '-'))}",
+                f"- Mean calibration-tuned fold F1: {_format_value(tuned_f1.get('mean', '-'))}",
+                f"- Calibration-threshold std: {_format_value(threshold_distribution.get('std', '-'))}",
+                f"- Weak folds: {summary.get('weak_fold_count', '-')}",
+                f"- Worst-fold rows: {summary.get('worst_fold_validation_rows', [])}",
+                f"- Recommendation: {summary.get('recommended_next_step') or 'none'}",
+                f"- Interpretation: {validation_stability.get('interpretation_note', '-')}",
+            ]
+        )
+        for item in validation_stability.get("folds", [])[:8]:
+            metrics_data = item.get("metrics", {})
+            tuned_metrics = item.get("tuned_metrics", {})
+            lines.append(
+                f"- repeat={item.get('repeat', '-')}, fold={item.get('fold', '-')}: "
+                f"train={item.get('train_sample_count', '-')}, "
+                f"calibration={item.get('calibration_sample_count', '-')}, "
+                f"evaluation={item.get('validation_sample_count', '-')}, "
+                f"F1={_format_value(metrics_data.get('f1', '-'))}, "
+                f"balanced_accuracy={_format_value(metrics_data.get('balanced_accuracy', '-'))}, "
+                f"tuned_threshold={_format_value(item.get('tuned_threshold', '-'))}, "
+                f"tuned_F1={_format_value(tuned_metrics.get('f1', '-'))}"
             )
     else:
         lines.append("- None")

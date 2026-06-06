@@ -33,6 +33,7 @@ def build_experiment_advisor(
     adversarial_validation_report: dict[str, Any] | None = None,
     chronological_holdout_report: dict[str, Any] | None = None,
     learning_curve_report: dict[str, Any] | None = None,
+    validation_stability_report: dict[str, Any] | None = None,
     data_acquisition_report: dict[str, Any] | None = None,
     data_value_report: dict[str, Any] | None = None,
     label_sensitivity_report: dict[str, Any] | None = None,
@@ -138,6 +139,7 @@ def build_experiment_advisor(
         adversarial_validation_report=adversarial_validation_report,
         chronological_holdout_report=chronological_holdout_report,
         learning_curve_report=learning_curve_report,
+        validation_stability_report=validation_stability_report,
         data_acquisition_report=data_acquisition_report,
         data_value_report=data_value_report,
         label_sensitivity_report=label_sensitivity_report,
@@ -290,6 +292,7 @@ def _add_report_recommendations(
     adversarial_validation_report: dict[str, Any] | None,
     chronological_holdout_report: dict[str, Any] | None,
     learning_curve_report: dict[str, Any] | None,
+    validation_stability_report: dict[str, Any] | None,
     data_acquisition_report: dict[str, Any] | None,
     data_value_report: dict[str, Any] | None,
     label_sensitivity_report: dict[str, Any] | None,
@@ -477,6 +480,37 @@ def _add_report_recommendations(
                 action=next_step,
                 source="label_noise_stress",
                 expected_signal="Follow-up label review should reduce fragility or document it as a dataset limitation.",
+            )
+    if validation_stability_report:
+        summary = validation_stability_report.get("summary", {})
+        priority = str(summary.get("priority", "low"))
+        f1_std = float(summary.get("fold_f1_std", 0.0) or 0.0)
+        f1_q10 = float(summary.get("fold_f1_q10", 0.0) or 0.0)
+        next_step = str(
+            summary.get("recommended_next_step")
+            or "Review validation stability before selecting or promoting a model."
+        )
+        if priority == "high":
+            add(
+                score=92.0,
+                priority="high",
+                category="validation",
+                title="Stop tuning against a split lottery",
+                reason=f"Repeated outer-fold F1 std={f1_std:.3f}, empirical q10={f1_q10:.3f}.",
+                action=next_step,
+                source="validation_stability",
+                expected_signal="Representative labels or a simpler model should raise the lower-tail fold score and reduce spread.",
+            )
+        elif priority == "medium":
+            add(
+                score=70.0,
+                priority="medium",
+                category="validation",
+                title="Review split-sensitive validation evidence",
+                reason=f"Repeated outer-fold F1 std={f1_std:.3f}, empirical q10={f1_q10:.3f}.",
+                action=next_step,
+                source="validation_stability",
+                expected_signal="A fresh external holdout should confirm the lower empirical validation range.",
             )
     if learning_curve_report:
         summary = learning_curve_report.get("summary", {})

@@ -232,6 +232,7 @@ def test_experimental_builtin_presets_are_available():
         "Dataset triage lab",
         "Data acquisition lab",
         "Data value scout lab",
+        "Split lottery lab",
         "Validation plan lab",
         "Learning curve lab",
         "Schema guard lab",
@@ -293,6 +294,24 @@ def test_validation_plan_lab_preset_preserves_ordered_split_risk():
     ]
     assert report["summary"]["recommended_strategy"] == "chronological_holdout"
     assert report["summary"]["row_order_risk"] is True
+
+
+def test_split_lottery_lab_preset_has_rare_interaction_regime():
+    metadata = preset_metadata("Split lottery lab")
+    dataset = generate_builtin_preset("Split lottery lab", sample_count=160, seed=17)
+    signed = np.where(dataset.labels == 1, 1.0, -1.0)
+    rare_mask = dataset.features[:, 2] > 0.7
+    common_mask = dataset.features[:, 2] < 0.3
+
+    assert metadata["input_dim"] == 4
+    assert metadata["recommended_feature_map"] == "linear"
+    assert metadata["training_defaults"]["use_cv"] is True
+    assert metadata["feature_names"] == ["global_margin", "support_signal", "rare_regime", "boundary_band"]
+    assert any(example["name"] == "Rare-regime conflict" for example in metadata["prediction_examples"])
+    assert int(np.sum(rare_mask)) >= 20
+    assert int(np.sum(dataset.features[:, 3] > 0.7)) >= 20
+    assert float(np.mean(dataset.features[common_mask, 0] * signed[common_mask])) > 0.5
+    assert float(np.mean(dataset.features[rare_mask, 0] * signed[rare_mask])) < -0.5
 
 
 def test_data_acquisition_lab_preset_has_collection_gaps():

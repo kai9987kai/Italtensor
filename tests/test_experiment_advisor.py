@@ -301,6 +301,31 @@ def test_experiment_advisor_prioritizes_label_noise_stress_fragility():
     assert "Audit labels" in top["action"]
 
 
+def test_experiment_advisor_prioritizes_unstable_validation_splits():
+    report = build_experiment_advisor(
+        sample_count=90,
+        input_dim=4,
+        labels=[0, 1] * 45,
+        metrics={"f1": 0.84, "accuracy": 0.85, "precision": 0.83, "recall": 0.85},
+        trial_history=[{"metrics": {"f1": 0.84}}] * 4,
+        external_holdout_report={"summary": {"verdict": "holdout_pass", "f1": 0.81}},
+        validation_stability_report={
+            "summary": {
+                "priority": "high",
+                "fold_f1_std": 0.13,
+                "fold_f1_q10": 0.56,
+                "recommended_next_step": "Review worst-fold rows before tuning.",
+            }
+        },
+    )
+
+    top = report["recommendations"][0]
+    assert top["source"] == "validation_stability"
+    assert top["category"] == "validation"
+    assert top["priority"] == "high"
+    assert "Review worst-fold rows" in top["action"]
+
+
 def test_experiment_advisor_is_deterministic_and_formats_summary():
     kwargs = {
         "sample_count": 24,
