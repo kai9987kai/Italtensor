@@ -112,8 +112,6 @@ def test_invalidate_model_artifacts_keeps_dataset_shape_but_clears_model_state()
         latest_sample_review_report={"summary": {"label_issue_count": 1}},
         latest_label_sensitivity_report={"summary": {"priority": "high"}},
         latest_label_noise_stress_report={"summary": {"priority": "medium"}},
-        latest_validation_stability_report={"summary": {"priority": "high"}},
-        latest_validation_stability_report={"summary": {"priority": "high"}},
         latest_error_atlas_report={"summary": {"error_count": 1}},
         latest_reliability_atlas_report={"summary": {"risk_level": "medium"}},
         latest_calibration_slice_report={"summary": {"risk_level": "high"}},
@@ -294,6 +292,7 @@ def test_export_report_allows_dataset_only_diagnostics(tmp_path):
         latest_data_value_report={"summary": {"priority": "medium"}},
         latest_label_sensitivity_report={"summary": {"priority": "high"}},
         latest_label_noise_stress_report={"summary": {"priority": "medium"}},
+        latest_validation_stability_report={"summary": {"priority": "high"}},
     )
     path = tmp_path / "dataset-report.json"
 
